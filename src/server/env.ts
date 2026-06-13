@@ -38,7 +38,9 @@ const EnvSchema = z.object({
   GMAIL_APP_PASSWORD: z.string().optional(),
   HIRING_REVIEW_EMAIL_FROM: z.string().optional(),
   /**
-   * Base URL for portal links embedded in hire emails (e.g. https://portal.abbilabs.com).
+   * Base origin for portal links embedded in hire emails (e.g. https://3a.abbilabs.com).
+   * The `/portal` path is appended by portalUrl() in portal-admin.ts — set this to the
+   * bare origin, not a path.
    * Defaults to http://localhost:3000 for local dev.
    */
   APP_URL: z.string().url().optional().default('http://localhost:3000'),

@@ -19,6 +19,8 @@ next-env.d.ts
 .env.*.local
 *.pem
 *.key
+# Plaintext live-secrets handoff (must never be committed)
+docs/ABC-HELPER-APP-VAR
 
 # Logs
 *.log
