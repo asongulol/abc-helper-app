@@ -44,11 +44,23 @@ export async function addContractor(args: unknown): Promise<ActionResult<{ worke
       companyId: input.companyId,
       contract: input.contract,
     });
+    // Set hubstaff_name on the link if provided (e.g. from CSV import unmatched name).
+    if (input.hubstaffName) {
+      await updateWorkerLink(db, workerId, input.companyId, {
+        contract: input.contract,
+        role: null,
+        hubstaff_name: input.hubstaffName,
+        weekly_hours: null,
+        status: 'active',
+      });
+    }
     await logEvent({
       companyId: input.companyId,
       action: 'add_contractor',
       entity: `${input.firstName} ${input.lastName}`.trim(),
-      detail: { from: 'contractors tab' },
+      detail: input.hubstaffName
+        ? { from: 'csv_import', hubstaff_name: input.hubstaffName }
+        : { from: 'contractors tab' },
     });
     return { ok: true, data: { workerId } };
   } catch (err) {

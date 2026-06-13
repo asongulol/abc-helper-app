@@ -17,6 +17,8 @@ export const AddContractorSchema = z.object({
   firstName: z.string().min(1, 'First name required').max(80),
   lastName: z.string().min(1, 'Last name required').max(80),
   contract: ContractTypeSchema.default('FT'),
+  /** Optional Hubstaff source name to set on the link immediately (used by CSV import). */
+  hubstaffName: z.string().max(100).optional(),
 });
 export type AddContractorInput = z.infer<typeof AddContractorSchema>;
 

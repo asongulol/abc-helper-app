@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "ignore": ["node_modules", "dist", ".next", "build", "coverage", "src/db/types.ts"]
+    "ignore": [
+      "node_modules",
+      "dist",
+      ".next",
+      "build",
+      "coverage",
+      "src/db/types.ts",
+      "*.timestamp-*.mjs"
+    ]
   },
   "formatter": {
     "enabled": true,

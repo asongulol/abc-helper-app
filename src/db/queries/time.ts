@@ -82,6 +82,20 @@ export const upsertTimeEntries = async (
   if (error) throw new Error(`time_entries upsert: ${error.message}`);
 };
 
+/** Fetch the current approval values for a set of ids (for undo snapshots). */
+export const fetchApprovalSnapshot = async (
+  db: Db,
+  ids: string[],
+): Promise<Array<{ id: string; approval: 'pending' | 'approved' | 'rejected' }>> => {
+  if (ids.length === 0) return [];
+  const { data, error } = await db.from('time_entries').select('id, approval').in('id', ids);
+  if (error) throw new Error(`approval snapshot: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    approval: r.approval as 'pending' | 'approved' | 'rejected',
+  }));
+};
+
 /** Update approval status for a set of ids (chunked to avoid URL length). */
 export const updateApproval = async (
   db: Db,
@@ -93,6 +107,34 @@ export const updateApproval = async (
     const chunk = ids.slice(i, i + CHUNK);
     const { error } = await db.from('time_entries').update({ approval: status }).in('id', chunk);
     if (error) throw new Error(`approval update: ${error.message}`);
+  }
+};
+
+/** Restore approval values for a set of id+status pairs (used by undo). */
+export const restoreApprovals = async (
+  db: Db,
+  entries: Array<{ id: string; approval: 'pending' | 'approved' | 'rejected' }>,
+): Promise<void> => {
+  const CHUNK = 100;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK);
+    // Group by approval value to minimise round-trips.
+    const byStatus = new Map<string, string[]>();
+    for (const e of chunk) {
+      const bucket = byStatus.get(e.approval);
+      if (bucket) {
+        bucket.push(e.id);
+      } else {
+        byStatus.set(e.approval, [e.id]);
+      }
+    }
+    for (const [status, ids] of byStatus) {
+      const { error } = await db
+        .from('time_entries')
+        .update({ approval: status as 'pending' | 'approved' | 'rejected' })
+        .in('id', ids);
+      if (error) throw new Error(`restore approvals: ${error.message}`);
+    }
   }
 };
 

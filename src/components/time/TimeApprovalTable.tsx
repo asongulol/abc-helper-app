@@ -16,7 +16,8 @@
 
 import { Badge, EmptyState, useToast } from '@/components/ui';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
-import { editContractorTotal, setTimeApproval } from '@/server/actions/time';
+import type { ApprovalUndoEntry } from '@/server/actions/time';
+import { editContractorTotal, setTimeApproval, undoApproval } from '@/server/actions/time';
 import { Fragment, useState, useTransition } from 'react';
 import { AddHoursPanel } from './AddHoursPanel';
 import { AddUnlistedRow } from './AddUnlistedRow';
@@ -51,7 +52,7 @@ export const TimeApprovalTable = ({
   contractorOptions,
   onRefresh,
 }: TimeApprovalTableProps) => {
-  const { notify } = useToast();
+  const { notify, dismiss } = useToast();
   const [pendingTx, startTransition] = useTransition();
   const [editMap, setEditMap] = useState<Record<string, string>>({});
   const [addRowName, setAddRowName] = useState<string | null>(null);
@@ -61,6 +62,42 @@ export const TimeApprovalTable = ({
     .filter((e) => e.approval === 'pending')
     .map((e) => e.id);
 
+  const showUndoToast = (undoEntries: ApprovalUndoEntry[], label: string) => {
+    if (undoEntries.length === 0) return;
+    const toastId = notify(
+      <span>
+        {label}{' '}
+        <button
+          type="button"
+          style={{
+            fontWeight: 700,
+            textDecoration: 'underline',
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: 0,
+            color: 'inherit',
+          }}
+          onClick={() => {
+            dismiss(toastId);
+            startTransition(async () => {
+              const res = await undoApproval({ companyId, entries: undoEntries });
+              if (!res.ok) {
+                notify(res.error, { type: 'error' });
+                return;
+              }
+              notify('Approval undone.', { type: 'info' });
+              onRefresh();
+            });
+          }}
+        >
+          Undo
+        </button>
+      </span>,
+      { type: 'success', persistent: true },
+    );
+  };
+
   const handleApproval = (ids: string[], status: 'approved' | 'rejected') => {
     startTransition(async () => {
       const res = await setTimeApproval({ companyId, ids, status });
@@ -68,10 +105,9 @@ export const TimeApprovalTable = ({
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(
-        `${status === 'approved' ? 'Approved' : 'Rejected'} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`,
-        { type: 'success' },
-      );
+      const verb = status === 'approved' ? 'Approved' : 'Rejected';
+      const label = `${verb} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`;
+      showUndoToast(res.data.undoEntries, label);
       onRefresh();
     });
   };

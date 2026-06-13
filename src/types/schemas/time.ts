@@ -77,3 +77,15 @@ export const DeleteBatchSchema = z.object({
   batchId: z.string().uuid(),
 });
 export type DeleteBatchInput = z.infer<typeof DeleteBatchSchema>;
+
+/** Undo payload: an id+prior-approval pair for each affected entry. */
+export const UndoApprovalEntrySchema = z.object({
+  id: z.string().uuid(),
+  approval: z.enum(['pending', 'approved', 'rejected']),
+});
+
+export const UndoApprovalSchema = z.object({
+  companyId: z.string().uuid(),
+  entries: z.array(UndoApprovalEntrySchema).min(1),
+});
+export type UndoApprovalInput = z.infer<typeof UndoApprovalSchema>;

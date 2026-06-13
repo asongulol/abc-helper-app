@@ -14,6 +14,7 @@ import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { RosterLink } from '@/lib/time/attribution';
 import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
 import type { HubstaffMember } from '@/lib/time/csv';
+import { addContractor } from '@/server/actions/contractors';
 import { importCsvBatch } from '@/server/actions/time';
 import { useRef, useState, useTransition } from 'react';
 
@@ -22,6 +23,21 @@ interface CsvImportCardProps {
   roster: RosterLink[];
   onImported: () => void;
 }
+
+/**
+ * Split a Hubstaff display name into first/last.
+ * Rule: last word is lastName, everything before is firstName.
+ * Single-word names get a placeholder last name of '.'.
+ */
+const splitName = (name: string): { firstName: string; lastName: string } => {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0] ?? name, lastName: '.' };
+  }
+  const lastName = parts[parts.length - 1] ?? '';
+  const firstName = parts.slice(0, parts.length - 1).join(' ');
+  return { firstName, lastName };
+};
 
 interface ParsedState {
   dates: string[];
@@ -42,6 +58,7 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
   const [parsed, setParsed] = useState<ParsedState | null>(null);
   const [mode, setMode] = useState<'upsert' | 'skip'>('upsert');
   const [pending, startTransition] = useTransition();
+  const [addingNames, setAddingNames] = useState<Set<string>>(new Set());
 
   const idx = buildMatchIndex(roster);
 
@@ -70,6 +87,33 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
       setParsed({ dates: result.dates, members, skippedRows: result.skippedRows });
     };
     reader.readAsText(f);
+  };
+
+  const handleAddAsContractor = (sourceName: string) => {
+    setAddingNames((prev) => new Set([...prev, sourceName]));
+    startTransition(async () => {
+      const { firstName, lastName } = splitName(sourceName);
+      const res = await addContractor({
+        companyId,
+        firstName,
+        lastName,
+        contract: 'FT',
+        hubstaffName: sourceName,
+      });
+      setAddingNames((prev) => {
+        const next = new Set(prev);
+        next.delete(sourceName);
+        return next;
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`Created contractor "${sourceName}" — re-import to include their hours.`, {
+        type: 'success',
+      });
+      onImported();
+    });
   };
 
   const handleImport = () => {
@@ -187,12 +231,32 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
               <strong>{unmatchedCount} Hubstaff name(s) could not be matched</strong> to a
               contractor. These rows will be skipped. Set up their profile (Contractors tab) and
               re-import to include them.
-              <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  marginTop: 6,
+                  display: 'flex',
+                  gap: 6,
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                }}
+              >
                 {parsed.members
                   .filter((m) => !m.isMatched)
                   .map((m) => (
-                    <span key={m.name} className="pill warn">
-                      {m.name}
+                    <span
+                      key={m.name}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <span className="pill warn">{m.name}</span>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        style={{ fontSize: 11, padding: '1px 6px' }}
+                        disabled={pending || addingNames.has(m.name)}
+                        onClick={() => handleAddAsContractor(m.name)}
+                      >
+                        {addingNames.has(m.name) ? 'Adding…' : 'Add as contractor'}
+                      </button>
                     </span>
                   ))}
               </div>

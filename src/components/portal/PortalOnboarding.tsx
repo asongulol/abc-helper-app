@@ -124,6 +124,34 @@ export const PortalOnboarding = ({
     ctx.stroke();
   };
   const endDraw = () => setDrawing(false);
+
+  // --- touch equivalents (map touch → same draw logic) ---
+  const startDrawTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    setDrawing(true);
+    const rect = canvas.getBoundingClientRect();
+    ctx.beginPath();
+    ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
+  };
+  const continueDrawTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (!drawing) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
+    ctx.stroke();
+  };
+  const endDrawTouch = () => setDrawing(false);
   const clearCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -461,6 +489,9 @@ export const PortalOnboarding = ({
                 onMouseMove={continueDraw}
                 onMouseUp={endDraw}
                 onMouseLeave={endDraw}
+                onTouchStart={startDrawTouch}
+                onTouchMove={continueDrawTouch}
+                onTouchEnd={endDrawTouch}
               />
               <button
                 type="button"

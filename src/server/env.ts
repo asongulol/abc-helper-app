@@ -22,6 +22,21 @@ const EnvSchema = z.object({
   /** Shared secret for cron-invoked routes (mirrors legacy x-cron-secret). */
   CRON_SECRET: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /**
+   * Gmail SMTP credentials for new-hire transactional email (smtp.gmail.com:465).
+   * Set at deploy time: GMAIL_USER = the sending Gmail/Workspace address,
+   * GMAIL_APP_PASSWORD = a Google app-password (not the account password),
+   * HIRING_REVIEW_EMAIL_FROM = optional "Name <addr>" override for the From header.
+   * Without GMAIL_USER + GMAIL_APP_PASSWORD every send no-ops and logs a warning.
+   */
+  GMAIL_USER: z.string().optional(),
+  GMAIL_APP_PASSWORD: z.string().optional(),
+  HIRING_REVIEW_EMAIL_FROM: z.string().optional(),
+  /**
+   * Base URL for portal links embedded in hire emails (e.g. https://portal.abbilabs.com).
+   * Defaults to http://localhost:3000 for local dev.
+   */
+  APP_URL: z.string().url().optional().default('http://localhost:3000'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

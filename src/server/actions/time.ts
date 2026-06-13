@@ -10,12 +10,16 @@ import { createServerSupabase } from '@/db/clients/server';
 import {
   deleteByBatch,
   deleteEmptyOpenPeriods,
+  fetchApprovalSnapshot,
   fetchLockedPeriodsInRange,
+  restoreApprovals,
   updateApproval,
   updateTrackedSeconds,
   upsertTimeEntries,
 } from '@/db/queries/time';
 import { periodFor } from '@/lib/dates/periods';
+import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
+import { buildUndoPayload } from '@/lib/time/approvalUndo';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -26,7 +30,11 @@ import {
   DeleteBatchSchema,
   EditTotalSchema,
   SetApprovalSchema,
+  UndoApprovalSchema,
 } from '@/types/schemas/time';
+
+export type { ApprovalUndoEntry };
+export { buildUndoPayload };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -41,8 +49,10 @@ const authGuard = async (companyId: string) => {
 
 // ─── Approval ────────────────────────────────────────────────────────────────
 
-/** Approve or reject a set of time entries. */
-export async function setTimeApproval(args: unknown): Promise<ActionResult<{ count: number }>> {
+/** Approve or reject a set of time entries; returns prior approval values for undo. */
+export async function setTimeApproval(
+  args: unknown,
+): Promise<ActionResult<{ count: number; undoEntries: ApprovalUndoEntry[] }>> {
   const parsed = SetApprovalSchema.safeParse(args);
   if (!parsed.success)
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
@@ -53,6 +63,8 @@ export async function setTimeApproval(args: unknown): Promise<ActionResult<{ cou
 
   try {
     const db = await createServerSupabase();
+    // Snapshot BEFORE update so we can undo.
+    const snapshot = await fetchApprovalSnapshot(db, ids);
     await updateApproval(db, ids, status);
     await logEvent({
       companyId,
@@ -60,9 +72,35 @@ export async function setTimeApproval(args: unknown): Promise<ActionResult<{ cou
       entity: companyId,
       detail: { ids_count: ids.length, status },
     });
-    return { ok: true, data: { count: ids.length } };
+    const undoEntries = buildUndoPayload(snapshot, status);
+    return { ok: true, data: { count: ids.length, undoEntries } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Approval update failed.' };
+  }
+}
+
+/** Undo a prior approve/reject by restoring the previous approval values. */
+export async function undoApproval(args: unknown): Promise<ActionResult<{ count: number }>> {
+  const parsed = UndoApprovalSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const { companyId, entries } = parsed.data;
+
+  const guard = await authGuard(companyId);
+  if (!guard.ok) return guard;
+
+  try {
+    const db = await createServerSupabase();
+    await restoreApprovals(db, entries);
+    await logEvent({
+      companyId,
+      action: 'approve_time',
+      entity: companyId,
+      detail: { ids_count: entries.length, status: 'undo' },
+    });
+    return { ok: true, data: { count: entries.length } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Undo failed.' };
   }
 }
 
