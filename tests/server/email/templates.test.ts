@@ -132,7 +132,7 @@ describe('DEFAULT_HIRE_EMAILS', () => {
       name: 'Maria',
       email: 'maria@example.com',
       password: 'Abc-xyz123-4567',
-      portal_url: 'https://portal.abbilabs.com',
+      portal_url: 'https://3a.abbilabs.com/portal',
       wise_referral_url: 'https://wise.com/invite/dic/olivert410',
     };
     const merged = mergeTemplate(DEFAULT_HIRE_EMAILS.welcome.html, vars);

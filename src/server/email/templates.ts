@@ -84,7 +84,7 @@ export interface HireEmailConfig {
 
 export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
   auto_send: true,
-  portal_url: 'https://portal.abbilabs.com',
+  portal_url: 'https://3a.abbilabs.com/portal',
   hubstaff_install_url: 'https://hubstaff.com/download',
   wise_referral_url: 'https://wise.com/invite/dic/olivert410',
   // Email 1 (sent at hire): thank-you + onboarding intro + Wise button + prepare

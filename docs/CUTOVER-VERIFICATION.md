@@ -45,11 +45,17 @@ periods that can't be reverified from stored data alone — they are not what
 cutover risks. Coverage is strongest going forward: every new period stores
 `expected_hours`, so the gate fully covers all post-cutover payroll.
 
-## Recommended cutover sequence (Phase 6)
+## Recommended cutover sequence
 
-1. Between pay periods, freeze writes on the old app.
-2. Apply any new migrations to prod (additive only — old app stays a valid
-   rollback).
-3. `pnpm parity:verify --url <prod> --key <service_key>` → must exit 0.
-4. Set prod env in Vercel (see `docs/DEPLOY.md`), deploy, flip the URL.
-5. Keep the old app deployed as the rollback until a full clean period runs.
+The new app is staged ahead of time at the new subdomain `3a.abbilabs.com` (admin at `/`,
+portal at `/portal`) while the old app keeps serving users — see `docs/CUTOVER-RUNBOOK.md`
+for the full prepare-now / flip-later runbook. At the flip, between pay periods:
+
+1. Freeze writes on the old app.
+2. Disable the old app's Hubstaff cron FIRST (single syncer — refresh tokens are
+   single-use). The new edge function is scheduled only after the flip.
+3. Apply any new migrations to prod (additive only — old app stays a valid rollback).
+4. `pnpm parity:verify --url <prod> --key <service_key>` → must exit 0 (read-only).
+5. Announce `3a.abbilabs.com` to users; schedule the new app's Hubstaff cron.
+6. Keep the old app deployed at `payroll.*` / `portal.*` as the rollback until a full
+   clean period runs.

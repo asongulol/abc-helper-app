@@ -51,12 +51,27 @@ SUPABASE_SERVICE_KEY           = placeholder-service-key-placeholder-service-key
 project and use its real URL + keys instead — but the org is at the free-project
 limit, see the migration handoff §8a.)
 
-### B. Production (cutover — Phase 6 only)
+### B. Production (cutover)
 
 Set the REAL values from the prod Supabase project (`cgsidolrauzsowqlllsz`) plus
-the Wise / Hubstaff / Gmail credentials and `APP_URL` = the public URL. Do this
-only when actually cutting over, between pay periods. Keep new DB migrations
-additive so the old app remains a valid rollback.
+the Wise / Hubstaff / Gmail credentials. The app is single-domain with path-based
+routing — admin at `/`, contractor portal at `/portal` — served from the new
+subdomain `3a.abbilabs.com`. So:
+
+- `APP_URL = https://3a.abbilabs.com` — a **bare origin** (no path). `portalUrl()`
+  in `src/server/actions/portal-admin.ts` appends `/portal`, so hire-email portal
+  links resolve to `https://3a.abbilabs.com/portal`. Do NOT put a path in `APP_URL`.
+- **Supabase Auth redirect URL** — add `https://3a.abbilabs.com/auth/callback` to the
+  prod project's allowed redirect URLs. Admin Google OAuth and contractor magic-link
+  both round-trip through `/auth/callback` (`src/app/auth/callback/route.ts` redirects
+  to `next`, default `/`, then `src/proxy.ts` finishes audience routing). Without this,
+  sign-in fails on the new domain.
+- **Custom domain** — add `3a.abbilabs.com` as a **new** Vercel custom domain (CNAME →
+  Vercel). This is non-destructive: the old `payroll.*` / `portal.*` subdomains keep
+  serving the old app, which stays live as the rollback.
+
+Keep new DB migrations additive so the old app remains a valid rollback. See
+`docs/CUTOVER-RUNBOOK.md` for the full ordered sequence.
 
 ---
 

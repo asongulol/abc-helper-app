@@ -44,8 +44,14 @@ const genTempPassword = (): string =>
 // Internal email helpers
 // ---------------------------------------------------------------------------
 
-/** Build the portal URL base for template merge vars. */
-const portalUrl = (): string => env.APP_URL ?? 'http://localhost:3000';
+/**
+ * Build the portal URL for template merge vars. The app is single-domain with
+ * path-based routing (admin at `/`, contractor portal at `/portal`), so the
+ * link must carry the `/portal` path — a bare-origin link would route a
+ * logged-out contractor to the ADMIN login. APP_URL stays a clean origin.
+ */
+const portalUrl = (): string =>
+  `${(env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/portal`;
 
 /**
  * Look up a worker's display name from the service client.
