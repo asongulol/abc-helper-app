@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'ABC Payroll',
+  title: 'HR & Payroll — PH Contractors',
   description: 'ABC payroll — Hubstaff time → PHP payouts via Wise.',
 };
 
