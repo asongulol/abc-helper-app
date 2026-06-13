@@ -46,6 +46,8 @@ jobs:
         run: pnpm build
         env:
           # Build needs envs to exist; CI uses safe placeholders (never real secrets).
-          # Real values live in the host (Vercel) project settings.
+          # Real values live in the host (Vercel) project settings. These satisfy
+          # the fail-fast schema in src/server/env.ts at build time.
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key-placeholder-anon-key
+          SUPABASE_SERVICE_KEY: placeholder-service-key-placeholder-service-key
