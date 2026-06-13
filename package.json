@@ -21,6 +21,7 @@
     "guardrails": "node scripts/guardrails.mjs",
     "changelog": "node scripts/gen-changelog.mjs",
     "dev:bootstrap": "node scripts/dev-bootstrap.mjs",
+    "parity:verify": "node scripts/parity-verify.mjs",
     "prepare": "lefthook install"
   },
   "devDependencies": {
