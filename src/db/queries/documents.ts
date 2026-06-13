@@ -144,6 +144,99 @@ export const updateDocumentReview = async (
   if (error) throw new Error(`update document review: ${error.message}`);
 };
 
+// ---------------------------------------------------------------------------
+// Expiry-check queries (used by src/server/documents/service.ts and backed by
+// src/lib/documents/expiry.ts — the pure classifier).
+// ---------------------------------------------------------------------------
+
+import type { ExpiryInput } from '@/lib/documents/expiry';
+import type { HiringDocInput } from '@/lib/documents/hiring-review';
+import { ONBOARDING_DOC_KINDS } from '@/lib/documents/hiring-review';
+
+/**
+ * Fetch all active-worker documents that have an expiresOn within
+ * `today + withinDays + 1` (the +1-day server-side slack matches the legacy
+ * edge fn so the pure JS classifier is still authoritative for the boundary).
+ *
+ * Only returns documents for active workers. Caller passes the result to
+ * `classifyExpiry()` from `src/lib/documents/expiry.ts`.
+ */
+export const fetchDocumentsForExpiryCheck = async (
+  db: Db,
+  today: Date,
+  withinDays: number,
+): Promise<ExpiryInput[]> => {
+  const upper = new Date(today.getTime() + (withinDays + 1) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { data, error } = await db
+    .from('documents')
+    .select(
+      'id, kind, title, expires_on, worker_id, workers(first_name, middle_name, last_name, status), companies(name)',
+    )
+    .lte('expires_on', upper)
+    .order('expires_on', { ascending: true });
+
+  if (error) throw new Error(`fetchDocumentsForExpiryCheck: ${error.message}`);
+
+  return (data ?? [])
+    .filter(
+      (d) =>
+        d.expires_on !== null &&
+        d.workers !== null &&
+        (!d.workers.status || d.workers.status === 'active'),
+    )
+    .map((d) => ({
+      workerName:
+        [d.workers?.first_name, d.workers?.middle_name, d.workers?.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || '(unknown)',
+      companyName: (d as { companies?: { name?: string | null } | null }).companies?.name ?? '',
+      kind: d.kind,
+      title: d.title,
+      // Safe: filtered nulls above
+      expiresOn: d.expires_on as string,
+    }));
+};
+
+/**
+ * Fetch onboarding-kind documents for active workers, ordered newest-first.
+ * Caller passes the result to `classifyHiringReview()` from
+ * `src/lib/documents/hiring-review.ts`.
+ */
+export const fetchDocumentsForHiringReview = async (db: Db): Promise<HiringDocInput[]> => {
+  const { data, error } = await db
+    .from('documents')
+    .select(
+      'id, kind, side, review_status, created_at, worker_id, workers(first_name, middle_name, last_name, status, email), companies(name)',
+    )
+    .in('kind', ONBOARDING_DOC_KINDS as Database['public']['Enums']['document_kind'][])
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(`fetchDocumentsForHiringReview: ${error.message}`);
+
+  return (data ?? [])
+    .filter((d) => d.workers !== null && (!d.workers.status || d.workers.status === 'active'))
+    .map((d) => ({
+      workerId: d.worker_id,
+      workerName:
+        [d.workers?.first_name, d.workers?.middle_name, d.workers?.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim() || '(unknown)',
+      companyName: (d as { companies?: { name?: string | null } | null }).companies?.name ?? '',
+      workerEmail: d.workers?.email ?? '',
+      kind: d.kind,
+      side: d.side,
+      reviewStatus: d.review_status,
+      createdAt: d.created_at,
+    }));
+};
+
+// ---------------------------------------------------------------------------
+
 /** Fetch onboarding_progress rows for a list of worker IDs (for stage3 re-eval). */
 export const fetchOnboardingProgressForWorker = async (db: Db, workerId: string) => {
   const { data, error } = await db

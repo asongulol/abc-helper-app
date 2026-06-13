@@ -19,6 +19,11 @@ const EnvSchema = z.object({
   WISE_PROFILE_ID: z.string().optional(),
   /** Hubstaff (time ingestion). */
   HUBSTAFF_REFRESH_TOKEN: z.string().optional(),
+  /**
+   * Optional override for the Hubstaff API base URL (e.g. for mocking in tests).
+   * Defaults to https://api.hubstaff.com/v2 in client.ts.
+   */
+  HUBSTAFF_API_BASE: z.string().url().optional(),
   /** Shared secret for cron-invoked routes (mirrors legacy x-cron-secret). */
   CRON_SECRET: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),

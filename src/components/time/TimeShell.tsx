@@ -12,6 +12,7 @@ import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState, useTransition } from 'react';
 import { CsvImportCard } from './CsvImportCard';
+import { HubstaffSyncButton } from './HubstaffSyncButton';
 import { PeriodPicker } from './PeriodPicker';
 import { TimeApprovalTable } from './TimeApprovalTable';
 
@@ -81,6 +82,15 @@ export const TimeShell = ({
       </div>
 
       <CsvImportCard companyId={companyId} roster={roster} onImported={handleRefresh} />
+
+      <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+        <HubstaffSyncButton
+          companyId={companyId}
+          periodStart={period.start}
+          periodEnd={period.end}
+          onImported={handleRefresh}
+        />
+      </div>
 
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginBottom: 12 }}>
