@@ -1,0 +1,31 @@
+pre-commit:
+  parallel: true
+  commands:
+    check:
+      glob: "*.{js,jsx,ts,tsx,json,jsonc}"
+      run: pnpm biome check --write --no-errors-on-unmatched {staged_files} && git add {staged_files}
+    typecheck:
+      glob: "*.{ts,tsx}"
+      run: pnpm typecheck
+
+pre-push:
+  parallel: false
+  commands:
+    guardrails:
+      run: pnpm guardrails
+    typecheck:
+      run: pnpm typecheck
+    test:
+      run: pnpm test
+    # Best-effort AI changelog from the diff being pushed. Never blocks the push:
+    # the script exits 0 on any error or a missing ANTHROPIC_API_KEY.
+    changelog:
+      run: pnpm changelog
+      fail_text: "changelog generation failed (push not blocked)"
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        grep -qE '^(feat|fix|chore|refactor|docs|test|perf|build|ci|style)(\(.+\))?!?: .+' {1} \
+          || (echo "Commit msg must be Conventional Commits (feat:, fix:, chore:, ...)"; exit 1)

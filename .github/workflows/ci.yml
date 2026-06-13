@@ -1,0 +1,51 @@
+name: CI
+
+# Mirrors the local lefthook checks so nothing slips through when a hook is
+# skipped (--no-verify) or run from a machine without lefthook installed.
+# Checks-only: no deploy, no secrets required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: pnpm biome ci .
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Guardrails (security gate)
+        run: pnpm guardrails
+
+      - name: Tests (Vitest)
+        run: pnpm test
+
+      - name: Build (Next.js)
+        run: pnpm build
+        env:
+          # Build needs envs to exist; CI uses safe placeholders (never real secrets).
+          # Real values live in the host (Vercel) project settings.
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
