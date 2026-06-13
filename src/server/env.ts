@@ -8,7 +8,8 @@ import { z } from 'zod';
  */
 
 const EnvSchema = z.object({
-  NEXT_PUBLIC_SUPABASE_URL: z.string().startsWith('https://', 'must be an https Supabase URL'),
+  // https in hosted envs; http allowed for the local `supabase start` stack.
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url().startsWith('http', 'must be a Supabase URL'),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20),
   SUPABASE_SERVICE_KEY: z.string().min(20),
   /** Admin SSO is restricted to this Google Workspace domain. */
