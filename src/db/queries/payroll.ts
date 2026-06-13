@@ -175,6 +175,8 @@ export const upsertDraftPayments = async (
 };
 
 export type SavedPayment = {
+  /** UUID of the payments row — required for updatePaymentRowAction / deleteStatement. */
+  paymentId: string;
   workerId: string;
   name: string;
   expectedHours: number;
@@ -193,16 +195,245 @@ export type SavedPayment = {
   overridden: boolean;
 };
 
+/* ---------- NEW: list periods with summary totals ---------- */
+
+export type PeriodSummaryRow = {
+  id: string;
+  state: Database['public']['Enums']['pay_period_state'];
+  periodStart: string;
+  periodEnd: string;
+  payDate: string | null;
+  lockedAt: string | null;
+  contractorCount: number;
+  /** Sum of net_php in integer centavos. */
+  totalNetCentavos: number;
+};
+
+/** All pay periods for the company, newest first, with contractor count + net. */
+export const fetchPeriodSummaries = async (
+  db: Db,
+  companyId: string,
+): Promise<PeriodSummaryRow[]> => {
+  const { data: periods, error: e1 } = await db
+    .from('pay_periods')
+    .select('id, state, period_start, period_end, pay_date, locked_at')
+    .eq('company_id', companyId)
+    .order('period_start', { ascending: false });
+  if (e1) throw new Error(`pay_periods: ${e1.message}`);
+  if (!periods?.length) return [];
+
+  const periodIds = periods.map((p) => p.id);
+  const { data: pays, error: e2 } = await db
+    .from('payments')
+    .select('pay_period_id, net_php')
+    .in('pay_period_id', periodIds);
+  if (e2) throw new Error(`payments summary: ${e2.message}`);
+
+  const byPeriod = new Map<string, { count: number; netCentavos: number }>();
+  for (const p of pays ?? []) {
+    const cur = byPeriod.get(p.pay_period_id) ?? { count: 0, netCentavos: 0 };
+    cur.count += 1;
+    cur.netCentavos += Math.round(Number(p.net_php ?? 0) * 100);
+    byPeriod.set(p.pay_period_id, cur);
+  }
+
+  return (periods ?? []).map((p) => {
+    const agg = byPeriod.get(p.id) ?? { count: 0, netCentavos: 0 };
+    return {
+      id: p.id,
+      state: p.state,
+      periodStart: p.period_start,
+      periodEnd: p.period_end,
+      payDate: p.pay_date,
+      lockedAt: p.locked_at,
+      contractorCount: agg.count,
+      totalNetCentavos: agg.netCentavos,
+    };
+  });
+};
+
+/* ---------- NEW: lock / unlock period ---------- */
+
+/** Transition period to 'locked'. Caller must verify no null-rate rows first. */
+export const lockPeriod = async (db: Db, periodId: string, payDate: string): Promise<void> => {
+  const { error } = await db
+    .from('pay_periods')
+    .update({ state: 'locked', locked_at: new Date().toISOString(), pay_date: payDate })
+    .eq('id', periodId);
+  if (error) throw new Error(`lock period: ${error.message}`);
+};
+
+/** Transition period back to 'open'. Refuses 'paid'. */
+export const unlockPeriod = async (db: Db, periodId: string): Promise<void> => {
+  const { data: existing } = await db
+    .from('pay_periods')
+    .select('state')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (existing?.state === 'paid') throw new Error('Period is paid — mark all unpaid first.');
+  const { error } = await db
+    .from('pay_periods')
+    .update({ state: 'open', locked_at: null })
+    .eq('id', periodId);
+  if (error) throw new Error(`unlock period: ${error.message}`);
+};
+
+/* ---------- NEW: update a single payment row ---------- */
+
+export type PaymentRowFields = {
+  grossPhp?: number | null;
+  haPhp?: number;
+  t13Php?: number | null;
+  pddPhp?: number;
+  bonusPhp?: number;
+  miscItems?: unknown;
+  netPhp?: number;
+  payoutMethod?: string | null;
+  fxRate?: number;
+  note?: string | null;
+};
+
+export const updatePaymentRow = async (
+  db: Db,
+  paymentId: string,
+  fields: PaymentRowFields,
+): Promise<void> => {
+  const update: Database['public']['Tables']['payments']['Update'] = {};
+  if ('grossPhp' in fields && fields.grossPhp != null) update.gross_php = fields.grossPhp;
+  if ('haPhp' in fields) update.health_allowance_php = fields.haPhp;
+  if ('t13Php' in fields && fields.t13Php != null) update.thirteenth_month_php = fields.t13Php;
+  if ('pddPhp' in fields) update.pdd_lunch_php = fields.pddPhp;
+  if ('bonusPhp' in fields) update.bonus_php = fields.bonusPhp;
+  if ('miscItems' in fields) update.misc_items = fields.miscItems as unknown as Json;
+  if ('netPhp' in fields) update.net_php = fields.netPhp;
+  if ('payoutMethod' in fields) {
+    update.payout_method = fields.payoutMethod as
+      | Database['public']['Enums']['payout_method']
+      | null;
+  }
+  if ('fxRate' in fields) update.fx_rate = fields.fxRate;
+  if ('note' in fields) update.note = fields.note;
+  const { error } = await db.from('payments').update(update).eq('id', paymentId);
+  if (error) throw new Error(`update payment: ${error.message}`);
+};
+
+/* ---------- NEW: delete statement(s) ---------- */
+
+export const deleteStatement = async (db: Db, paymentId: string): Promise<void> => {
+  const { error } = await db.from('payments').delete().eq('id', paymentId);
+  if (error) throw new Error(`delete statement: ${error.message}`);
+};
+
+export const deleteAllStatements = async (db: Db, payPeriodId: string): Promise<number> => {
+  const { data, error } = await db
+    .from('payments')
+    .delete()
+    .eq('pay_period_id', payPeriodId)
+    .select('id');
+  if (error) throw new Error(`delete statements: ${error.message}`);
+  return (data ?? []).length;
+};
+
+/* ---------- NEW: payments for the process screen ---------- */
+
+export type ProcessPayment = {
+  paymentId: string;
+  workerId: string;
+  name: string;
+  netPhp: number | null;
+  payoutMethod: string | null;
+  status: Database['public']['Enums']['payment_status'];
+  paidAt: string | null;
+  wiseTransferId: string | null;
+  wiseLockedAt: string | null;
+  workerStatus: string | null;
+  workerEmail: string | null;
+};
+
+export const fetchProcessPayments = async (
+  db: Db,
+  payPeriodId: string,
+): Promise<ProcessPayment[]> => {
+  const { data, error } = await db
+    .from('payments')
+    .select(
+      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, workers(first_name, middle_name, last_name, status, email)',
+    )
+    .eq('pay_period_id', payPeriodId)
+    .order('worker_id');
+  if (error) throw new Error(`process payments: ${error.message}`);
+  return (data ?? []).map((p) => ({
+    paymentId: p.id,
+    workerId: p.worker_id,
+    name: [p.workers?.first_name, p.workers?.middle_name, p.workers?.last_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim(),
+    netPhp: p.net_php,
+    payoutMethod: p.payout_method,
+    status: p.status,
+    paidAt: p.paid_at,
+    wiseTransferId: p.wise_transfer_id,
+    wiseLockedAt: p.wise_locked_at,
+    workerStatus: p.workers?.status ?? null,
+    workerEmail: p.workers?.email ?? null,
+  }));
+};
+
+/* ---------- NEW: mark paid / unpaid ---------- */
+
+export const markPaymentsPaid = async (
+  db: Db,
+  paymentIds: string[],
+  paidAt: string,
+): Promise<void> => {
+  if (paymentIds.length === 0) return;
+  const { error } = await db
+    .from('payments')
+    .update({ status: 'sent', paid_at: paidAt })
+    .in('id', paymentIds);
+  if (error) throw new Error(`mark paid: ${error.message}`);
+};
+
+export const markPaymentsUnpaid = async (db: Db, paymentIds: string[]): Promise<void> => {
+  if (paymentIds.length === 0) return;
+  const { error } = await db
+    .from('payments')
+    .update({ status: 'draft', paid_at: null })
+    .in('id', paymentIds);
+  if (error) throw new Error(`mark unpaid: ${error.message}`);
+};
+
+export const stepPeriodToLocked = async (db: Db, periodId: string): Promise<void> => {
+  const { error } = await db.from('pay_periods').update({ state: 'locked' }).eq('id', periodId);
+  if (error) throw new Error(`step to locked: ${error.message}`);
+};
+
+/* ---------- NEW: wise row lock ---------- */
+
+export const setWiseRowLock = async (
+  db: Db,
+  paymentId: string,
+  lockedAt: string | null,
+): Promise<void> => {
+  const { error } = await db
+    .from('payments')
+    .update({ wise_locked_at: lockedAt })
+    .eq('id', paymentId);
+  if (error) throw new Error(`wise row lock: ${error.message}`);
+};
+
 /** Saved draft/locked snapshot rows for a period (legacy `loadSaved`). */
 export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<SavedPayment[]> => {
   const { data, error } = await db
     .from('payments')
     .select(
-      'worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
   return (data ?? []).map((p) => ({
+    paymentId: p.id,
     workerId: p.worker_id,
     name: [p.workers?.first_name, p.workers?.middle_name, p.workers?.last_name]
       .filter(Boolean)

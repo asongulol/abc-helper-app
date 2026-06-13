@@ -46,12 +46,13 @@ try {
 
 let diff = '';
 try {
-  diff = execSync(
-    `git diff ${range} -- . ` +
-      "':(exclude)pnpm-lock.yaml' ':(exclude).next/**' " +
-      "':(exclude)dist/**' ':(exclude)node_modules/**' ':(exclude)*.tsbuildinfo'",
-    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
-  );
+  const excludes =
+    "':(exclude)pnpm-lock.yaml' ':(exclude).next/**' " +
+    "':(exclude)dist/**' ':(exclude)node_modules/**' ':(exclude)*.tsbuildinfo'";
+  diff = execSync(`git diff ${range} -- . ${excludes}`, {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
 } catch {
   quietExit('Could not compute diff; skipping.');
 }
@@ -59,13 +60,13 @@ try {
 diff = diff.slice(0, MAX_DIFF_CHARS);
 if (!diff.trim()) quietExit('No meaningful diff to document; skipping.');
 
-const prompt =
+const instructions =
   'You are writing a changelog entry for a contractor-management, payroll, and ' +
   'facility-invoicing app (Next.js + Supabase; money movement is draft-only). ' +
   'Given the git diff below, write a concise plain-English summary of what changed ' +
   'and why it matters. Group under headings Added / Changed / Fixed (omit any that ' +
-  'do not apply). Short bullet points. Do not invent changes absent from the diff.\n\n' +
-  diff;
+  'do not apply). Short bullet points. Do not invent changes absent from the diff.';
+const prompt = `${instructions}\n\n${diff}`;
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 

@@ -4,16 +4,18 @@ import { useId, useState } from 'react';
 import { Modal } from './Modal';
 
 export interface ConfirmDangerModalProps {
-  title?: string;
+  // Optional props accept an explicit `undefined` (exactOptionalPropertyTypes)
+  // so callers can pass conditionally-computed strings without a spread dance.
+  title?: string | undefined;
   /** Plain-language description of what is about to happen. */
-  message?: string;
+  message?: string | undefined;
   /** Consequence callout (rendered as a warning banner), e.g. "This cannot be undone." */
-  consequence?: string;
+  consequence?: string | undefined;
   /** When set, the user must type this word (case-insensitive) to enable Confirm. */
-  confirmWord?: string;
-  confirmLabel?: string;
+  confirmWord?: string | undefined;
+  confirmLabel?: string | undefined;
   /** Disables both buttons while the confirmed action runs. */
-  busy?: boolean;
+  busy?: boolean | undefined;
   onConfirm: () => void;
   onCancel: () => void;
 }

@@ -1,0 +1,134 @@
+'use client';
+
+import { Modal, Spinner } from '@/components/ui';
+import type { RosterWorker } from '@/db/queries/workers';
+import { addContractor } from '@/server/actions/contractors';
+import { type FormEvent, useState, useTransition } from 'react';
+
+type Props = {
+  companyId: string;
+  onClose: () => void;
+  onCreated: (worker: RosterWorker) => void;
+};
+
+export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [contract, setContract] = useState<'FT' | 'PT'>('FT');
+  const [error, setError] = useState('');
+  const [isPending, startTransition] = useTransition();
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!firstName.trim()) {
+      setError('First name is required.');
+      return;
+    }
+    if (!lastName.trim()) {
+      setError('Last name is required.');
+      return;
+    }
+    setError('');
+
+    startTransition(async () => {
+      const result = await addContractor({
+        companyId,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        contract,
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const workerId = result.data?.workerId ?? '';
+      // Build a minimal RosterWorker shape so the caller can open the profile immediately.
+      const worker: RosterWorker = {
+        workerId,
+        firstName: firstName.trim(),
+        middleName: null,
+        lastName: lastName.trim(),
+        email: null,
+        mobile: null,
+        phAddress: null,
+        permanentAddress: null,
+        addressLandmark: null,
+        postalCode: null,
+        hireDate: null,
+        workerStatus: 'active',
+        payoutMethod: null,
+        healthAllowanceEligible: true,
+        thirteenthMonthEligible: true,
+        linkId: '',
+        companyId,
+        contract,
+        role: null,
+        hubstaffName: null,
+        weeklyHours: null,
+        linkStatus: 'active',
+      };
+      onCreated(worker);
+    });
+  }
+
+  return (
+    <Modal title="Add contractor" onClose={onClose} maxWidth={460}>
+      <p className="sub" style={{ marginBottom: 16 }}>
+        Creates a minimal record. Fill in the full profile in the next step.
+      </p>
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label htmlFor="ac-first">
+            First name <span className="req">*</span>
+          </label>
+          <input
+            id="ac-first"
+            value={firstName}
+            onChange={(e) => setFirstName(e.target.value)}
+            placeholder="First name"
+            aria-invalid={error && !firstName.trim() ? 'true' : undefined}
+            disabled={isPending}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="ac-last">
+            Last name <span className="req">*</span>
+          </label>
+          <input
+            id="ac-last"
+            value={lastName}
+            onChange={(e) => setLastName(e.target.value)}
+            placeholder="Last name"
+            aria-invalid={error && !lastName.trim() ? 'true' : undefined}
+            disabled={isPending}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="ac-contract">Contract type</label>
+          <select
+            id="ac-contract"
+            value={contract}
+            onChange={(e) => setContract(e.target.value as 'FT' | 'PT')}
+            disabled={isPending}
+          >
+            <option value="FT">Full-time (FT)</option>
+            <option value="PT">Part-time (PT)</option>
+          </select>
+        </div>
+        {error && (
+          <div className="field-err" style={{ marginBottom: 8 }}>
+            {error}
+          </div>
+        )}
+        <div className="actions">
+          <button type="button" className="btn ghost" onClick={onClose} disabled={isPending}>
+            Cancel
+          </button>
+          <button type="submit" className="btn" disabled={isPending}>
+            {isPending ? <Spinner /> : 'Create & open profile'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}

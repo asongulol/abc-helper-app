@@ -12,7 +12,7 @@ export const nameTokens = (raw: string | null | undefined): string[] => {
   if (!raw) return [];
   const s = String(raw)
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // strip accents
+    .replace(/\p{M}/gu, '') // strip accents
     .replace(/[.,]/g, ' ')
     .replace(/\bMa\b/gi, 'Maria')
     .replace(/\b(jr|sr|ii|iii|iv|n)\b/gi, ' ');

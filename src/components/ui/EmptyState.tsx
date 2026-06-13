@@ -7,10 +7,13 @@ import type { ReactNode } from 'react';
 export const EmptyState = ({
   icon,
   message,
+  children,
   action,
 }: {
   icon?: ReactNode;
-  message: ReactNode;
+  /** Primary content. `children` is accepted as an alias for ergonomic JSX. */
+  message?: ReactNode;
+  children?: ReactNode;
   /** Optional call-to-action slot (e.g. a primary button). */
   action?: ReactNode;
 }) => (
@@ -20,7 +23,7 @@ export const EmptyState = ({
         {icon}
       </div>
     )}
-    <div>{message}</div>
+    <div>{message ?? children}</div>
     {action != null && <div style={{ marginTop: 12 }}>{action}</div>}
   </div>
 );

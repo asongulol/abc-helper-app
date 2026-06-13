@@ -1,71 +1,768 @@
 'use server';
 
 /**
- * Contractor-portal actions — CONTRACT FILE (legacy edge fns `portal-self`,
- * `portal-sign`, `portal-countersign`, `portal-review`).
- * Implementations are filled in by the server-layer build; the portal screens
- * and admin review screens code against these signatures.
+ * Contractor-portal actions — IMPLEMENTED (ported from legacy edge fns
+ * `portal-self`, `portal-sign`, `portal-countersign`, `portal-review`).
+ *
+ * Contractor actions use requireWorker() (RLS user client, own rows).
+ * Admin review/countersign use requireAdmin() + createServiceClient() after
+ * role checks (service client needed because RLS has no contractor write policy).
  */
 
+import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
+import {
+  fetchApprovedDocumentsForWorker,
+  fetchOnboardingProgressForWorker,
+  updateDocumentReview,
+  updateOnboardingProgressStage3,
+} from '@/db/queries/documents';
+import { fetchOwnProfile, fetchPortalSettings } from '@/db/queries/portal';
+import type { Database } from '@/db/types';
 import type { ActionResult } from '@/server/actions/portal-admin';
+import { logEvent } from '@/server/audit';
+import { requireAdmin } from '@/server/auth/admin';
+import { requireWorker } from '@/server/auth/worker';
 
-const notWired = (): never => {
-  throw new Error('portal actions not wired yet — see src/server/actions/portal.ts');
-};
+/* ---------- SAFE_FIELDS mirror of portal-self edge fn ---------- */
+
+const SAFE_FIELDS = new Set([
+  'first_name',
+  'middle_name',
+  'last_name',
+  'mobile',
+  'ph_address',
+  'date_of_birth',
+  'gcash',
+  'paymaya',
+  'paypal',
+  'wise_tag',
+  'emergency_name',
+  'emergency_relationship',
+  'emergency_mobile',
+  'permanent_address',
+  'address_landmark',
+  'postal_code',
+  'marital_status',
+  'education_level',
+  'course',
+  'year_graduated',
+  'school',
+  'nickname',
+  'favorite_color',
+  'favorite_food',
+  'tshirt_size',
+  'shoe_size',
+  'hobbies',
+  'motto',
+]);
+
+const EXTRA_KEYS = new Set([
+  'nickname',
+  'favorite_color',
+  'favorite_food',
+  'tshirt_size',
+  'shoe_size',
+  'hobbies',
+  'motto',
+]);
+
+type FieldPatch = Record<string, string | null>;
+
+/** The signed-agreement set, in stage-1 signing order (DB `agreement_kind` enum). */
+type AgreementKind = Database['public']['Enums']['agreement_kind'];
+const AGREEMENT_ORDER: readonly AgreementKind[] = [
+  'ic_agreement',
+  'non_compete',
+  'confidentiality_nda',
+  'baa',
+];
+
+function buildPatch(
+  inFields: Record<string, string | null>,
+  allowed: Set<string>,
+): { patch: FieldPatch; extra: FieldPatch } {
+  const patch: FieldPatch = {};
+  const extra: FieldPatch = {};
+  for (const [k, v] of Object.entries(inFields)) {
+    if (!allowed.has(k)) continue;
+    const val = typeof v === 'string' && v.trim() === '' ? null : v;
+    if (EXTRA_KEYS.has(k)) extra[k] = val;
+    else patch[k] = val;
+  }
+  return { patch, extra };
+}
 
 /* ---------- portal-self (contractor, own rows) ---------- */
 
+/**
+ * Update own whitelisted profile fields. Intersection of admin editable_fields
+ * config and SAFE_FIELDS (mirrors portal-self edge fn exactly).
+ */
 export async function updateOwnProfile(
-  _fields: Record<string, string | null>,
+  fields: Record<string, string | null>,
 ): Promise<ActionResult> {
-  return notWired();
+  const worker = await requireWorker();
+
+  try {
+    const db = await createServerSupabase();
+    const settings = await fetchPortalSettings(db);
+    const adminAllowed: string[] = Array.isArray(settings?.editable_fields)
+      ? (settings.editable_fields as string[])
+      : [];
+    const allowed = new Set(adminAllowed.filter((f) => SAFE_FIELDS.has(f)));
+
+    const { patch, extra } = buildPatch(fields, allowed);
+
+    // Merge profile_extras without clobbering other culture fields
+    if (Object.keys(extra).length > 0) {
+      const profile = await fetchOwnProfile(db, worker.workerId);
+      const cur =
+        profile?.profile_extras && typeof profile.profile_extras === 'object'
+          ? (profile.profile_extras as Record<string, unknown>)
+          : {};
+      const merged: Record<string, unknown> = { ...cur };
+      for (const [k, v] of Object.entries(extra)) {
+        if (v === null) delete merged[k];
+        else merged[k] = v;
+      }
+      (patch as Record<string, unknown>).profile_extras = merged;
+    }
+
+    if (!Object.keys(patch).length) {
+      return {
+        ok: false,
+        error: 'No editable fields in request (check the admin portal settings).',
+      };
+    }
+
+    // Service client required because RLS has no direct worker write policy for
+    // contractors; the whitelist above is the security gate.
+    const svc = createServiceClient();
+    // `patch` is the whitelisted-field map (the security gate above); cast to the
+    // table Update type for the typed client.
+    const update = patch as Database['public']['Tables']['workers']['Update'];
+    const { error } = await svc.from('workers').update(update).eq('id', worker.workerId);
+    if (error) return { ok: false, error: `Update failed: ${error.message}` };
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+  }
 }
 
-export async function completeOnboardingTab(_args: { tab: string }): Promise<ActionResult> {
-  return notWired();
+/** Mark a Stage-2 onboarding tab as complete (mirrors portal-self complete_tab). */
+export async function completeOnboardingTab(args: { tab: string }): Promise<ActionResult> {
+  const worker = await requireWorker();
+  const validTabs = new Set(['contact', 'personal', 'payout', 'about']);
+  if (!validTabs.has(args.tab)) return { ok: false, error: 'Unknown tab.' };
+
+  try {
+    const db = await createServerSupabase();
+
+    // Verify stage 1 done
+    const { data: op } = await db
+      .from('onboarding_progress')
+      .select('stage1_complete, completed_at, current_stage')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle();
+    if (!op || !op.stage1_complete)
+      return { ok: false, error: 'Finish signing your agreements first.' };
+    if (op.completed_at) return { ok: false, error: 'Onboarding is already complete.' };
+
+    // Service client for the worker write (no contractor write RLS).
+    const svc = createServiceClient();
+    const now = new Date().toISOString();
+
+    // Re-validate tabs from current worker row
+    const { data: w } = await svc
+      .from('workers')
+      .select(
+        'first_name, last_name, mobile, ph_address, date_of_birth, postal_code, emergency_name, emergency_relationship, emergency_mobile, marital_status, gcash, paymaya, paypal, wise_tag',
+      )
+      .eq('id', worker.workerId)
+      .maybeSingle();
+
+    // Minimal validation mirrors portal-self validateTab logic
+    const nonEmpty = (v: unknown) => v != null && String(v).trim() !== '';
+    const errors: string[] = [];
+    if (args.tab === 'contact') {
+      if (!nonEmpty(w?.first_name)) errors.push('first_name');
+      if (!nonEmpty(w?.last_name)) errors.push('last_name');
+      if (!nonEmpty(w?.ph_address)) errors.push('ph_address');
+      if (!nonEmpty(w?.mobile)) errors.push('mobile');
+      if (!nonEmpty(w?.date_of_birth)) errors.push('date_of_birth');
+    } else if (args.tab === 'personal') {
+      if (!nonEmpty(w?.emergency_name)) errors.push('emergency_name');
+      if (!nonEmpty(w?.emergency_relationship)) errors.push('emergency_relationship');
+      if (!nonEmpty(w?.emergency_mobile)) errors.push('emergency_mobile');
+      if (!nonEmpty(w?.marital_status)) errors.push('marital_status');
+    } else if (args.tab === 'payout') {
+      if (
+        !['gcash', 'paymaya', 'paypal', 'wise_tag'].some((f) =>
+          nonEmpty((w as Record<string, unknown> | null)?.[f]),
+        )
+      ) {
+        errors.push('payout');
+      }
+    }
+
+    // Check overall stage2 completion
+    const contactOk =
+      nonEmpty(w?.first_name) &&
+      nonEmpty(w?.last_name) &&
+      nonEmpty(w?.ph_address) &&
+      nonEmpty(w?.mobile) &&
+      nonEmpty(w?.date_of_birth);
+    const personalOk =
+      nonEmpty(w?.emergency_name) &&
+      nonEmpty(w?.emergency_relationship) &&
+      nonEmpty(w?.emergency_mobile) &&
+      nonEmpty(w?.marital_status);
+    const payoutOk = ['gcash', 'paymaya', 'paypal', 'wise_tag'].some((f) =>
+      nonEmpty((w as Record<string, unknown> | null)?.[f]),
+    );
+    const stage2Complete = contactOk && personalOk && payoutOk;
+
+    const RANK: Record<string, number> = {
+      stage1_sign: 0,
+      stage2_profile: 1,
+      stage3_docs: 2,
+      complete: 3,
+    };
+    const curStage = op.current_stage ?? 'stage2_profile';
+    const nextStage =
+      stage2Complete && (RANK.stage3_docs ?? 0) > (RANK[curStage] ?? 0) ? 'stage3_docs' : curStage;
+
+    const { error: opErr } = await svc
+      .from('onboarding_progress')
+      .update({
+        stage2_last_tab: args.tab,
+        stage2_complete: stage2Complete,
+        current_stage: nextStage,
+        updated_at: now,
+      })
+      .eq('worker_id', worker.workerId);
+    if (opErr) return { ok: false, error: `Progress update failed: ${opErr.message}` };
+
+    return {
+      ok: true,
+      ...(errors.length
+        ? { message: `Tab saved with ${errors.length} field(s) still required.` }
+        : {}),
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Tab completion failed.' };
+  }
 }
 
+/** Advance from Stage 1 when all required agreements are already signed. */
 export async function advanceFromStage1(): Promise<ActionResult> {
-  return notWired();
+  const worker = await requireWorker();
+
+  try {
+    const db = await createServerSupabase();
+    const { data: op } = await db
+      .from('onboarding_progress')
+      .select('stage1_complete, completed_at, current_stage')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle();
+    if (!op) return { ok: false, error: 'No onboarding in progress for this login.' };
+    if (op.completed_at) return { ok: true, message: 'Already complete.' };
+
+    // Check required agreements signed
+    const { data: sigs } = await db
+      .from('onboarding_signatures')
+      .select('agreement_kind')
+      .eq('worker_id', worker.workerId)
+      .eq('status', 'signed');
+    const signed = new Set((sigs ?? []).map((s) => s.agreement_kind));
+    const allSigned = AGREEMENT_ORDER.every((k) => signed.has(k));
+    if (!allSigned) return { ok: false, error: 'Sign all your agreements first.' };
+
+    const RANK: Record<string, number> = {
+      stage1_sign: 0,
+      stage2_profile: 1,
+      stage3_docs: 2,
+      complete: 3,
+    };
+    const curStage = op.current_stage ?? 'stage1_sign';
+    const nextStage =
+      (RANK.stage2_profile ?? 0) > (RANK[curStage] ?? 0) ? 'stage2_profile' : curStage;
+
+    // Service client: no contractor write RLS
+    const svc = createServiceClient();
+    const { error } = await svc
+      .from('onboarding_progress')
+      .update({
+        stage1_complete: true,
+        current_stage: nextStage,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('worker_id', worker.workerId);
+    if (error) return { ok: false, error: `Could not advance: ${error.message}` };
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Advance failed.' };
+  }
 }
 
+/** Self-complete onboarding when all required docs are approved. */
 export async function finishOnboarding(): Promise<ActionResult> {
-  return notWired();
+  const worker = await requireWorker();
+
+  try {
+    const db = await createServerSupabase();
+    const { data: op } = await db
+      .from('onboarding_progress')
+      .select('stage1_complete, stage2_complete, completed_at')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle();
+    if (!op) return { ok: false, error: 'No onboarding in progress for this login.' };
+    if (op.completed_at) return { ok: true, message: 'Already complete.' };
+    if (!op.stage1_complete || !op.stage2_complete)
+      return { ok: false, error: 'Finish your agreements and profile first.' };
+
+    // Service client for the update + approved docs read (no contractor write RLS)
+    const svc = createServiceClient();
+    const { data: approved } = await svc
+      .from('documents')
+      .select('id, kind, side, storage_path, review_status')
+      .eq('worker_id', worker.workerId)
+      .in('review_status', ['approved', 'waived', 'deferred']);
+
+    const required = [
+      { kind: 'resume' },
+      { kind: 'diploma' },
+      { kind: 'nbi_clearance' },
+      { kind: 'gov_id', sides: ['front', 'back'] },
+    ];
+    const evidence: Record<string, Set<string>> = {};
+    const sidesSeen: Record<string, Set<string>> = {};
+    for (const r of approved ?? []) {
+      if (!evidence[r.kind]) evidence[r.kind] = new Set();
+      (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
+      if (r.side) {
+        if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
+        (sidesSeen[r.kind] as Set<string>).add(r.side);
+      }
+    }
+    const stage3Complete = required.every((d) => {
+      if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
+        const have = sidesSeen[d.kind] ?? new Set<string>();
+        return d.sides.every((s) => have.has(s));
+      }
+      return (evidence[d.kind]?.size ?? 0) >= 1;
+    });
+    if (!stage3Complete) {
+      return {
+        ok: false,
+        error: 'Your required documents are still being reviewed — finish once they are approved.',
+      };
+    }
+
+    const now = new Date().toISOString();
+    const { error } = await svc
+      .from('onboarding_progress')
+      .update({
+        stage3_complete: true,
+        completed_at: now,
+        current_stage: 'complete',
+        updated_at: now,
+      })
+      .eq('worker_id', worker.workerId);
+    if (error) return { ok: false, error: `Could not finish onboarding: ${error.message}` };
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Finish onboarding failed.' };
+  }
 }
 
 /* ---------- portal-sign (contractor signature) ---------- */
 
-export async function signAgreement(_args: {
+/**
+ * Sign an agreement. Stores signature_data (data-url or typed name) in
+ * onboarding_signatures.signature_data — same column the legacy edge fn used.
+ */
+export async function signAgreement(args: {
   agreementKey: string;
   signatureDataUrl: string;
   typedName: string;
 }): Promise<ActionResult> {
-  return notWired();
+  const worker = await requireWorker();
+
+  const validKinds = new Set<string>(AGREEMENT_ORDER);
+  if (!validKinds.has(args.agreementKey)) return { ok: false, error: 'Unknown agreement kind.' };
+  // Validated above — narrow the public `string` contract to the DB enum.
+  const agreementKey = args.agreementKey as AgreementKind;
+  if (!args.typedName.trim()) return { ok: false, error: 'Signed legal name required.' };
+
+  // Validate drawn signature data-url if present
+  const signatureData: string | null = args.signatureDataUrl || null;
+  if (signatureData) {
+    const isDataUrl = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+=*$/.test(signatureData);
+    const isTypedName = !signatureData.startsWith('data:');
+    if (!isDataUrl && !isTypedName) {
+      return { ok: false, error: 'Signature must be a data:image URI or typed name.' };
+    }
+    if (signatureData.length > 1_000_000) return { ok: false, error: 'Signature data too large.' };
+  }
+
+  try {
+    // Service client required: no contractor write policy on onboarding_signatures
+    const svc = createServiceClient();
+
+    // Enforce signing order
+    const { data: preSigs } = await svc
+      .from('onboarding_signatures')
+      .select('agreement_kind')
+      .eq('worker_id', worker.workerId)
+      .eq('status', 'signed');
+    const preSigned = new Set((preSigs ?? []).map((s) => s.agreement_kind));
+    const order = AGREEMENT_ORDER;
+    const idx = order.indexOf(agreementKey);
+    for (let i = 0; i < idx; i++) {
+      const prev = order[i];
+      if (prev && !preSigned.has(prev)) {
+        return {
+          ok: false,
+          error: `Sign the agreements in order — "${prev}" must be signed first.`,
+        };
+      }
+    }
+
+    const now = new Date().toISOString();
+    const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(
+      new Date(),
+    );
+
+    // Insert signature (ignore-duplicates = immutable evidence)
+    const { error: insErr } = await svc.from('onboarding_signatures').upsert(
+      {
+        worker_id: worker.workerId,
+        agreement_kind: agreementKey,
+        doc_version: '1',
+        signed_legal_name: args.typedName.trim(),
+        signature_method: signatureData?.startsWith('data:') ? 'drawn' : 'typed',
+        signature_data: signatureData,
+        scrolled_to_end: true,
+        signed_date: todayManila,
+        status: 'signed',
+      },
+      { onConflict: 'worker_id,agreement_kind,doc_version', ignoreDuplicates: true },
+    );
+    if (insErr) return { ok: false, error: `Could not record signature: ${insErr.message}` };
+
+    // Re-evaluate stage 1
+    const { data: postSigs } = await svc
+      .from('onboarding_signatures')
+      .select('agreement_kind')
+      .eq('worker_id', worker.workerId)
+      .eq('status', 'signed');
+    const signedNow = new Set((postSigs ?? []).map((s) => s.agreement_kind));
+    const stage1Complete = order.every((k) => signedNow.has(k));
+
+    const { data: cur } = await svc
+      .from('onboarding_progress')
+      .select('current_stage, completed_at')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle();
+    const RANK: Record<string, number> = {
+      stage1_sign: 0,
+      stage2_profile: 1,
+      stage3_docs: 2,
+      complete: 3,
+    };
+    const desired = stage1Complete ? 'stage2_profile' : 'stage1_sign';
+    const curStage = cur?.current_stage ?? 'stage1_sign';
+    const nextStage = cur?.completed_at
+      ? curStage
+      : (RANK[desired] ?? 0) > (RANK[curStage] ?? 0)
+        ? desired
+        : curStage;
+
+    await svc
+      .from('onboarding_progress')
+      .update({
+        stage1_last_kind: agreementKey,
+        stage1_complete: stage1Complete,
+        current_stage: nextStage,
+        updated_at: now,
+      })
+      .eq('worker_id', worker.workerId);
+
+    await logEvent({
+      action: 'agreement.signed',
+      entity: `${worker.workerId} · ${args.agreementKey}`,
+      detail: {
+        worker_id: worker.workerId,
+        agreement_kind: args.agreementKey,
+        stage1_complete: stage1Complete,
+      },
+    });
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Sign failed.' };
+  }
 }
 
 /* ---------- portal-countersign (admin) ---------- */
 
-export async function countersignAgreement(_args: {
+/**
+ * Admin countersigns an agreement. Requires can_countersign flag.
+ * Service client required: writes onboarding_agreements (no contractor write RLS).
+ */
+export async function countersignAgreement(args: {
   workerId: string;
   agreementKey: string;
   signatureDataUrl: string;
 }): Promise<ActionResult> {
-  return notWired();
+  const admin = await requireAdmin();
+  if (!admin.canCountersign)
+    return { ok: false, error: 'Your admin account does not have countersign permission.' };
+
+  const validKinds = new Set<string>(AGREEMENT_ORDER);
+  if (!validKinds.has(args.agreementKey)) return { ok: false, error: 'Unknown agreement kind.' };
+  const agreementKey = args.agreementKey as AgreementKind;
+
+  try {
+    // Service client required: countersign writes need service role (admin verified above).
+    const svc = createServiceClient();
+
+    // Contractor must have signed first
+    const { data: sigs } = await svc
+      .from('onboarding_signatures')
+      .select('agreement_kind')
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', agreementKey)
+      .eq('status', 'signed');
+    if (!sigs?.length)
+      return { ok: false, error: 'The contractor has not signed this agreement yet.' };
+
+    // Check existing + immutability
+    const { data: existing } = await svc
+      .from('onboarding_agreements')
+      .select('countersigned_at, countersigner_user_id, countersigner_name')
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', agreementKey)
+      .maybeSingle();
+    if (existing?.countersigned_at)
+      return { ok: false, error: 'This agreement is already countersigned.' };
+    if (existing?.countersigner_user_id && existing.countersigner_user_id !== admin.userId) {
+      return {
+        ok: false,
+        error: `Assigned to ${existing.countersigner_name ?? 'another admin'} — only the assigned countersigner may sign.`,
+      };
+    }
+
+    const now = new Date().toISOString();
+    const method = args.signatureDataUrl.startsWith('data:') ? 'drawn' : 'typed';
+    const { error } = await svc.from('onboarding_agreements').upsert(
+      {
+        worker_id: args.workerId,
+        agreement_kind: agreementKey,
+        countersigned_by: admin.userId,
+        countersigned_name: admin.name ?? admin.email,
+        countersigner_user_id: admin.userId,
+        countersigner_name: admin.name ?? admin.email,
+        countersign_method: method,
+        countersign_data: args.signatureDataUrl,
+        countersigned_at: now,
+        updated_at: now,
+      },
+      { onConflict: 'worker_id,agreement_kind' },
+    );
+    if (error) return { ok: false, error: `Countersign failed: ${error.message}` };
+
+    await logEvent({
+      action: 'agreement.countersigned',
+      entity: `${args.workerId} · ${args.agreementKey}`,
+      detail: {
+        worker_id: args.workerId,
+        agreement_kind: args.agreementKey,
+        countersigned_name: admin.name ?? admin.email,
+        method,
+      },
+    });
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Countersign failed.' };
+  }
 }
 
 /* ---------- portal-review (admin doc review) ---------- */
 
-export async function reviewDocument(_args: {
+/**
+ * Review a document (approve/needs_replacement/waive/defer).
+ * Service client required: writes documents table (admin verified above).
+ */
+export async function reviewDocument(args: {
   documentId: string;
   decision: 'approve' | 'needs_replacement' | 'waive' | 'defer';
   note?: string;
 }): Promise<ActionResult> {
-  return notWired();
+  const admin = await requireAdmin();
+
+  if (args.decision === 'needs_replacement' && !args.note?.trim())
+    return { ok: false, error: 'A reason is required when requesting a replacement.' };
+
+  try {
+    // Service client required: document review writes need service role (admin verified above).
+    const svc = createServiceClient();
+    const now = new Date();
+
+    const { data: doc } = await svc
+      .from('documents')
+      .select('id, worker_id, kind, issued_on, review_status')
+      .eq('id', args.documentId)
+      .maybeSingle();
+    if (!doc) return { ok: false, error: 'Document not found.' };
+
+    // NBI freshness guard on approve
+    if (args.decision === 'approve' && doc.kind === 'nbi_clearance' && doc.issued_on) {
+      const issued = new Date(`${doc.issued_on}T00:00:00Z`);
+      const sixMonthsAfter = new Date(issued);
+      sixMonthsAfter.setUTCMonth(sixMonthsAfter.getUTCMonth() + 6);
+      if (sixMonthsAfter < now) {
+        return {
+          ok: false,
+          error:
+            'NBI clearance is older than 6 months — request a replacement, or confirm override.',
+        };
+      }
+    }
+
+    let reviewStatus: 'approved' | 'needs_replacement' | 'waived' | 'deferred';
+    if (args.decision === 'approve') reviewStatus = 'approved';
+    else if (args.decision === 'needs_replacement') reviewStatus = 'needs_replacement';
+    else if (args.decision === 'waive') reviewStatus = 'waived';
+    else reviewStatus = 'deferred';
+
+    await updateDocumentReview(
+      svc,
+      args.documentId,
+      reviewStatus,
+      admin.userId,
+      args.note?.trim() ?? null,
+    );
+
+    // Re-eval stage 3 completion
+    const db = await createServerSupabase();
+    const [approvedDocs, progress] = await Promise.all([
+      fetchApprovedDocumentsForWorker(svc, doc.worker_id),
+      fetchOnboardingProgressForWorker(db, doc.worker_id),
+    ]);
+
+    const required = [
+      { kind: 'resume' },
+      { kind: 'diploma' },
+      { kind: 'nbi_clearance' },
+      { kind: 'gov_id', sides: ['front', 'back'] },
+    ];
+    const evidence: Record<string, Set<string>> = {};
+    const sidesSeen: Record<string, Set<string>> = {};
+    const cleared: Record<string, boolean> = {};
+    for (const r of approvedDocs) {
+      if (r.review_status === 'waived' || r.review_status === 'deferred') {
+        cleared[r.kind] = true;
+        continue;
+      }
+      if (!evidence[r.kind]) evidence[r.kind] = new Set();
+      (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
+      if (r.side) {
+        if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
+        (sidesSeen[r.kind] as Set<string>).add(r.side);
+      }
+    }
+    const stage3Complete = required.every((d) => {
+      if (cleared[d.kind]) return true;
+      if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
+        const have = sidesSeen[d.kind] ?? new Set<string>();
+        return d.sides.every((s) => have.has(s));
+      }
+      return (evidence[d.kind]?.size ?? 0) >= 1;
+    });
+
+    const fully = !!(progress?.stage1_complete && progress.stage2_complete && stage3Complete);
+    const onboardingComplete = fully && !progress?.completed_at;
+    await updateOnboardingProgressStage3(svc, doc.worker_id, stage3Complete, onboardingComplete);
+
+    if (onboardingComplete) {
+      await logEvent({
+        action: 'onboarding.completed',
+        entity: doc.worker_id,
+        detail: { worker_id: doc.worker_id },
+      });
+    }
+
+    await logEvent({
+      action: `document.${reviewStatus}`,
+      entity: `${doc.kind} · ${doc.worker_id}`,
+      detail: {
+        document_id: args.documentId,
+        kind: doc.kind,
+        ...(args.note ? { reason: args.note } : {}),
+      },
+    });
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Review failed.' };
+  }
 }
 
-export async function setSignedDate(_args: {
+/**
+ * Set the editable signed_date on a signature (admin correction).
+ * Service client required: writes onboarding_signatures (admin verified above).
+ */
+export async function setSignedDate(args: {
   documentId: string;
   signedDate: string;
 }): Promise<ActionResult> {
-  return notWired();
+  const admin = await requireAdmin();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(args.signedDate))
+    return { ok: false, error: 'signedDate must be YYYY-MM-DD.' };
+
+  try {
+    // Interpret documentId as "worker_id:agreement_kind" for this action
+    // (mirroring the legacy set_signed_date which takes worker_id + agreement_kind).
+    const parts = args.documentId.split(':');
+    const workerId = parts[0];
+    const agreementKind = parts[1];
+    if (!workerId || !agreementKind)
+      return {
+        ok: false,
+        error: 'documentId must be "workerId:agreementKind" for setSignedDate.',
+      };
+
+    // Service client required: writes onboarding_signatures (admin verified above).
+    const svc = createServiceClient();
+    const { error } = await svc
+      .from('onboarding_signatures')
+      .update({ signed_date: args.signedDate })
+      .eq('worker_id', workerId)
+      .eq('agreement_kind', agreementKind as AgreementKind)
+      .eq('status', 'signed');
+    if (error) return { ok: false, error: `Update failed: ${error.message}` };
+
+    await logEvent({
+      action: 'signature.signed_date_set',
+      entity: `${agreementKind} · ${workerId}`,
+      detail: {
+        worker_id: workerId,
+        agreement_kind: agreementKind,
+        signed_date: args.signedDate,
+        by: admin.email,
+      },
+    });
+
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Set signed date failed.' };
+  }
 }

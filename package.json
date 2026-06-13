@@ -20,6 +20,7 @@
     "test:watch": "vitest",
     "guardrails": "node scripts/guardrails.mjs",
     "changelog": "node scripts/gen-changelog.mjs",
+    "dev:bootstrap": "node scripts/dev-bootstrap.mjs",
     "prepare": "lefthook install"
   },
   "devDependencies": {
