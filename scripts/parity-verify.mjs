@@ -86,6 +86,19 @@ const recomputeGrossC = (rateC, workedHours, expectedHours) => {
   return ratio >= 1 ? rateC : mulRatioC(rateC, ratio);
 };
 
+// ---- known special periods (documented, date-keyed — never "because it failed") ----
+// Already-paid, IMMUTABLE periods whose stored inputs no longer reproduce the
+// stored GROSS because of an out-of-band edit, not an engine bug. Excluded by
+// explicit date range so the exclusion is auditable, not a silent skip of any
+// row that happens to mismatch. The new app never recomputes these; every
+// post-cutover period is fully covered. See docs/CUTOVER-VERIFICATION.md.
+const SPECIAL_PERIODS = new Map([
+  [
+    '2026-04-16..2026-04-30',
+    'Apr-2026 rate restructure — rates were overwritten post-payment without effective-dating, so current rate_php no longer equals the rate actually paid; gross is not reverifiable from stored inputs',
+  ],
+]);
+
 // ---- main -------------------------------------------------------------------
 const main = async () => {
   // Paid periods (optionally scoped).
@@ -100,13 +113,14 @@ const main = async () => {
     rowsChecked: 0,
     grossMatches: 0,
     grossMismatches: [],
-    excluded: { overridden: 0, noExpected: 0, wiseOverride: 0, manualBatch: 0 },
+    excluded: { overridden: 0, noExpected: 0, wiseOverride: 0, specialPeriod: 0 },
   };
 
   for (const p of periods) {
     const pays = await rest(
       `payments?select=worker_id,worked_hours,expected_hours,rate_php,gross_php,net_php,original_net_php,note,thirteenth_month_php,pay_period_id&pay_period_id=eq.${p.id}`,
     );
+    const periodKey = `${p.period_start}..${p.period_end}`;
     for (const row of pays) {
       // Exclusions documented in tests/lib/pay/parity.test.ts (real-data quirks).
       if (row.note) {
@@ -119,6 +133,10 @@ const main = async () => {
       }
       if (row.expected_hours == null || Number(row.expected_hours) <= 0) {
         report.excluded.noExpected++;
+        continue;
+      }
+      if (SPECIAL_PERIODS.has(periodKey)) {
+        report.excluded.specialPeriod++;
         continue;
       }
       report.rowsChecked++;
@@ -151,14 +169,25 @@ const main = async () => {
   const pct =
     report.rowsChecked > 0 ? ((report.grossMatches / report.rowsChecked) * 100).toFixed(2) : '—';
   const totalExcluded =
-    report.excluded.overridden + report.excluded.wiseOverride + report.excluded.noExpected;
+    report.excluded.overridden +
+    report.excluded.wiseOverride +
+    report.excluded.noExpected +
+    report.excluded.specialPeriod;
   report.totalPaidRows = report.rowsChecked + totalExcluded;
+  const specialList =
+    report.excluded.specialPeriod > 0
+      ? `\n  KNOWN SPECIAL PERIODS (excluded by explicit date — immutable, out-of-band edits):\n${[
+          ...SPECIAL_PERIODS.entries(),
+        ]
+          .map(([k, why]) => `    • ${k}: ${why}`)
+          .join('\n')}\n`
+      : '';
   process.stderr.write(
     `\nParity verify · ${report.periods} paid period(s) · ${report.totalPaidRows} paid rows
   CHECKABLE (formula reproducible from stored inputs): ${report.rowsChecked}
     gross matches: ${report.grossMatches}/${report.rowsChecked} (${pct}%)
   EXCLUDED (not reverifiable from stored data — documented):
-    ${report.excluded.overridden} manual gross override · ${report.excluded.wiseOverride} wise net-override (original_net_php) · ${report.excluded.noExpected} no stored expected_hours (early periods)
+    ${report.excluded.overridden} manual gross override · ${report.excluded.wiseOverride} wise net-override (original_net_php) · ${report.excluded.noExpected} no stored expected_hours (early periods) · ${report.excluded.specialPeriod} known special-period${specialList}
   Note: excluded rows are already paid + immutable; the gate proves parity
   for every row parity is checkable from, which is what cutover risks.\n`,
   );
