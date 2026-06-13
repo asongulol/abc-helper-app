@@ -14,7 +14,8 @@
       "build",
       "coverage",
       "src/db/types.ts",
-      "*.timestamp-*.mjs"
+      "*.timestamp-*.mjs",
+      "supabase/functions"
     ]
   },
   "formatter": {
