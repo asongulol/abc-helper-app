@@ -26,6 +26,7 @@ import {
 } from '@/server/actions/portal';
 import {
   deleteContractor,
+  resendHireEmails,
   resetPortalPassword,
   withdrawOffer,
 } from '@/server/actions/portal-admin';
@@ -89,6 +90,8 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
   // Inline modals replacing the old window.prompt() calls.
   const [editDate, setEditDate] = useState<{ kind: string; value: string } | null>(null);
   const [reason, setReason] = useState<{ documentId: string; text: string } | null>(null);
+  // Pending waive awaiting confirmation (both uploaded + missing-doc paths).
+  const [waiveConfirm, setWaiveConfirm] = useState<{ label: string; run: () => void } | null>(null);
 
   const runStage = (fn: () => Promise<{ ok: boolean; error?: string }>, msg: string) => {
     startTransition(async () => {
@@ -254,6 +257,15 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     });
   };
 
+  // Nudge the contractor to finish their outstanding documents.
+  const handleRemind = () => {
+    startTransition(async () => {
+      const res = await resendHireEmails({ workerId: row.workerId });
+      if (res.ok) notify('Reminder email queued.', { type: 'success' });
+      else notify(res.error, { type: 'error' });
+    });
+  };
+
   // Revert a waive/defer so the slot reads MISSING again.
   const handleClearResolution = (slot: DocSlotStatus) => {
     startTransition(async () => {
@@ -393,7 +405,9 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
         type="button"
         className="btn ghost sm"
         disabled={isPending}
-        onClick={() => handleReview(d.id, 'waive')}
+        onClick={() =>
+          setWaiveConfirm({ label: fileName(d), run: () => handleReview(d.id, 'waive') })
+        }
       >
         Waive
       </button>
@@ -452,7 +466,9 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           type="button"
           className="btn ghost sm"
           disabled={isPending}
-          onClick={() => handleResolveMissing(slot, 'waive')}
+          onClick={() =>
+            setWaiveConfirm({ label: slot.label, run: () => handleResolveMissing(slot, 'waive') })
+          }
         >
           Waive
         </button>
@@ -462,13 +478,18 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           disabled={isPending}
           onClick={() => {
             setDeferSlotKey(key);
-            // Default to ~2 weeks out so Confirm is immediately actionable.
-            const d = new Date();
-            d.setDate(d.getDate() + 14);
-            setDeferDate(d.toISOString().slice(0, 10));
+            if (slot.state === 'deferred' && placeholder?.expiresOn) {
+              // Re-deferring an already-deferred slot — pre-fill the existing due date.
+              setDeferDate(placeholder.expiresOn);
+            } else {
+              // Default to ~2 weeks out so Confirm is immediately actionable.
+              const d = new Date();
+              d.setDate(d.getDate() + 14);
+              setDeferDate(d.toISOString().slice(0, 10));
+            }
           }}
         >
-          Defer…
+          {slot.state === 'deferred' ? 'Change date' : 'Defer…'}
         </button>
         {placeholder && (
           <button
@@ -733,14 +754,34 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
       {/* 3 · Documents review — required checklist (incl. MISSING) + extras */}
       {detailLoaded && (docChecklist.length > 0 || documents.length > 0) && (
         <div style={{ marginBottom: 16 }}>
-          <h3 style={{ fontSize: 14, marginBottom: 8 }}>
-            3 · Documents{' '}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 8,
+              marginBottom: 8,
+            }}
+          >
+            <h3 style={{ fontSize: 14, margin: 0 }}>
+              3 · Documents{' '}
+              {missingDocCount > 0 && (
+                <span className="pill bad" style={{ fontSize: 11, marginLeft: 4 }}>
+                  {missingDocCount} missing
+                </span>
+              )}
+            </h3>
             {missingDocCount > 0 && (
-              <span className="pill bad" style={{ fontSize: 11, marginLeft: 4 }}>
-                {missingDocCount} missing
-              </span>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={isPending}
+                onClick={handleRemind}
+              >
+                Remind contractor
+              </button>
             )}
-          </h3>
+          </div>
 
           {docChecklist.map((slot) => {
             const doc = slot.documentId ? docsById.get(slot.documentId) : undefined;
@@ -951,6 +992,21 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
             </button>
           </div>
         </Modal>
+      )}
+
+      {waiveConfirm && (
+        <ConfirmDangerModal
+          title="Waive this document?"
+          message={`Waive “${waiveConfirm.label}”? The contractor won't be required to provide it, and stage 3 can complete without it.`}
+          consequence="Reversible — re-decide the document (or Undo) to require it again."
+          confirmLabel="Waive"
+          busy={isPending}
+          onConfirm={() => {
+            waiveConfirm.run();
+            setWaiveConfirm(null);
+          }}
+          onCancel={() => setWaiveConfirm(null)}
+        />
       )}
 
       {withdrawOpen && (
