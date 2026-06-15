@@ -26,6 +26,7 @@ import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
+import { getEmployerCompanyId } from '@/server/company';
 
 /* ---------- SAFE_FIELDS mirror of portal-self edge fn ---------- */
 
@@ -742,6 +743,7 @@ export async function resolveMissingDocument(args: {
       reviewReason: note ?? (args.decision === 'defer' ? `Deferred until ${expiresOn}` : null),
       expiresOn,
       title,
+      companyId: await getEmployerCompanyId(svc),
     });
 
     const { onboardingComplete } = await recomputeStage3(svc, args.workerId);

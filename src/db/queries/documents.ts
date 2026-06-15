@@ -141,6 +141,8 @@ export const resolveMissingDocumentSlot = async (
     reviewReason: string | null;
     expiresOn: string | null;
     title: string;
+    /** Employer company the doc belongs to (so it shows on the Documents page). */
+    companyId: string | null;
   },
 ): Promise<void> => {
   await clearFilelessDocumentSlot(db, args.workerId, args.kind, args.side);
@@ -154,6 +156,7 @@ export const resolveMissingDocumentSlot = async (
     review_reason: args.reviewReason,
     expires_on: args.expiresOn,
     title: args.title,
+    ...(args.companyId ? { company_id: args.companyId } : {}),
   });
   if (error) throw new Error(`resolve missing document: ${error.message}`);
 };

@@ -25,6 +25,7 @@ import type { Database } from '@/db/types';
 import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { requireWorker } from '@/server/auth/worker';
+import { getEmployerCompanyId } from '@/server/company';
 
 type DocumentKind = Database['public']['Enums']['document_kind'];
 
@@ -109,6 +110,8 @@ export async function uploadOwnDocument(form: FormData): Promise<ActionResult> {
     const up = await svc.storage.from('contractor-docs').upload(path, file, { upsert: false });
     if (up.error) return { ok: false, error: `Upload failed: ${up.error.message}` };
 
+    // Attribute the doc to the employer company so it shows on the Documents page.
+    const employerCompanyId = await getEmployerCompanyId(svc);
     const row: Database['public']['Tables']['documents']['Insert'] = {
       worker_id: worker.workerId,
       kind: kind as DocumentKind,
@@ -117,6 +120,7 @@ export async function uploadOwnDocument(form: FormData): Promise<ActionResult> {
       mime_type: file.type,
       file_size_bytes: file.size,
       review_status: 'pending',
+      ...(employerCompanyId ? { company_id: employerCompanyId } : {}),
       ...(side ? { side } : {}),
       ...(kind === 'nbi_clearance' && issuedOn ? { issued_on: issuedOn } : {}),
     };

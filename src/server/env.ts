@@ -31,6 +31,12 @@ const EnvSchema = z.object({
   HUBSTAFF_API_BASE: z.string().url().optional(),
   /** Shared secret for cron-invoked routes (mirrors legacy x-cron-secret). */
   CRON_SECRET: z.string().optional(),
+  /**
+   * Optional override pinning the employer company id. Otherwise derived from
+   * companies.kind='employer' (Aaron Anderson E.H.S. LLC). Mirrors the
+   * hubstaff-sync edge function's EMPLOYER_COMPANY_ID escape hatch.
+   */
+  EMPLOYER_COMPANY_ID: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   /**
    * Gmail SMTP credentials for new-hire transactional email (smtp.gmail.com:465).
