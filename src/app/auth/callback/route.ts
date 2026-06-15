@@ -1,6 +1,7 @@
 import { createServerSupabase } from '@/db/clients/server';
+import { isOAuthSignIn } from '@/lib/auth/oauth-provider';
+import { safeNext } from '@/lib/auth/safe-next';
 import { isAllowedAdminEmail } from '@/server/auth/allowed-domains';
-import type { User } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
 /**
@@ -16,19 +17,10 @@ import { NextResponse } from 'next/server';
  * addresses), so the gate keys off the auth provider, not the email alone.
  */
 
-/** True for a federated identity (anything other than the `email` provider). */
-function isOAuthSignIn(user: User): boolean {
-  const provider = user.app_metadata?.provider;
-  if (provider && provider !== 'email') return true;
-  const providers = user.app_metadata?.providers;
-  if (Array.isArray(providers) && providers.some((p) => p && p !== 'email')) return true;
-  return (user.identities ?? []).some((i) => i.provider && i.provider !== 'email');
-}
-
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('next') ?? '/';
+  const next = safeNext(url.searchParams.get('next'));
   if (code) {
     const supabase = await createServerSupabase();
     const { error } = await supabase.auth.exchangeCodeForSession(code);

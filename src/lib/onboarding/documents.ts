@@ -80,11 +80,13 @@ export function deriveDocChecklist(
 ): DocSlotStatus[] {
   const docs = configuredDocs.length > 0 ? configuredDocs : DEFAULT_REQUIRED_DOCS;
 
-  // Latest upload per kind|side. Sort newest-first when timestamps are present
-  // so the choice doesn't depend on the caller's query ordering (admin reads
-  // ascending, portal descending).
-  const sorted = [...uploaded].sort((a, b) =>
-    String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')),
+  // Latest upload per kind|side. Sort newest-first; tie-break on id so the choice
+  // is TOTAL and never depends on the caller's query ordering (admin reads
+  // created_at ascending, portal descending) even when two rows share a timestamp.
+  const sorted = [...uploaded].sort(
+    (a, b) =>
+      String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')) ||
+      String(b.id).localeCompare(String(a.id)),
   );
   const latestByKey = new Map<string, UploadedDocLike>();
   for (const d of sorted) {
@@ -111,10 +113,96 @@ export function deriveDocChecklist(
       });
     }
   }
+
+  // Legacy parity with the contractor portal's useOutstandingDocs (legacy
+  // portal/index.html ~1121-1128): also surface any uploaded doc that was sent
+  // back (needs_replacement) or deferred whose kind|side is NOT a configured
+  // required slot — e.g. an optional doc, or an 'other'/'w8ben' upload an admin
+  // rejected. Without this the contractor gets no re-upload prompt and the
+  // rejected doc is silently orphaned.
+  const requiredKeys = new Set(slots.map((s) => `${s.kind}|${s.side ?? ''}`));
+  for (const [key, d] of latestByKey) {
+    if (requiredKeys.has(key) || !ACTION_STATUSES.has(d.reviewStatus)) continue;
+    slots.push({
+      kind: d.kind,
+      side: d.side,
+      label: humanizeKind(d.kind),
+      freshnessMonths: null,
+      documentId: d.id,
+      state: d.reviewStatus as DocSlotState,
+      uploaded: true,
+      outstanding: true,
+    });
+  }
   return slots;
+}
+
+/** Human-readable fallback label for a doc kind that has no configured title. */
+function humanizeKind(kind: string): string {
+  return kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Required slots the contractor still owes (missing or needing re-upload). */
 export function outstandingSlots(slots: readonly DocSlotStatus[]): DocSlotStatus[] {
   return slots.filter((s) => s.outstanding);
+}
+
+/** A document row as needed to evaluate stage-3 completion (raw DB shape). */
+export interface Stage3DocRow {
+  id: string;
+  kind: string;
+  side: string | null;
+  storage_path?: string | null;
+  review_status: string;
+}
+
+/** A required stage-3 document (single, or two-sided like gov_id). */
+export interface RequiredStage3Doc {
+  kind: string;
+  sides?: readonly string[];
+}
+
+/** The required stage-3 documents — single source of truth for completion. */
+export const REQUIRED_STAGE3_DOCS: readonly RequiredStage3Doc[] = [
+  { kind: 'resume' },
+  { kind: 'diploma' },
+  { kind: 'nbi_clearance' },
+  { kind: 'gov_id', sides: ['front', 'back'] },
+];
+
+/**
+ * Whether stage-3 (documents) is complete: each required kind is either CLEARED
+ * by a waived/deferred decision, or has an approved upload (both sides for a
+ * two-sided kind). Shared by the contractor self-complete (finishOnboarding) and
+ * the admin review recompute (recomputeStage3) so they can never diverge on the
+ * waived/deferred rule. `rows` should already be filtered to satisfying statuses
+ * (approved/waived/deferred).
+ */
+export function isStage3Complete(
+  rows: readonly Stage3DocRow[],
+  required: readonly RequiredStage3Doc[] = REQUIRED_STAGE3_DOCS,
+): boolean {
+  const evidence: Record<string, Set<string>> = {};
+  const sidesSeen: Record<string, Set<string>> = {};
+  const cleared: Record<string, boolean> = {};
+  for (const r of rows) {
+    if (r.review_status === 'waived' || r.review_status === 'deferred') {
+      cleared[r.kind] = true;
+      continue;
+    }
+    if (!evidence[r.kind]) evidence[r.kind] = new Set();
+    (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
+    if (r.side) {
+      if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
+      (sidesSeen[r.kind] as Set<string>).add(r.side);
+    }
+  }
+  return required.every((d) => {
+    if (cleared[d.kind]) return true;
+    if (d.sides && d.sides.length > 0) {
+      const have = sidesSeen[d.kind] ?? new Set<string>();
+      return d.sides.every((s) => have.has(s));
+    }
+    return (evidence[d.kind]?.size ?? 0) >= 1;
+  });
 }

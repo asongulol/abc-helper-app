@@ -1,8 +1,10 @@
 import {
   DEFAULT_REQUIRED_DOCS,
   type RequiredDoc,
+  type Stage3DocRow,
   type UploadedDocLike,
   deriveDocChecklist,
+  isStage3Complete,
   outstandingSlots,
 } from '@/lib/onboarding/documents';
 import { describe, expect, it } from 'vitest';
@@ -124,5 +126,140 @@ describe('outstandingSlots', () => {
       'gov_id|front',
       'gov_id|back',
     ]);
+  });
+
+  it('returns [] for an empty checklist', () => {
+    expect(outstandingSlots([])).toEqual([]);
+  });
+});
+
+describe('deriveDocChecklist — sent-back non-required uploads (legacy parity)', () => {
+  const ALL_REQUIRED = [
+    upload({ id: 'r1', kind: 'resume', reviewStatus: 'approved' }),
+    upload({ id: 'n1', kind: 'nbi_clearance', reviewStatus: 'approved' }),
+    upload({ id: 'gf', kind: 'gov_id', side: 'front', reviewStatus: 'approved' }),
+    upload({ id: 'gb', kind: 'gov_id', side: 'back', reviewStatus: 'approved' }),
+  ];
+
+  it('surfaces a non-required upload (e.g. "other") sent back as needs_replacement', () => {
+    const slots = deriveDocChecklist(CFG, [
+      ...ALL_REQUIRED,
+      upload({ id: 'o1', kind: 'other', reviewStatus: 'needs_replacement' }),
+    ]);
+    const other = slots.find((s) => s.kind === 'other');
+    expect(other?.outstanding).toBe(true);
+    expect(other?.documentId).toBe('o1');
+    expect(outstandingSlots(slots).map((s) => s.kind)).toEqual(['other']);
+  });
+
+  it('surfaces an OPTIONAL configured doc that was uploaded then deferred', () => {
+    const slots = deriveDocChecklist(CFG, [
+      ...ALL_REQUIRED,
+      upload({ id: 'opt', kind: 'optional_thing', reviewStatus: 'deferred' }),
+    ]);
+    expect(slots.find((s) => s.kind === 'optional_thing')?.outstanding).toBe(true);
+  });
+
+  it('does NOT surface a non-required upload that is pending or approved', () => {
+    const slots = deriveDocChecklist(CFG, [
+      ...ALL_REQUIRED,
+      upload({ id: 'w1', kind: 'w8ben', reviewStatus: 'pending' }),
+      upload({ id: 'o2', kind: 'other', reviewStatus: 'approved' }),
+    ]);
+    expect(slots.some((s) => s.kind === 'w8ben' || s.kind === 'other')).toBe(false);
+    expect(outstandingSlots(slots)).toEqual([]);
+  });
+});
+
+describe('deriveDocChecklist — ordering determinism', () => {
+  it('picks the same upload regardless of caller order on a createdAt tie', () => {
+    const ups = [
+      upload({
+        id: 'a',
+        kind: 'resume',
+        reviewStatus: 'approved',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
+      upload({
+        id: 'b',
+        kind: 'resume',
+        reviewStatus: 'pending',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
+    ];
+    const fwd = deriveDocChecklist(CFG, ups).find((s) => s.kind === 'resume');
+    const rev = deriveDocChecklist(CFG, [...ups].reverse()).find((s) => s.kind === 'resume');
+    // The id tiebreaker makes the choice total: 'b' > 'a', so 'b' wins for BOTH
+    // caller orders — admin (asc) and portal (desc) can never disagree on a tie.
+    expect(fwd?.documentId).toBe('b');
+    expect(rev?.documentId).toBe('b');
+    expect(fwd?.documentId).toBe(rev?.documentId);
+    expect(fwd?.state).toBe('pending');
+  });
+
+  it('prefers a timestamped upload over one missing createdAt', () => {
+    const slots = deriveDocChecklist(CFG, [
+      upload({
+        id: 'dated',
+        kind: 'resume',
+        reviewStatus: 'approved',
+        createdAt: '2026-01-01T00:00:00Z',
+      }),
+      upload({ id: 'undated', kind: 'resume', reviewStatus: 'pending' }),
+    ]);
+    expect(slots.find((s) => s.kind === 'resume')?.documentId).toBe('dated');
+  });
+});
+
+describe('isStage3Complete', () => {
+  const doc = (over: Partial<Stage3DocRow>): Stage3DocRow => ({
+    id: 'x',
+    kind: 'resume',
+    side: null,
+    storage_path: '/f',
+    review_status: 'approved',
+    ...over,
+  });
+  const ALL: Stage3DocRow[] = [
+    doc({ id: 'r', kind: 'resume' }),
+    doc({ id: 'd', kind: 'diploma' }),
+    doc({ id: 'n', kind: 'nbi_clearance' }),
+    doc({ id: 'gf', kind: 'gov_id', side: 'front' }),
+    doc({ id: 'gb', kind: 'gov_id', side: 'back' }),
+  ];
+
+  it('true when every required kind is approved (both gov_id sides)', () => {
+    expect(isStage3Complete(ALL)).toBe(true);
+  });
+
+  it('false when a gov_id side is missing', () => {
+    expect(isStage3Complete(ALL.filter((d) => d.id !== 'gb'))).toBe(false);
+  });
+
+  it('false when a required kind has no row', () => {
+    expect(isStage3Complete(ALL.filter((d) => d.kind !== 'diploma'))).toBe(false);
+  });
+
+  it('a single waived row clears the whole kind, incl. both gov_id sides', () => {
+    const rows: Stage3DocRow[] = [
+      doc({ id: 'r', kind: 'resume' }),
+      doc({ id: 'd', kind: 'diploma' }),
+      doc({ id: 'n', kind: 'nbi_clearance' }),
+      doc({ id: 'gw', kind: 'gov_id', side: 'front', storage_path: null, review_status: 'waived' }),
+    ];
+    // gov_id 'back' was never uploaded, but waiving the kind clears it — this is
+    // the rule finishOnboarding previously got wrong.
+    expect(isStage3Complete(rows)).toBe(true);
+  });
+
+  it('a deferred row clears its kind', () => {
+    const rows: Stage3DocRow[] = [
+      doc({ id: 'r', kind: 'resume' }),
+      doc({ id: 'd', kind: 'diploma', storage_path: null, review_status: 'deferred' }),
+      doc({ id: 'n', kind: 'nbi_clearance' }),
+      doc({ id: 'gf', kind: 'gov_id', side: 'front' }),
+      doc({ id: 'gb', kind: 'gov_id', side: 'back' }),
+    ];
+    expect(isStage3Complete(rows)).toBe(true);
   });
 });

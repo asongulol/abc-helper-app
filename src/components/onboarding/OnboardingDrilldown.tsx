@@ -86,6 +86,9 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     rate: string;
     startDate: string;
   } | null>(null);
+  // Inline modals replacing the old window.prompt() calls.
+  const [editDate, setEditDate] = useState<{ kind: string; value: string } | null>(null);
+  const [reason, setReason] = useState<{ documentId: string; text: string } | null>(null);
 
   const runStage = (fn: () => Promise<{ ok: boolean; error?: string }>, msg: string) => {
     startTransition(async () => {
@@ -99,17 +102,24 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     });
   };
 
-  const handleEditDate = (kind: string) => {
-    const next = window.prompt('Signed date (YYYY-MM-DD):');
-    if (!next?.trim()) return;
+  const submitEditDate = () => {
+    if (!editDate) return;
+    const { kind, value } = editDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      notify('Enter a date (YYYY-MM-DD).', { type: 'error' });
+      return;
+    }
     runStage(
       () =>
         editAgreementDate({
           workerId: row.workerId,
           agreementKind: kind as Parameters<typeof editAgreementDate>[0]['agreementKind'],
-          signedDate: next.trim(),
+          signedDate: value,
         }).then((r) => {
-          if (r.ok) loadDetail();
+          if (r.ok) {
+            loadDetail();
+            setEditDate(null);
+          }
           return r;
         }),
       'Signed date updated.',
@@ -169,16 +179,33 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     documentId: string,
     decision: 'approve' | 'needs_replacement' | 'waive' | 'defer',
   ) => {
-    let note: string | undefined;
+    // Needs-replacement requires a contractor-facing reason — collect it in a
+    // proper modal (submitReplacement) rather than a bare window.prompt.
     if (decision === 'needs_replacement') {
-      const reason = window.prompt('Reason for requesting a replacement:');
-      if (!reason?.trim()) return;
-      note = reason.trim();
+      setReason({ documentId, text: '' });
+      return;
     }
     startTransition(async () => {
-      const res = await reviewDocument({ documentId, decision, ...(note ? { note } : {}) });
+      const res = await reviewDocument({ documentId, decision });
       if (res.ok) {
         notify('Document updated.', { type: 'success' });
+        loadDetail();
+      } else {
+        notify(res.error, { type: 'error' });
+      }
+    });
+  };
+
+  const submitReplacement = () => {
+    if (!reason) return;
+    const { documentId, text } = reason;
+    const note = text.trim();
+    if (!note) return;
+    startTransition(async () => {
+      const res = await reviewDocument({ documentId, decision: 'needs_replacement', note });
+      if (res.ok) {
+        notify('Replacement requested.', { type: 'success' });
+        setReason(null);
         loadDetail();
       } else {
         notify(res.error, { type: 'error' });
@@ -211,9 +238,12 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
         ...(deferUntil ? { deferUntil } : {}),
       });
       if (res.ok) {
-        notify(decision === 'waive' ? 'Document waived.' : `Deferred until ${deferUntil}.`, {
-          type: 'success',
-        });
+        notify(
+          decision === 'waive'
+            ? 'Document waived.'
+            : `Deferred until ${fmtDate(deferUntil ?? '')}.`,
+          { type: 'success' },
+        );
         setDeferSlotKey(null);
         setDeferDate('');
         loadDetail();
@@ -432,7 +462,10 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           disabled={isPending}
           onClick={() => {
             setDeferSlotKey(key);
-            setDeferDate('');
+            // Default to ~2 weeks out so Confirm is immediately actionable.
+            const d = new Date();
+            d.setDate(d.getDate() + 14);
+            setDeferDate(d.toISOString().slice(0, 10));
           }}
         >
           Defer…
@@ -597,7 +630,7 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
                   type="button"
                   className="btn ghost sm"
                   disabled={isPending}
-                  onClick={() => handleEditDate(a.agreementKind)}
+                  onClick={() => setEditDate({ kind: a.agreementKind, value: a.fStartDate ?? '' })}
                 >
                   Edit date
                 </button>
@@ -724,7 +757,9 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
                 </span>
                 <Badge tone={docStateTone(slot.state)}>
                   {DOC_STATE_LABEL[slot.state]}
-                  {slot.state === 'deferred' && doc?.expiresOn ? ` → ${doc.expiresOn}` : ''}
+                  {slot.state === 'deferred' && doc?.expiresOn
+                    ? ` → ${fmtDate(doc.expiresOn)}`
+                    : ''}
                 </Badge>
                 {doc?.storagePath
                   ? renderDocActions(doc)
@@ -1008,6 +1043,69 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
             </button>
             <button type="button" className="btn" disabled={isPending} onClick={handleSavePrefill}>
               {isPending ? 'Saving…' : 'Save prefill'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {editDate && (
+        <Modal
+          title={`Edit signed date — ${AGREEMENT_LABELS[editDate.kind] ?? editDate.kind}`}
+          onClose={() => setEditDate(null)}
+          maxWidth={360}
+        >
+          <div className="field">
+            <label htmlFor="ed-date">Signed date</label>
+            <input
+              id="ed-date"
+              type="date"
+              value={editDate.value}
+              onChange={(e) => setEditDate({ ...editDate, value: e.target.value })}
+            />
+          </div>
+          <div className="actions">
+            <button type="button" className="btn ghost" onClick={() => setEditDate(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={isPending || !editDate.value}
+              onClick={submitEditDate}
+            >
+              {isPending ? 'Saving…' : 'Save date'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {reason && (
+        <Modal title="Request replacement" onClose={() => setReason(null)} maxWidth={440}>
+          <p className="sub" style={{ marginBottom: 10 }}>
+            Tell the contractor what needs fixing — they will see this reason.
+          </p>
+          <div className="field">
+            <label htmlFor="rv-reason">Reason</label>
+            <textarea
+              id="rv-reason"
+              rows={3}
+              value={reason.text}
+              onChange={(e) => setReason({ ...reason, text: e.target.value })}
+              placeholder="e.g. NBI clearance is expired — please upload a current one."
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div className="actions">
+            <button type="button" className="btn ghost" onClick={() => setReason(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={isPending || !reason.text.trim()}
+              onClick={submitReplacement}
+            >
+              {isPending ? 'Saving…' : 'Request replacement'}
             </button>
           </div>
         </Modal>

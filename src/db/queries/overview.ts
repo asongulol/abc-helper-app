@@ -93,20 +93,6 @@ export const countPendingTimeApprovals = async (db: Db, companyId: string): Prom
   return count ?? 0;
 };
 
-/** Count of documents expiring within the next 30 days for a company. */
-export const countExpiringDocuments = async (db: Db, companyId: string): Promise<number> => {
-  const today = new Date().toISOString().slice(0, 10);
-  const in30 = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
-  const { count, error } = await db
-    .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .gte('expires_on', today)
-    .lte('expires_on', in30);
-  if (error) throw new Error(`countExpiringDocuments: ${error.message}`);
-  return count ?? 0;
-};
-
 // ---------------------------------------------------------------------------
 // Pay-cycle pipeline
 // ---------------------------------------------------------------------------

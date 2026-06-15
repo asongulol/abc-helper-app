@@ -21,6 +21,7 @@ import {
 } from '@/db/queries/documents';
 import { fetchOwnProfile, fetchPortalSettings, insertMoodCheckin } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import { isStage3Complete } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
@@ -334,29 +335,9 @@ export async function finishOnboarding(): Promise<ActionResult> {
       .eq('worker_id', worker.workerId)
       .in('review_status', ['approved', 'waived', 'deferred']);
 
-    const required = [
-      { kind: 'resume' },
-      { kind: 'diploma' },
-      { kind: 'nbi_clearance' },
-      { kind: 'gov_id', sides: ['front', 'back'] },
-    ];
-    const evidence: Record<string, Set<string>> = {};
-    const sidesSeen: Record<string, Set<string>> = {};
-    for (const r of approved ?? []) {
-      if (!evidence[r.kind]) evidence[r.kind] = new Set();
-      (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
-      if (r.side) {
-        if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
-        (sidesSeen[r.kind] as Set<string>).add(r.side);
-      }
-    }
-    const stage3Complete = required.every((d) => {
-      if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
-        const have = sidesSeen[d.kind] ?? new Set<string>();
-        return d.sides.every((s) => have.has(s));
-      }
-      return (evidence[d.kind]?.size ?? 0) >= 1;
-    });
+    // Same predicate the admin review recompute uses, so waived/deferred clears
+    // a kind consistently across both completion paths.
+    const stage3Complete = isStage3Complete(approved ?? []);
     if (!stage3Complete) {
       return {
         ok: false,
@@ -598,19 +579,10 @@ export async function countersignAgreement(args: {
 
 /* ---------- portal-review (admin doc review) ---------- */
 
-/** The required onboarding documents, for stage-3 completion evaluation. */
-const REQUIRED_STAGE3_DOCS = [
-  { kind: 'resume' },
-  { kind: 'diploma' },
-  { kind: 'nbi_clearance' },
-  { kind: 'gov_id', sides: ['front', 'back'] },
-] as const;
-
 /**
  * Re-evaluate stage-3 (documents) completion for a worker from their
- * approved / waived / deferred docs and persist it. A waived or deferred doc
- * clears its kind; otherwise an upload (both sides for two-sided kinds) is
- * required. Shared by reviewDocument and resolveMissingDocument.
+ * approved / waived / deferred docs (via the shared isStage3Complete predicate)
+ * and persist it. Shared by reviewDocument and resolveMissingDocument.
  * Returns whether onboarding JUST became complete.
  */
 async function recomputeStage3(
@@ -623,30 +595,7 @@ async function recomputeStage3(
     fetchOnboardingProgressForWorker(db, workerId),
   ]);
 
-  const evidence: Record<string, Set<string>> = {};
-  const sidesSeen: Record<string, Set<string>> = {};
-  const cleared: Record<string, boolean> = {};
-  for (const r of approvedDocs) {
-    if (r.review_status === 'waived' || r.review_status === 'deferred') {
-      cleared[r.kind] = true;
-      continue;
-    }
-    if (!evidence[r.kind]) evidence[r.kind] = new Set();
-    (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
-    if (r.side) {
-      if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
-      (sidesSeen[r.kind] as Set<string>).add(r.side);
-    }
-  }
-  const stage3Complete = REQUIRED_STAGE3_DOCS.every((d) => {
-    if (cleared[d.kind]) return true;
-    if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
-      const have = sidesSeen[d.kind] ?? new Set<string>();
-      return d.sides.every((s) => have.has(s));
-    }
-    return (evidence[d.kind]?.size ?? 0) >= 1;
-  });
-
+  const stage3Complete = isStage3Complete(approvedDocs);
   const fully = !!(progress?.stage1_complete && progress.stage2_complete && stage3Complete);
   const onboardingComplete = fully && !progress?.completed_at;
   await updateOnboardingProgressStage3(svc, workerId, stage3Complete, onboardingComplete);

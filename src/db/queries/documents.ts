@@ -104,27 +104,6 @@ export const fetchDocument = async (db: Db, documentId: string): Promise<Documen
 };
 
 /**
- * Count docs expiring within `withinDays` for a company (overview tile).
- * Mirrors the documents-expiry-check edge fn threshold (default 30 days).
- */
-export const countExpiringDocuments = async (
-  db: Db,
-  companyId: string,
-  withinDays = 30,
-): Promise<number> => {
-  const today = new Date().toISOString().slice(0, 10);
-  const upper = new Date(Date.now() + withinDays * 86_400_000).toISOString().slice(0, 10);
-  const { count, error } = await db
-    .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .gte('expires_on', today)
-    .lte('expires_on', upper);
-  if (error) throw new Error(`expiring docs: ${error.message}`);
-  return count ?? 0;
-};
-
-/**
  * Delete any fileless (no upload) placeholder rows for a worker's doc slot.
  * Never touches real uploads (those have a storage_path).
  */
@@ -231,6 +210,10 @@ export const fetchDocumentsForExpiryCheck = async (
       'id, kind, title, expires_on, worker_id, workers(first_name, middle_name, last_name, status), companies(name)',
     )
     .lte('expires_on', upper)
+    // Exclude fileless rows: a waived/deferred placeholder reuses expires_on as a
+    // "due date", but with no uploaded file there's nothing that can expire — it
+    // must not surface as an "overdue/expiring document" in the expiry digest.
+    .not('storage_path', 'is', null)
     .order('expires_on', { ascending: true });
 
   if (error) throw new Error(`fetchDocumentsForExpiryCheck: ${error.message}`);

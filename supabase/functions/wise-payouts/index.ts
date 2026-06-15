@@ -143,6 +143,11 @@ interface PollPayment {
 }
 
 async function handleCronReconcile(body: Record<string, unknown>): Promise<Response> {
+  // Fail fast on a misconfigured cron: without a token every transfer lookup
+  // would throw and fall through to 'unknown', reporting a bogus 200/markedPaid:0
+  // success while reconciling nothing.
+  if (!WISE_TOKEN) return json({ error: 'WISE_API_TOKEN not set — cannot reconcile' }, 500);
+
   // Default to the fast, idempotent path: only re-check status='draft' rows.
   const onlyDrafts = body.only_drafts !== false;
   const payPeriodId = body.pay_period_id ? String(body.pay_period_id).trim() : '';
