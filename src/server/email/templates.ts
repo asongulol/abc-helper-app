@@ -91,10 +91,10 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
   // docs + login credentials, all in one. Merge: {{name}} {{wise_referral_url}}
   // {{portal_url}} {{email}} {{password}}.
   welcome: {
-    subject: 'Welcome to ABC Kids — let’s get you onboarded',
+    subject: 'Welcome to Aaron Anderson E.H.S. LLC — let’s get you onboarded',
     html: [
       '<p>Hi {{name}},</p>',
-      "<p>Thank you for joining ABC Kids NY — we're excited to have you on the team! Here's how to get started.</p>",
+      "<p>Thank you for joining Aaron Anderson E.H.S. LLC — we're excited to have you on the team! Here's how to get started.</p>",
       '<p><b>Your onboarding, in the portal:</b></p>',
       '<ol><li>Sign your agreements (IC Agreement, Non-Compete, NDA, BAA)</li><li>Complete your profile and billing / payout details</li><li>Upload your documents</li></ol>',
       '<p><b>First, set up Wise.</b> We pay in Philippine Pesos via Wise, so please create your Wise account now — you’ll add your payout details during onboarding:</p>',
@@ -102,12 +102,12 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
       '<p><b>Please prepare these documents</b> to upload in the portal: Resume / CV, Diploma / TOR, NBI Clearance, and a Gov ID / Passport (front &amp; back).</p>',
       '<p><b>Your portal login</b><br>Portal: <a href="{{portal_url}}">{{portal_url}}</a><br>Username: {{email}}<br>Temporary password: {{password}}</p>',
       '<p>You’ll set your own password on first sign-in. Questions? Just reply to this email.</p>',
-      '<p>Welcome aboard!<br>— ABC Kids NY</p>',
+      '<p>Welcome aboard!<br>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },
   // Login-only email — reused when an admin RE-ISSUES a temp password (reset).
   credentials: {
-    subject: 'Your ABC Kids contractor portal login',
+    subject: 'Your Aaron Anderson E.H.S. LLC contractor portal login',
     html: [
       '<p>Hi {{name}},</p>',
       '<p>Here are your contractor portal sign-in details.</p>',
@@ -115,31 +115,31 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
       '<b>Username:</b> {{email}}<br>',
       '<b>Temporary password:</b> {{password}}</p>',
       '<p>You’ll set your own password on first sign-in.</p>',
-      '<p>— ABC Kids NY</p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },
   // Email 2 (sent at onboarding completion): the provisioned tool logins.
   // {{tools_block}} is rendered server-side from the decrypted credentials.
   tools: {
-    subject: 'Your ABC Kids tool access',
+    subject: 'Your Aaron Anderson E.H.S. LLC tool access',
     html: [
       '<p>Hi {{name}},</p>',
       '<p>Your onboarding is complete — here are the tool logins you’ll need to get started:</p>',
       '{{tools_block}}',
       '<p>Please keep these secure and, where possible, change any passwords on first sign-in. You can also view them anytime in the portal.</p>',
-      '<p>— ABC Kids NY</p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },
   // Sent when an admin WITHDRAWS an offer / cancels an onboarding before it
   // completes. Polite, brief, no portal links (the login is revoked).
   withdraw: {
-    subject: 'Update on your ABC Kids offer',
+    subject: 'Update on your Aaron Anderson E.H.S. LLC offer',
     html: [
       '<p>Hi {{name}},</p>',
-      '<p>Thank you for your interest in working with ABC Kids NY and for the time you’ve invested so far.</p>',
+      '<p>Thank you for your interest in working with Aaron Anderson E.H.S. LLC and for the time you’ve invested so far.</p>',
       '<p>After further review we won’t be moving forward with onboarding at this time, and your contractor portal access has been deactivated.</p>',
       '<p>We’re grateful for the opportunity to have connected, and we wish you all the best. If anything changes on our side, we’ll be in touch.</p>',
-      '<p>Warm regards,<br>— ABC Kids NY</p>',
+      '<p>Warm regards,<br>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },
 };

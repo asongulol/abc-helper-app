@@ -48,8 +48,6 @@ import {
   UpdatePaymentRowSchema,
 } from '@/types/schemas/payroll';
 
-export type { PeriodSummaryRow, ProcessPayment, SavedPayment };
-
 /**
  * Effective-dated rate save (legacy `saveRate`). Same-day saves replace;
  * earlier open rates are closed; the change is audit-logged from→to.

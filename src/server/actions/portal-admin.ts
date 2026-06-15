@@ -14,7 +14,7 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { seedOnboardingProgress } from '@/db/queries/onboarding';
-import { decryptWorkerTools } from '@/db/queries/secrets';
+import { revealWorkerToolsOnce } from '@/db/queries/secrets';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
@@ -239,7 +239,8 @@ export async function createPortalLogin(args: {
  */
 export async function resetPortalPassword(args: {
   workerId: string;
-}): Promise<ActionResult<{ tempPassword?: string }>> {
+  email?: string;
+}): Promise<ActionResult<{ tempPassword?: string; email?: string; changed?: boolean }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -253,27 +254,40 @@ export async function resetPortalPassword(args: {
     if (!login?.auth_user_id)
       return { ok: false, error: 'This contractor has no portal login yet — create one first.' };
 
+    // Optionally correct the login email (legacy "Update login & resend").
+    const newEmail = args.email?.trim();
+    const changed = !!newEmail && newEmail.toLowerCase() !== (login.email ?? '').toLowerCase();
+    const effectiveEmail = changed ? (newEmail as string) : (login.email ?? null);
+
     // Service client required to reset auth user password (admin verified above).
     const svc = createServiceClient();
     const pw = genTempPassword();
     const { error } = await svc.auth.admin.updateUserById(login.auth_user_id, {
       password: pw,
+      ...(changed ? { email: newEmail, email_confirm: true } : {}),
       user_metadata: { must_set_password: true },
     });
     if (error) return { ok: false, error: `Could not reset password: ${error.message}` };
 
-    await logEvent({
-      action: 'portal_login.reset_password',
-      entity: login.email ?? args.workerId,
-      detail: { worker_id: args.workerId, by: admin.email },
-    });
-
-    // Best-effort credentials email.
-    if (login.email) {
-      await sendCredentialsEmail(login.email, args.workerId, pw);
+    if (changed) {
+      await db.from('contractor_logins').update({ email: newEmail }).eq('worker_id', args.workerId);
     }
 
-    return { ok: true, data: { tempPassword: pw } };
+    await logEvent({
+      action: 'portal_login.reset_password',
+      entity: effectiveEmail ?? args.workerId,
+      detail: { worker_id: args.workerId, by: admin.email, email_changed: changed },
+    });
+
+    // Best-effort credentials email to the (possibly corrected) address.
+    if (effectiveEmail) {
+      await sendCredentialsEmail(effectiveEmail, args.workerId, pw);
+    }
+
+    return {
+      ok: true,
+      data: { tempPassword: pw, ...(effectiveEmail ? { email: effectiveEmail } : {}), changed },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Reset failed.' };
   }
@@ -355,8 +369,10 @@ export async function resendHireEmails(args: {
 }
 
 /**
- * Send tools credentials email — decrypts stored tool creds via the
- * `decrypt_worker_tools` RPC and sends the tools email.
+ * Send tools credentials email — performs the contractor's ONE-TIME reveal via
+ * the `reveal_worker_tools` RPC (decrypt-then-purge) and emails the credentials.
+ * Works only before the credentials have been revealed (by this path or the
+ * worker's own portal popup); afterward the admin must re-provision to resend.
  */
 export async function sendToolsEmail(args: { workerId: string }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
@@ -371,11 +387,15 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
       .maybeSingle();
     if (!login?.email) return { ok: false, error: 'This contractor has no portal login yet.' };
 
-    // Decrypt tool credentials via the service-role RPC.
+    // One-time reveal: decrypt + permanently purge via the service-role RPC.
     const svc = createServiceClient();
-    const creds = await decryptWorkerTools(svc, args.workerId);
+    const creds = await revealWorkerToolsOnce(svc, args.workerId);
     if (creds === null || typeof creds !== 'object' || Array.isArray(creds)) {
-      return { ok: false, error: 'No tool credentials stored for this contractor.' };
+      return {
+        ok: false,
+        error:
+          'No revealable tool credentials for this contractor. They may have already been revealed once — re-provision the tools to send again.',
+      };
     }
 
     const name = await fetchWorkerName(args.workerId);
@@ -492,35 +512,69 @@ export async function withdrawOffer(args: { workerId: string }): Promise<ActionR
 
 /**
  * Full contractor deletion (auth user + all rows). Owner-gated, destructive.
- * Service client required for auth.admin.deleteUser (admin+owner verified above).
+ * Service client required for auth.admin.deleteUser (owner verified above).
+ *
+ * Two-tier safety per §1.7:
+ *  - HARD block on payments / time entries — never deletable, "deactivate instead".
+ *  - SOFT block on onboarding signatures / documents — requires `force === true`;
+ *    without it, the action returns an error describing what would be deleted.
+ * The server is the authority; the UI's typed-name confirm is a courtesy gate.
  */
-export async function deleteContractor(args: { workerId: string }): Promise<ActionResult> {
+export async function deleteContractor(args: {
+  workerId: string;
+  force?: boolean;
+}): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner) return { ok: false, error: 'Owner role required for contractor deletion.' };
 
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRe.test(args.workerId)) return { ok: false, error: 'Valid worker_id (uuid) required.' };
+  const force = args.force === true;
 
   try {
     const db = await createServerSupabase();
 
-    // Guard: refuse if payroll history exists
-    const [{ count: payCount }, { count: teCount }] = await Promise.all([
-      db
-        .from('payments')
-        .select('id', { count: 'exact', head: true })
-        .eq('worker_id', args.workerId),
-      db
-        .from('time_entries')
-        .select('work_date', { count: 'exact', head: true })
-        .eq('worker_id', args.workerId),
-    ]);
+    // Count all four record classes in parallel.
+    const [{ count: payCount }, { count: teCount }, { count: sigCount }, { count: docCount }] =
+      await Promise.all([
+        db
+          .from('payments')
+          .select('id', { count: 'exact', head: true })
+          .eq('worker_id', args.workerId),
+        db
+          .from('time_entries')
+          .select('work_date', { count: 'exact', head: true })
+          .eq('worker_id', args.workerId),
+        db
+          .from('onboarding_signatures')
+          .select('id', { count: 'exact', head: true })
+          .eq('worker_id', args.workerId),
+        db
+          .from('documents')
+          .select('id', { count: 'exact', head: true })
+          .eq('worker_id', args.workerId),
+      ]);
+
+    // HARD block: payroll history is never deletable.
     if ((payCount ?? 0) > 0 || (teCount ?? 0) > 0) {
       return {
         ok: false,
         error:
           'This contractor has payroll history (payments or time entries) and cannot be deleted — deactivate them instead.',
+      };
+    }
+
+    // SOFT block: signatures / documents require an explicit force.
+    const sigs = sigCount ?? 0;
+    const docs = docCount ?? 0;
+    if (!force && (sigs > 0 || docs > 0)) {
+      const parts: string[] = [];
+      if (sigs > 0) parts.push(`${sigs} signed agreement${sigs === 1 ? '' : 's'}`);
+      if (docs > 0) parts.push(`${docs} uploaded document${docs === 1 ? '' : 's'}`);
+      return {
+        ok: false,
+        error: `This contractor has ${parts.join(' and ')} — deleting will permanently remove them. Confirm to proceed.`,
       };
     }
 
@@ -543,7 +597,14 @@ export async function deleteContractor(args: { workerId: string }): Promise<Acti
     await logEvent({
       action: 'delete_contractor',
       entity: args.workerId,
-      detail: { worker_id: args.workerId, by: admin.email, login_removed: !!cl?.auth_user_id },
+      detail: {
+        worker_id: args.workerId,
+        by: admin.email,
+        login_removed: !!cl?.auth_user_id,
+        force,
+        signatures: sigs,
+        documents: docs,
+      },
     });
     return { ok: true };
   } catch (err) {

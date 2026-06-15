@@ -19,16 +19,18 @@ export const getAppSecret = async (svc: ServiceClient, key: string): Promise<str
 };
 
 /**
- * Decrypt the stored tool credentials for a worker via the `decrypt_worker_tools`
- * RPC (service-role only). Returns null when no credentials are stored or the
- * RPC call fails.
+ * ONE-TIME reveal of a worker's stored tool credentials via the
+ * `reveal_worker_tools` RPC (admin-authorized, service-role). The RPC decrypts
+ * and then permanently purges the stored ciphertext, so this succeeds at most
+ * once per provisioning. Returns null when nothing is stored, it was already
+ * revealed, or the call fails. To re-deliver, re-provision via `set_worker_tools`.
  */
-export const decryptWorkerTools = async (
+export const revealWorkerToolsOnce = async (
   svc: ServiceClient,
   workerId: string,
 ): Promise<Json | null> => {
   try {
-    const { data, error } = await svc.rpc('decrypt_worker_tools', {
+    const { data, error } = await svc.rpc('reveal_worker_tools', {
       p_worker_id: workerId,
     });
     if (error || data === null || data === undefined) return null;

@@ -5,7 +5,7 @@ import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Audit Log — ABC Kids HR' };
+export const metadata = { title: 'Audit Log — Aaron Anderson E.H.S. LLC' };
 
 const PAGE_SIZE = 50;
 

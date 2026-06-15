@@ -13,10 +13,11 @@ the rollback).
 - [x] Phase 0 — scaffold (tooling copied from NPM-Helper-App)
 - [x] Phase 1 — money core: `src/lib/{money,dates,pay}` ported pure + typed, unit/differential
       tests vs the legacy formulas; parity fixtures from real periods in `tests/lib/pay/parity*`
-- [ ] Phase 2 — auth + data layer (`@supabase/ssr`, `src/db/`, Zod at boundaries)
-- [ ] Phase 3 — screens tab by tab
-- [ ] Phase 4 — edge fns → server actions (cron/webhook fns stay Deno)
-- [ ] Phase 5 — parallel verification · Phase 6 — cutover between pay periods
+- [x] Phase 2 — auth + data layer (`@supabase/ssr`, `src/db/`, Zod at boundaries)
+- [x] Phase 3 — full admin screens + contractor portal + Wise module + dev seed
+- [x] Phase 4 — shared Hubstaff + documents cron logic (cron/webhook fns stay Deno)
+- [x] Phase 5 — parallel parity-verification harness (`pnpm parity:verify`, cutover gate)
+- [ ] Phase 6 — cutover between pay periods (dry-run passed 2026-06-13; see `docs/CUTOVER-RUNBOOK.md`)
 
 ## Money rules (non-negotiable)
 

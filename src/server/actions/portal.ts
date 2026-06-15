@@ -12,12 +12,14 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import {
+  clearFilelessDocumentSlot,
   fetchApprovedDocumentsForWorker,
   fetchOnboardingProgressForWorker,
+  resolveMissingDocumentSlot,
   updateDocumentReview,
   updateOnboardingProgressStage3,
 } from '@/db/queries/documents';
-import { fetchOwnProfile, fetchPortalSettings } from '@/db/queries/portal';
+import { fetchOwnProfile, fetchPortalSettings, insertMoodCheckin } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -596,6 +598,61 @@ export async function countersignAgreement(args: {
 
 /* ---------- portal-review (admin doc review) ---------- */
 
+/** The required onboarding documents, for stage-3 completion evaluation. */
+const REQUIRED_STAGE3_DOCS = [
+  { kind: 'resume' },
+  { kind: 'diploma' },
+  { kind: 'nbi_clearance' },
+  { kind: 'gov_id', sides: ['front', 'back'] },
+] as const;
+
+/**
+ * Re-evaluate stage-3 (documents) completion for a worker from their
+ * approved / waived / deferred docs and persist it. A waived or deferred doc
+ * clears its kind; otherwise an upload (both sides for two-sided kinds) is
+ * required. Shared by reviewDocument and resolveMissingDocument.
+ * Returns whether onboarding JUST became complete.
+ */
+async function recomputeStage3(
+  svc: ReturnType<typeof createServiceClient>,
+  workerId: string,
+): Promise<{ stage3Complete: boolean; onboardingComplete: boolean }> {
+  const db = await createServerSupabase();
+  const [approvedDocs, progress] = await Promise.all([
+    fetchApprovedDocumentsForWorker(svc, workerId),
+    fetchOnboardingProgressForWorker(db, workerId),
+  ]);
+
+  const evidence: Record<string, Set<string>> = {};
+  const sidesSeen: Record<string, Set<string>> = {};
+  const cleared: Record<string, boolean> = {};
+  for (const r of approvedDocs) {
+    if (r.review_status === 'waived' || r.review_status === 'deferred') {
+      cleared[r.kind] = true;
+      continue;
+    }
+    if (!evidence[r.kind]) evidence[r.kind] = new Set();
+    (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
+    if (r.side) {
+      if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
+      (sidesSeen[r.kind] as Set<string>).add(r.side);
+    }
+  }
+  const stage3Complete = REQUIRED_STAGE3_DOCS.every((d) => {
+    if (cleared[d.kind]) return true;
+    if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
+      const have = sidesSeen[d.kind] ?? new Set<string>();
+      return d.sides.every((s) => have.has(s));
+    }
+    return (evidence[d.kind]?.size ?? 0) >= 1;
+  });
+
+  const fully = !!(progress?.stage1_complete && progress.stage2_complete && stage3Complete);
+  const onboardingComplete = fully && !progress?.completed_at;
+  await updateOnboardingProgressStage3(svc, workerId, stage3Complete, onboardingComplete);
+  return { stage3Complete, onboardingComplete };
+}
+
 /**
  * Review a document (approve/needs_replacement/waive/defer).
  * Service client required: writes documents table (admin verified above).
@@ -650,46 +707,8 @@ export async function reviewDocument(args: {
       args.note?.trim() ?? null,
     );
 
-    // Re-eval stage 3 completion
-    const db = await createServerSupabase();
-    const [approvedDocs, progress] = await Promise.all([
-      fetchApprovedDocumentsForWorker(svc, doc.worker_id),
-      fetchOnboardingProgressForWorker(db, doc.worker_id),
-    ]);
-
-    const required = [
-      { kind: 'resume' },
-      { kind: 'diploma' },
-      { kind: 'nbi_clearance' },
-      { kind: 'gov_id', sides: ['front', 'back'] },
-    ];
-    const evidence: Record<string, Set<string>> = {};
-    const sidesSeen: Record<string, Set<string>> = {};
-    const cleared: Record<string, boolean> = {};
-    for (const r of approvedDocs) {
-      if (r.review_status === 'waived' || r.review_status === 'deferred') {
-        cleared[r.kind] = true;
-        continue;
-      }
-      if (!evidence[r.kind]) evidence[r.kind] = new Set();
-      (evidence[r.kind] as Set<string>).add(r.storage_path ?? r.id);
-      if (r.side) {
-        if (!sidesSeen[r.kind]) sidesSeen[r.kind] = new Set();
-        (sidesSeen[r.kind] as Set<string>).add(r.side);
-      }
-    }
-    const stage3Complete = required.every((d) => {
-      if (cleared[d.kind]) return true;
-      if ('sides' in d && Array.isArray(d.sides) && d.sides.length > 0) {
-        const have = sidesSeen[d.kind] ?? new Set<string>();
-        return d.sides.every((s) => have.has(s));
-      }
-      return (evidence[d.kind]?.size ?? 0) >= 1;
-    });
-
-    const fully = !!(progress?.stage1_complete && progress.stage2_complete && stage3Complete);
-    const onboardingComplete = fully && !progress?.completed_at;
-    await updateOnboardingProgressStage3(svc, doc.worker_id, stage3Complete, onboardingComplete);
+    // Re-eval stage 3 completion (shared with resolveMissingDocument).
+    const { onboardingComplete } = await recomputeStage3(svc, doc.worker_id);
 
     if (onboardingComplete) {
       await logEvent({
@@ -712,6 +731,132 @@ export async function reviewDocument(args: {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Review failed.' };
+  }
+}
+
+const VALID_DOC_KINDS = new Set<string>([
+  'ic_agreement',
+  'w8ben',
+  'gov_id',
+  'other',
+  'resume',
+  'diploma',
+  'nbi_clearance',
+]);
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Waive or defer a REQUIRED document the contractor has NOT uploaded yet, from
+ * the onboarding review panel. Records a fileless documents row so the
+ * requirement is cleared (waive) or cleared-with-a-due-date (defer → expires_on),
+ * then re-evaluates stage-3 completion. Service client after the admin check
+ * (mirrors reviewDocument).
+ */
+export async function resolveMissingDocument(args: {
+  workerId: string;
+  kind: string;
+  side?: string | null;
+  decision: 'waive' | 'defer';
+  /** Required for 'defer' — the date (YYYY-MM-DD) the doc is due by. */
+  deferUntil?: string;
+  note?: string;
+}): Promise<ActionResult> {
+  const admin = await requireAdmin();
+
+  if (!VALID_DOC_KINDS.has(args.kind)) return { ok: false, error: 'Unknown document type.' };
+  const side = args.side ?? null;
+
+  let expiresOn: string | null = null;
+  if (args.decision === 'defer') {
+    const d = (args.deferUntil ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d))
+      return { ok: false, error: 'Choose a defer-until date (YYYY-MM-DD).' };
+    if (d < todayIso()) return { ok: false, error: 'The defer-until date must be today or later.' };
+    expiresOn = d;
+  }
+
+  try {
+    // Service client after admin check — mirrors reviewDocument (storage/RLS out-of-band).
+    const svc = createServiceClient();
+    const reviewStatus = args.decision === 'waive' ? 'waived' : 'deferred';
+    const note = args.note?.trim() || null;
+    const title =
+      args.decision === 'waive' ? 'Waived — no upload required' : `Deferred until ${expiresOn}`;
+
+    await resolveMissingDocumentSlot(svc, {
+      workerId: args.workerId,
+      kind: args.kind as Database['public']['Enums']['document_kind'],
+      side,
+      reviewStatus,
+      reviewedBy: admin.userId,
+      reviewReason: note ?? (args.decision === 'defer' ? `Deferred until ${expiresOn}` : null),
+      expiresOn,
+      title,
+    });
+
+    const { onboardingComplete } = await recomputeStage3(svc, args.workerId);
+    if (onboardingComplete) {
+      await logEvent({
+        action: 'onboarding.completed',
+        entity: args.workerId,
+        detail: { worker_id: args.workerId },
+      });
+    }
+    await logEvent({
+      action: `document.${reviewStatus}`,
+      entity: `${args.kind}${side ? ` (${side})` : ''} · ${args.workerId}`,
+      detail: {
+        kind: args.kind,
+        side,
+        missing: true,
+        ...(expiresOn ? { deferred_until: expiresOn } : {}),
+        ...(note ? { reason: note } : {}),
+      },
+    });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not update the document.',
+    };
+  }
+}
+
+/**
+ * Revert an admin waive/defer on a not-yet-uploaded required document: deletes
+ * the fileless placeholder so the slot reads MISSING again, then re-evaluates
+ * stage-3 completion. Only ever removes fileless rows — never a real upload.
+ */
+export async function clearMissingDocumentResolution(args: {
+  workerId: string;
+  kind: string;
+  side?: string | null;
+}): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  if (!VALID_DOC_KINDS.has(args.kind)) return { ok: false, error: 'Unknown document type.' };
+  const side = args.side ?? null;
+
+  try {
+    const svc = createServiceClient();
+    await clearFilelessDocumentSlot(
+      svc,
+      args.workerId,
+      args.kind as Database['public']['Enums']['document_kind'],
+      side,
+    );
+    await recomputeStage3(svc, args.workerId);
+    await logEvent({
+      action: 'document.resolution_cleared',
+      entity: `${args.kind}${side ? ` (${side})` : ''} · ${args.workerId}`,
+      detail: { kind: args.kind, side, by: admin.email },
+    });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not update the document.',
+    };
   }
 }
 
@@ -764,5 +909,96 @@ export async function setSignedDate(args: {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Set signed date failed.' };
+  }
+}
+
+/* ---------- portal Home: mood check-in (§10.5) ---------- */
+
+/** Record the worker's own mood check-in. RLS mood_self_insert allows the
+ * worker's own client — no service client. */
+export async function saveMoodCheckin(args: {
+  mood: number;
+  note?: string | null;
+  kind?: 'start' | 'end' | null;
+}): Promise<ActionResult> {
+  const worker = await requireWorker();
+  const mood = Number(args.mood);
+  if (!Number.isInteger(mood) || mood < 1 || mood > 5)
+    return { ok: false, error: 'Pick a mood from 1 to 5.' };
+  try {
+    const db = await createServerSupabase();
+    await insertMoodCheckin(db, worker.workerId, {
+      mood,
+      note: args.note?.trim() || null,
+      kind: args.kind ?? null,
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not save check-in.' };
+  }
+}
+
+/* ---------- portal Docs: signed-URL view (§10.4) ---------- */
+
+/** Mint a 120s signed URL for the worker's OWN document (ownership re-check, then
+ * service client — the contractor-docs storage policies live out-of-band). */
+export async function getDocumentSignedUrl(args: {
+  documentId: string;
+}): Promise<ActionResult<{ url: string }>> {
+  const worker = await requireWorker();
+  try {
+    const svc = createServiceClient();
+    const { data: doc, error } = await svc
+      .from('documents')
+      .select('id, worker_id, kind, storage_path')
+      .eq('id', args.documentId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    if (!doc || doc.worker_id !== worker.workerId || doc.kind === 'other' || !doc.storage_path)
+      return { ok: false, error: 'Document not found.' };
+    const { data: signed, error: sErr } = await svc.storage
+      .from('contractor-docs')
+      .createSignedUrl(doc.storage_path, 120);
+    if (sErr || !signed?.signedUrl)
+      return { ok: false, error: sErr?.message ?? 'Could not sign URL.' };
+    return { ok: true, data: { url: signed.signedUrl } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not open document.' };
+  }
+}
+
+/* ---------- portal Tools: one-time reveal (§10.6) ---------- */
+
+/** One-time reveal of the worker's provisioned tool credentials (get_my_tools
+ * decrypts then permanently purges enc). */
+export async function revealMyTools(): Promise<
+  ActionResult<{ creds: unknown; popupPending: boolean } | null>
+> {
+  await requireWorker();
+  try {
+    const db = await createServerSupabase();
+    const { data, error } = await db.rpc('get_my_tools');
+    if (error) return { ok: false, error: error.message };
+    if (data == null || typeof data !== 'object') return { ok: true, data: null };
+    const obj = data as Record<string, unknown>;
+    return {
+      ok: true,
+      data: { creds: obj.creds ?? null, popupPending: obj.popup_pending === true },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not reveal tools.' };
+  }
+}
+
+/** Acknowledge the tools popup (clears popup_pending). */
+export async function ackMyTools(): Promise<ActionResult> {
+  await requireWorker();
+  try {
+    const db = await createServerSupabase();
+    const { error } = await db.rpc('ack_my_tools');
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Acknowledge failed.' };
   }
 }

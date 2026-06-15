@@ -13,7 +13,7 @@ import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Time Import — ABC Kids HR' };
+export const metadata = { title: 'Time Import — Aaron Anderson E.H.S. LLC' };
 
 export default async function TimePage() {
   const admin = await getCurrentAdmin();

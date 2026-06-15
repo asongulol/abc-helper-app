@@ -834,7 +834,6 @@ export type Database = {
           bonus_php: number
           company_id: string
           created_at: string
-          deduction_php: number
           expected_hours: number | null
           fx_rate: number | null
           gross_php: number
@@ -852,6 +851,7 @@ export type Database = {
           pdd_lunch_php: number
           performance_ratio: number | null
           rate_php: number | null
+          shortfall_php: number
           status: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php: number
           wise_dates: Json | null
@@ -864,7 +864,6 @@ export type Database = {
           bonus_php?: number
           company_id: string
           created_at?: string
-          deduction_php?: number
           expected_hours?: number | null
           fx_rate?: number | null
           gross_php?: number
@@ -882,6 +881,7 @@ export type Database = {
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
+          shortfall_php?: number
           status?: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php?: number
           wise_dates?: Json | null
@@ -894,7 +894,6 @@ export type Database = {
           bonus_php?: number
           company_id?: string
           created_at?: string
-          deduction_php?: number
           expected_hours?: number | null
           fx_rate?: number | null
           gross_php?: number
@@ -912,6 +911,7 @@ export type Database = {
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
+          shortfall_php?: number
           status?: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php?: number
           wise_dates?: Json | null
@@ -1218,6 +1218,7 @@ export type Database = {
           popup_pending: boolean
           provisioned_at: string | null
           requested: Json
+          revealed_at: string | null
           updated_at: string
           worker_id: string
         }
@@ -1227,6 +1228,7 @@ export type Database = {
           popup_pending?: boolean
           provisioned_at?: string | null
           requested?: Json
+          revealed_at?: string | null
           updated_at?: string
           worker_id: string
         }
@@ -1236,6 +1238,7 @@ export type Database = {
           popup_pending?: boolean
           provisioned_at?: string | null
           requested?: Json
+          revealed_at?: string | null
           updated_at?: string
           worker_id?: string
         }
@@ -1413,7 +1416,7 @@ export type Database = {
       admin_can_see_worker: { Args: { wid: string }; Returns: boolean }
       admin_lookup_auth_user: { Args: { p_email: string }; Returns: string }
       allocate_invoice_no: { Args: { p_year: number }; Returns: string }
-      decrypt_worker_tools: { Args: { p_worker_id: string }; Returns: Json }
+      reveal_worker_tools: { Args: { p_worker_id: string }; Returns: Json }
       get_my_tools: { Args: never; Returns: Json }
       get_tools_status: { Args: { p_worker_id: string }; Returns: Json }
       is_admin: { Args: never; Returns: boolean }
@@ -1421,6 +1424,7 @@ export type Database = {
       is_onboarded: { Args: never; Returns: boolean }
       is_owner: { Args: never; Returns: boolean }
       my_admin_company_ids: { Args: never; Returns: string[] }
+      my_tools_pending: { Args: never; Returns: boolean }
       my_worker_id: { Args: never; Returns: string }
       set_time_entry_activity: { Args: { p: Json }; Returns: number }
       set_tools_requested: {

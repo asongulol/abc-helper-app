@@ -53,10 +53,14 @@ export type OnboardingAgreementRow = {
   countersignerName: string | null;
   countersignMethod: string | null;
   countersignData: string | null;
+  countersignIp: string | null;
   fPosition: string | null;
   fRate: string | null;
   fStartDate: string | null;
   fCompanyName: string | null;
+  fEmploymentType: string | null;
+  fHoursPerWeek: number | null;
+  fSchedule: string | null;
   preparedAt: string | null;
   preparedBy: string | null;
 };
@@ -183,10 +187,14 @@ export const fetchAgreements = async (
     countersignerName: a.countersigner_name,
     countersignMethod: a.countersign_method,
     countersignData: a.countersign_data,
+    countersignIp: a.countersign_ip,
     fPosition: a.f_position,
     fRate: a.f_rate,
     fStartDate: a.f_start_date,
     fCompanyName: a.f_company_name,
+    fEmploymentType: a.f_employment_type,
+    fHoursPerWeek: a.f_hours_per_week,
+    fSchedule: a.f_schedule,
     preparedAt: a.prepared_at,
     preparedBy: a.prepared_by,
   }));

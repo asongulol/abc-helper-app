@@ -12,8 +12,13 @@ const EnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url().startsWith('http', 'must be a Supabase URL'),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(20),
   SUPABASE_SERVICE_KEY: z.string().min(20),
-  /** Admin SSO is restricted to this Google Workspace domain. */
-  ADMIN_SSO_ALLOWED_DOMAIN: z.string().min(1).default('abckidsny.com'),
+  /**
+   * Admin SSO is restricted to these Google Workspace domain(s). Comma-separated
+   * for multiple (e.g. "abckidsny.com,abbilabs.com"). Enforced on the OAuth
+   * callback (src/app/auth/callback/route.ts) and on admin creation
+   * (src/server/actions/admin-manage.ts) via src/server/auth/allowed-domains.ts.
+   */
+  ADMIN_SSO_ALLOWED_DOMAIN: z.string().min(1).default('abckidsny.com,abbilabs.com'),
   /** Wise API (DRAFT-ONLY money staging — funding is forbidden, see guardrails). */
   WISE_API_TOKEN: z.string().optional(),
   WISE_PROFILE_ID: z.string().optional(),

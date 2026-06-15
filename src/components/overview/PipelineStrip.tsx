@@ -1,7 +1,7 @@
 import type { PipelineData } from '@/db/queries/overview';
-import { fmtDate } from '@/lib/format';
 
 interface PipelineStripProps {
+  /** Period bounds — kept for call-site parity; the cycle header is rendered by the page. */
   periodStart: string;
   periodEnd: string;
   pipeline: PipelineData;
@@ -29,73 +29,59 @@ const resolveStatus = (stages: Stage[], idx: number): StageStatus => {
  * Pay-cycle pipeline strip — maps the five stages (time-imported → approved →
  * calculated → locked → paid) to the .ov-pipe CSS classes.
  */
-export const PipelineStrip = ({ periodStart, periodEnd, pipeline }: PipelineStripProps) => {
+export const PipelineStrip = ({ pipeline }: PipelineStripProps) => {
   const stages: Stage[] = [
     {
       key: 'time',
-      label: 'Time\nImported',
+      label: 'Time',
       icon: '⏱',
-      done: pipeline.timeImported.done,
-      detail: pipeline.timeImported.detail,
-    },
-    {
-      key: 'approved',
-      label: 'Approved',
-      icon: '✓',
       done: pipeline.approved.done,
-      detail: pipeline.approved.detail,
+      detail: 'approved',
     },
     {
-      key: 'calculated',
-      label: 'Calculated',
+      key: 'calc',
+      label: 'Calc',
       icon: '🧮',
       done: pipeline.calculated.done,
-      detail: pipeline.calculated.detail,
+      detail: pipeline.calculated.detail ?? "calc'd",
     },
     {
-      key: 'locked',
-      label: 'Locked',
+      key: 'lock',
+      label: 'Lock',
       icon: '🔒',
       done: pipeline.locked.done,
-      detail: pipeline.locked.detail,
+      detail: 'locked',
     },
     {
-      key: 'paid',
-      label: 'Paid',
-      icon: '💸',
+      key: 'sent',
+      label: 'Sent',
+      icon: '✉',
       done: pipeline.paid.done,
-      detail: pipeline.paid.detail,
+      detail: pipeline.paid.detail ?? 'sent',
+    },
+    {
+      key: 'settled',
+      label: 'Settled',
+      icon: '✓',
+      done: pipeline.periodState === 'paid',
+      detail: 'done',
     },
   ];
 
   return (
-    <div className="ov-cycle">
-      <div className="ov-cycle-head">
-        <div>
-          <div className="ov-tile-label" style={{ marginBottom: 2 }}>
-            Current period
-          </div>
-          <strong>
-            {fmtDate(periodStart)} – {fmtDate(periodEnd)}
-          </strong>
-        </div>
-      </div>
-      <div className="ov-pipe">
-        {stages.map((stage, idx) => {
-          const status = resolveStatus(stages, idx);
-          return (
-            <div key={stage.key} className={`ov-pipe-step ${status}`}>
-              <div className="ov-pipe-pip" aria-label={`${stage.label}: ${status}`}>
-                {status === 'done' ? '✓' : stage.icon}
-              </div>
-              <div className="ov-pipe-label" style={{ whiteSpace: 'pre-line' }}>
-                {stage.label}
-              </div>
-              {stage.detail != null && <div className="ov-pipe-sub">{stage.detail}</div>}
+    <ul className="ov-pipe" aria-label="Pay cycle progress">
+      {stages.map((stage, idx) => {
+        const status = resolveStatus(stages, idx);
+        return (
+          <li key={stage.key} className={`ov-pipe-step ${status}`}>
+            <div className="ov-pipe-pip" aria-label={`${stage.label}: ${status}`}>
+              {status === 'done' ? '✓' : stage.icon}
             </div>
-          );
-        })}
-      </div>
-    </div>
+            <div className="ov-pipe-label">{stage.label}</div>
+            {stage.detail != null && <div className="ov-pipe-sub">{stage.detail}</div>}
+          </li>
+        );
+      })}
+    </ul>
   );
 };

@@ -6,7 +6,7 @@ import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Payroll — ABC Kids HR' };
+export const metadata = { title: 'Payroll — Aaron Anderson E.H.S. LLC' };
 
 export default async function PayrollPage() {
   const admin = await getCurrentAdmin();

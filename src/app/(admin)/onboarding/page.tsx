@@ -6,7 +6,7 @@ import { getSelectedCompanyId } from '@/server/company';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Onboarding — ABC Kids HR' };
+export const metadata: Metadata = { title: 'Onboarding — Aaron Anderson E.H.S. LLC' };
 
 export default async function OnboardingPage() {
   const admin = await getCurrentAdmin();
@@ -30,6 +30,7 @@ export default async function OnboardingPage() {
       progress={progress}
       companyId={companyId}
       canCountersign={admin.canCountersign}
+      isOwner={admin.isOwner}
     />
   );
 }

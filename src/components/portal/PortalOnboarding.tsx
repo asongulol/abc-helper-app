@@ -436,10 +436,11 @@ export const PortalOnboarding = ({
           }}
           maxWidth={600}
         >
-          {/* Agreement body */}
+          {/* Agreement body — full column width preview of the contract */}
           {templateMap[selectedKind]?.body && (
             <div
               style={{
+                width: '100%',
                 maxHeight: 280,
                 overflowY: 'auto',
                 padding: '8px 12px',

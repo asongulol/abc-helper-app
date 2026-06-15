@@ -15,8 +15,8 @@
  */
 
 import { Badge, EmptyState, useToast } from '@/components/ui';
+import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
-import type { ApprovalUndoEntry } from '@/server/actions/time';
 import { editContractorTotal, setTimeApproval, undoApproval } from '@/server/actions/time';
 import { Fragment, useState, useTransition } from 'react';
 import { AddHoursPanel } from './AddHoursPanel';

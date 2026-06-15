@@ -197,7 +197,8 @@ export type PaymentDraft = {
   thirteenth_month_php: number;
   pdd_lunch_php: number;
   bonus_php: number;
-  deduction_php: number;
+  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
+  shortfall_php: number;
   net_php: number;
   misc_items: MiscItem[];
   fx_rate: number | null;
@@ -219,7 +220,7 @@ export const toPaymentDraft = (
   const r = row.result;
   if (r.net === null || r.gross === null) return null;
   // A non-null gross implies a resolved rate; reconstruct it (rate = gross + shortfall).
-  const ratePhp = centavosToPhp((r.gross + r.deduction) as Centavos);
+  const ratePhp = centavosToPhp((r.gross + r.shortfall) as Centavos);
   return {
     worker_id: row.workerId,
     expected_hours: r.expectedHours,
@@ -231,7 +232,7 @@ export const toPaymentDraft = (
     thirteenth_month_php: centavosToPhp(r.thirteenth),
     pdd_lunch_php: centavosToPhp(r.pddLunch),
     bonus_php: centavosToPhp(r.bonus),
-    deduction_php: centavosToPhp(r.deduction),
+    shortfall_php: centavosToPhp(r.shortfall),
     net_php: centavosToPhp(r.net),
     misc_items: [],
     fx_rate: opts.fxRate ?? null,

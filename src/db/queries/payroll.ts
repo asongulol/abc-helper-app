@@ -188,7 +188,8 @@ export type SavedPayment = {
   t13Php: number;
   pddPhp: number;
   bonusPhp: number;
-  dedPhp: number;
+  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
+  shortfallPhp: number;
   netPhp: number | null;
   miscItems: MiscItem[];
   payoutMethod: string | null;
@@ -423,12 +424,91 @@ export const setWiseRowLock = async (
   if (error) throw new Error(`wise row lock: ${error.message}`);
 };
 
+/* ---------- NEW: single payment detail (pay-slip print) ---------- */
+
+export type PaymentDetail = {
+  paymentId: string;
+  workerId: string;
+  name: string;
+  companyName: string | null;
+  periodStart: string;
+  periodEnd: string;
+  payDate: string | null;
+  grossPhp: number;
+  haPhp: number;
+  t13Php: number;
+  pddPhp: number;
+  bonusPhp: number;
+  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
+  shortfallPhp: number;
+  /** Stored net snapshot — never recomputed for display. */
+  netPhp: number | null;
+  miscItems: MiscItem[];
+  payoutMethod: string | null;
+  payoutCurrency: string | null;
+  payoutAmount: number | null;
+  fxRate: number | null;
+  wiseTransferId: string | null;
+  status: Database['public']['Enums']['payment_status'];
+  paidAt: string | null;
+  note: string | null;
+};
+
+/**
+ * Full payment row for a pay slip (admin + portal print). Joins pay_periods +
+ * workers + companies. `net_php` is the stored snapshot — the slip renders it
+ * verbatim and never recomputes. misc_items are mapped exactly like
+ * fetchSavedPayments.
+ */
+export const fetchPaymentDetail = async (
+  db: Db,
+  paymentId: string,
+): Promise<PaymentDetail | null> => {
+  const { data, error } = await db
+    .from('payments')
+    .select(
+      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
+    )
+    .eq('id', paymentId)
+    .maybeSingle();
+  if (error) throw new Error(`payment detail: ${error.message}`);
+  if (!data) return null;
+  return {
+    paymentId: data.id,
+    workerId: data.worker_id,
+    name: [data.workers?.first_name, data.workers?.middle_name, data.workers?.last_name]
+      .filter(Boolean)
+      .join(' ')
+      .trim(),
+    companyName: data.pay_periods?.companies?.name ?? null,
+    periodStart: data.pay_periods?.period_start ?? '',
+    periodEnd: data.pay_periods?.period_end ?? '',
+    payDate: data.pay_periods?.pay_date ?? null,
+    grossPhp: Number(data.gross_php ?? 0),
+    haPhp: Number(data.health_allowance_php ?? 0),
+    t13Php: Number(data.thirteenth_month_php ?? 0),
+    pddPhp: Number(data.pdd_lunch_php ?? 0),
+    bonusPhp: Number(data.bonus_php ?? 0),
+    shortfallPhp: Number(data.shortfall_php ?? 0),
+    netPhp: data.net_php,
+    miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
+    payoutMethod: data.payout_method,
+    payoutCurrency: data.payout_currency,
+    payoutAmount: data.payout_amount,
+    fxRate: data.fx_rate,
+    wiseTransferId: data.wise_transfer_id,
+    status: data.status,
+    paidAt: data.paid_at,
+    note: data.note,
+  };
+};
+
 /** Saved draft/locked snapshot rows for a period (legacy `loadSaved`). */
 export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<SavedPayment[]> => {
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -448,7 +528,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
     bonusPhp: Number(p.bonus_php ?? 0),
-    dedPhp: Number(p.deduction_php ?? 0),
+    shortfallPhp: Number(p.shortfall_php ?? 0),
     netPhp: p.net_php,
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,

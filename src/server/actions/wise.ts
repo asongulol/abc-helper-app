@@ -39,6 +39,7 @@ import {
   WiseMatchSchema,
   WiseStatusSchema,
 } from '@/types/schemas/wise';
+import { revalidatePath } from 'next/cache';
 
 export type WiseActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -291,6 +292,72 @@ export async function wiseRecipients(): Promise<WiseActionResult<unknown[]>> {
     await requireAdmin();
     const { recipients } = await serviceRecipients();
     return ok(recipients);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Admin: pull recipient IDs from Wise and store them on matched contractors
+ * (legacy "Pull IDs from Wise", manifest 21). READ-ONLY against Wise — lists
+ * saved recipients and matches each to a worker by normalized name, then writes
+ * the numeric recipient id onto workers that don't already have one. Never pulls
+ * bank details and moves no money.
+ */
+export async function wisePullRecipientIds(): Promise<
+  WiseActionResult<{ total: number; matched: number; updated: number }>
+> {
+  try {
+    await requireAdmin();
+    const { recipients } = await serviceRecipients();
+
+    const db = createServiceClient();
+    const { data: workers, error } = await db
+      .from('workers')
+      .select('id, first_name, middle_name, last_name, wise_recipient_id')
+      .neq('status', 'ended');
+    if (error) return fail(error.message);
+
+    const norm = (s: string): string =>
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+    // Index workers WITHOUT a stored recipient id, by normalized full name.
+    const byName = new Map<string, string>();
+    for (const w of workers ?? []) {
+      if (w.wise_recipient_id != null) continue;
+      const key = norm([w.first_name, w.middle_name, w.last_name].filter(Boolean).join(' '));
+      if (key && !byName.has(key)) byName.set(key, w.id);
+    }
+
+    let matched = 0;
+    let updated = 0;
+    for (const r of recipients) {
+      const name = typeof r === 'object' && r != null ? ((r as { name?: string }).name ?? '') : '';
+      const id = typeof r === 'object' && r != null ? (r as { id?: number }).id : undefined;
+      if (!name || id == null) continue;
+      const workerId = byName.get(norm(name));
+      if (!workerId) continue;
+      matched++;
+      const { error: upErr } = await db
+        .from('workers')
+        .update({ wise_recipient_id: id })
+        .eq('id', workerId);
+      if (!upErr) {
+        updated++;
+        byName.delete(norm(name)); // one recipient per worker
+      }
+    }
+
+    void logEvent({
+      action: 'wise_pull_recipient_ids',
+      entity: 'workers',
+      detail: { total: recipients.length, matched, updated },
+    });
+    revalidatePath('/contractors');
+    return ok({ total: recipients.length, matched, updated });
   } catch (e) {
     return fail(e);
   }

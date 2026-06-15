@@ -25,6 +25,26 @@ export type RosterWorker = {
   payoutMethod: Database['public']['Enums']['payout_method'] | null;
   healthAllowanceEligible: boolean;
   thirteenthMonthEligible: boolean;
+  // Personal / HR (workers table)
+  workEmail: string | null;
+  workNumber: string | null;
+  workExtension: string | null;
+  shiftStart: string | null;
+  shiftEnd: string | null;
+  dateOfBirth: string | null;
+  emergencyName: string | null;
+  emergencyRelationship: string | null;
+  emergencyMobile: string | null;
+  maritalStatus: string | null;
+  educationLevel: string | null;
+  course: string | null;
+  yearGraduated: string | null;
+  school: string | null;
+  gcash: string | null;
+  paymaya: string | null;
+  paypal: string | null;
+  wiseTag: string | null;
+  photoUrl: string | null;
   // worker_companies link fields
   linkId: string;
   companyId: string;
@@ -32,6 +52,7 @@ export type RosterWorker = {
   role: string | null;
   hubstaffName: string | null;
   weeklyHours: number | null;
+  billRateUsd: number | null;
   linkStatus: Database['public']['Enums']['worker_status'];
 };
 
@@ -41,7 +62,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)' as const;
+    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -72,12 +93,32 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         payoutMethod: w.payout_method,
         healthAllowanceEligible: w.health_allowance_eligible,
         thirteenthMonthEligible: w.thirteenth_month_eligible,
+        workEmail: w.work_email,
+        workNumber: w.work_number,
+        workExtension: w.work_extension,
+        shiftStart: w.shift_start,
+        shiftEnd: w.shift_end,
+        dateOfBirth: w.date_of_birth,
+        emergencyName: w.emergency_name,
+        emergencyRelationship: w.emergency_relationship,
+        emergencyMobile: w.emergency_mobile,
+        maritalStatus: w.marital_status,
+        educationLevel: w.education_level,
+        course: w.course,
+        yearGraduated: w.year_graduated,
+        school: w.school,
+        gcash: w.gcash,
+        paymaya: w.paymaya,
+        paypal: w.paypal,
+        wiseTag: w.wise_tag,
+        photoUrl: w.photo_url,
         linkId: l.id,
         companyId: l.company_id,
         contract: l.contract,
         role: l.role,
         hubstaffName: l.hubstaff_name,
         weeklyHours: l.weekly_hours,
+        billRateUsd: l.bill_rate_usd,
         linkStatus: l.status,
       };
     });
@@ -90,7 +131,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)' as const;
+    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -117,14 +158,60 @@ export const fetchWorkerLink = async (
     payoutMethod: w.payout_method,
     healthAllowanceEligible: w.health_allowance_eligible,
     thirteenthMonthEligible: w.thirteenth_month_eligible,
+    workEmail: w.work_email,
+    workNumber: w.work_number,
+    workExtension: w.work_extension,
+    shiftStart: w.shift_start,
+    shiftEnd: w.shift_end,
+    dateOfBirth: w.date_of_birth,
+    emergencyName: w.emergency_name,
+    emergencyRelationship: w.emergency_relationship,
+    emergencyMobile: w.emergency_mobile,
+    maritalStatus: w.marital_status,
+    educationLevel: w.education_level,
+    course: w.course,
+    yearGraduated: w.year_graduated,
+    school: w.school,
+    gcash: w.gcash,
+    paymaya: w.paymaya,
+    paypal: w.paypal,
+    wiseTag: w.wise_tag,
+    photoUrl: w.photo_url,
     linkId: data.id,
     companyId: data.company_id,
     contract: data.contract,
     role: data.role,
     hubstaffName: data.hubstaff_name,
     weeklyHours: data.weekly_hours,
+    billRateUsd: data.bill_rate_usd,
     linkStatus: data.status,
   };
+};
+
+/**
+ * Map each worker → the names of the active CLIENT companies they're assigned to
+ * (worker_companies links to companies with kind='client'). Powers the
+ * contractors-table CLIENT(S) column.
+ */
+export const fetchWorkerClientsMap = async (
+  db: Db,
+  workerIds: string[],
+): Promise<Record<string, string[]>> => {
+  if (workerIds.length === 0) return {};
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('worker_id, status, companies(name, kind)')
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`worker clients: ${error.message}`);
+  const map: Record<string, string[]> = {};
+  for (const r of data ?? []) {
+    const c = r.companies;
+    if (!c || c.kind !== 'client' || r.status === 'ended') continue;
+    const arr = map[r.worker_id] ?? [];
+    arr.push(c.name);
+    map[r.worker_id] = arr;
+  }
+  return map;
 };
 
 /** Insert a new worker and link row. Returns the new worker_id. */
@@ -183,6 +270,24 @@ export const updateWorkerProfile = async (
     payout_method: Database['public']['Enums']['payout_method'] | null;
     health_allowance_eligible: boolean;
     thirteenth_month_eligible: boolean;
+    work_email?: string | null;
+    work_number?: string | null;
+    work_extension?: string | null;
+    shift_start?: string | null;
+    shift_end?: string | null;
+    date_of_birth?: string | null;
+    emergency_name?: string | null;
+    emergency_relationship?: string | null;
+    emergency_mobile?: string | null;
+    marital_status?: string | null;
+    education_level?: string | null;
+    course?: string | null;
+    year_graduated?: string | null;
+    school?: string | null;
+    gcash?: string | null;
+    paymaya?: string | null;
+    paypal?: string | null;
+    wise_tag?: string | null;
   },
 ): Promise<void> => {
   const { error } = await db.from('workers').update(patch).eq('id', workerId);
@@ -199,6 +304,7 @@ export const updateWorkerLink = async (
     role: string | null;
     hubstaff_name: string | null;
     weekly_hours: number | null;
+    bill_rate_usd?: number | null;
     status: Database['public']['Enums']['worker_status'];
   },
 ): Promise<void> => {

@@ -1,149 +1,147 @@
 'use client';
 
-import {
-  Badge,
-  type BadgeTone,
-  EmptyState,
-  Modal,
-  type SortableColumn,
-  SortableTable,
-} from '@/components/ui';
 import type { PortalPaymentRow } from '@/db/queries/portal';
-import { fmtDate, money } from '@/lib/format';
+import { peso } from '@/lib/format';
 import { useState } from 'react';
 
 interface Props {
   payments: PortalPaymentRow[];
 }
 
-const STATUS_TONE: Record<string, BadgeTone> = {
-  draft: 'neutral',
-  queued: 'warn',
-  sent: 'good',
-  failed: 'bad',
-  reconciled: 'good',
-};
+/** Legacy "paid" = sent or reconciled (portal/index.html). */
+const isPaid = (status: string): boolean => status === 'sent' || status === 'reconciled';
 
 export const PortalStatements = ({ payments }: Props) => {
-  const [selected, setSelected] = useState<PortalPaymentRow | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
 
-  const columns: ReadonlyArray<SortableColumn<PortalPaymentRow>> = [
-    {
-      key: 'periodStart',
-      label: 'Period',
-      sortable: true,
-      cardTitle: true,
-      render: (p) => `${fmtDate(p.periodStart)} – ${fmtDate(p.periodEnd)}`,
-      accessor: (p) => p.periodStart,
-    },
-    {
-      key: 'payDate',
-      label: 'Pay Date',
-      sortable: true,
-      render: (p) => fmtDate(p.payDate),
-      accessor: (p) => p.payDate,
-    },
-    {
-      key: 'netPhp',
-      label: 'Net Pay',
-      sortable: true,
-      render: (p) => <strong>{money(p.netPhp)}</strong>,
-      accessor: (p) => p.netPhp,
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      sortable: true,
-      render: (p) => <Badge tone={STATUS_TONE[p.status] ?? 'neutral'}>{p.status}</Badge>,
-      accessor: (p) => p.status,
-    },
-    {
-      key: 'payoutMethod',
-      label: 'Via',
-      render: (p) => p.payoutMethod ?? '—',
-    },
-  ];
+  if (!payments.length) {
+    return <div className="empty">No pay slips yet.</div>;
+  }
+
+  // Summary stats — "paid" mirrors the legacy portal (sent or reconciled).
+  const paidRows = payments.filter((p) => isPaid(p.status));
+  const lastPaid = paidRows[0] ?? null;
+  const received = paidRows.reduce((sum, p) => sum + p.netPhp, 0);
+  // Remittance date of the FIRST (earliest) received pay slip — rows are sorted
+  // newest-first, so the earliest paid one is last. Prefer the actual paid date.
+  const firstPaid = paidRows[paidRows.length - 1] ?? null;
+  const sinceDate = firstPaid
+    ? firstPaid.paidAt
+      ? firstPaid.paidAt.slice(0, 10)
+      : firstPaid.payDate
+    : null;
 
   return (
     <>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Pay Statements</h2>
-        <p className="sub">Your payment history. Click any row for a full breakdown.</p>
+      <div className="pagehead">
+        <span className="sticker">📮 Pay slips</span>
       </div>
-
-      <div className="card">
-        <SortableTable
-          columns={columns}
-          rows={payments}
-          rowKey={(p) => p.paymentId}
-          filterPlaceholder="Filter by period, status…"
-          emptyMessage={
-            <EmptyState
-              icon="💰"
-              message="No pay statements yet. Check back after your first pay period."
-            />
-          }
-          onRowClick={(p) => setSelected(p)}
-        />
+      <div className="summary">
+        <div className="scell">
+          <div className="v">{lastPaid ? peso(lastPaid.netPhp) : '—'}</div>
+          <div className="l">Last pay received</div>
+        </div>
+        <div className="scell">
+          <div className="v">{peso(received)}</div>
+          <div className="l">Total received{sinceDate ? ` · since ${sinceDate}` : ''}</div>
+        </div>
       </div>
-
-      {selected !== null && (
-        <Modal
-          title={`Pay Statement — ${fmtDate(selected.periodStart)} to ${fmtDate(selected.periodEnd)}`}
-          onClose={() => setSelected(null)}
-          maxWidth={460}
-        >
-          <dl
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '4px 16px',
-              marginBottom: 12,
-            }}
-          >
-            {[
-              ['Pay Date', fmtDate(selected.payDate)],
-              ['Status', selected.status],
-              ['Via', selected.payoutMethod ?? '—'],
-              ['Paid At', fmtDate(selected.paidAt)],
-              ['Gross', money(selected.grossPhp)],
-              ['Health Allow.', money(selected.haPhp)],
-              ['13th Month', money(selected.t13Php)],
-              ['PDD / Lunch', money(selected.pddPhp)],
-              ['Bonus', money(selected.bonusPhp)],
-              ['Deduction', money(selected.dedPhp)],
-            ].map(([label, value]) => (
-              <div key={label}>
-                <dt className="sub" style={{ fontSize: 11 }}>
-                  {label}
-                </dt>
-                <dd style={{ margin: 0, fontWeight: 500 }}>{value}</dd>
-              </div>
-            ))}
-          </dl>
+      {payments.map((p) => {
+        const paid = isPaid(p.status);
+        const isOpen = open === p.paymentId;
+        return (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable card that expands inline.
           <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              padding: '10px 0',
-              borderTop: '2px solid var(--border)',
-              marginTop: 8,
-            }}
+            className="card"
+            key={p.paymentId}
+            onClick={() => setOpen(isOpen ? null : p.paymentId)}
+            style={{ cursor: 'pointer' }}
           >
-            <span style={{ fontWeight: 600 }}>Net Pay</span>
-            <span style={{ fontWeight: 700, fontSize: 18 }}>{money(selected.netPhp)}</span>
+            <div
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>
+                  {p.periodStart} → {p.periodEnd}
+                </div>
+                <div className="sub">
+                  Pay date {p.payDate || '—'} ·{' '}
+                  <span className={`pill ${paid ? 'paid' : 'pending'}`}>
+                    {paid ? 'paid' : 'pending'}
+                  </span>{' '}
+                  <span className="chev">{isOpen ? '▾' : '▸'}</span>
+                </div>
+              </div>
+              <div className="net">{peso(p.netPhp)}</div>
+            </div>
+            {isOpen && (
+              <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+                <div
+                  className="row"
+                  style={{
+                    fontWeight: 600,
+                    borderTop: '1px solid var(--line)',
+                    marginTop: 4,
+                    paddingTop: 6,
+                  }}
+                >
+                  <span>Gross pay</span>
+                  <span>{peso(p.grossPhp)}</span>
+                </div>
+                {p.haPhp > 0 && (
+                  <div className="row">
+                    <span className="k">Health allowance</span>
+                    <span>{peso(p.haPhp)}</span>
+                  </div>
+                )}
+                {p.t13Php > 0 && (
+                  <div className="row">
+                    <span className="k">13th month</span>
+                    <span>{peso(p.t13Php)}</span>
+                  </div>
+                )}
+                {p.pddPhp > 0 && (
+                  <div className="row">
+                    <span className="k">Lunch</span>
+                    <span>{peso(p.pddPhp)}</span>
+                  </div>
+                )}
+                {p.bonusPhp > 0 && (
+                  <div className="row">
+                    <span className="k">Bonus</span>
+                    <span>{peso(p.bonusPhp)}</span>
+                  </div>
+                )}
+                <div
+                  className="row"
+                  style={{
+                    fontWeight: 700,
+                    borderTop: '1px solid var(--line)',
+                    marginTop: 4,
+                    paddingTop: 6,
+                  }}
+                >
+                  <span>Net pay</span>
+                  <span>{peso(p.netPhp)}</span>
+                </div>
+                <div
+                  className="row"
+                  style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 6 }}
+                >
+                  <span className="k">Paid via</span>
+                  <span>{p.payoutMethod || '—'}</span>
+                </div>
+                {p.paidAt && (
+                  <div className="row">
+                    <span className="k">Date sent</span>
+                    <span>{p.paidAt.slice(0, 10)}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          <button
-            type="button"
-            className="btn ghost sm"
-            style={{ marginTop: 12 }}
-            onClick={() => setSelected(null)}
-          >
-            Close
-          </button>
-        </Modal>
-      )}
+        );
+      })}
     </>
   );
 };

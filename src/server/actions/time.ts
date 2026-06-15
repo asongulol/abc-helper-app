@@ -33,9 +33,6 @@ import {
   UndoApprovalSchema,
 } from '@/types/schemas/time';
 
-export type { ApprovalUndoEntry };
-export { buildUndoPayload };
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const authGuard = async (companyId: string) => {

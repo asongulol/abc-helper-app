@@ -1,11 +1,12 @@
 import { ProcessShell } from '@/components/process/ProcessShell';
 import { createServerSupabase } from '@/db/clients/server';
+import { countPendingTimeApprovals } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Process & Pay — ABC Kids HR' };
+export const metadata = { title: 'Process payroll — Aaron Anderson E.H.S. LLC' };
 
 export default async function ProcessPage() {
   const admin = await getCurrentAdmin();
@@ -15,7 +16,7 @@ export default async function ProcessPage() {
   if (!companyId) {
     return (
       <div className="card">
-        <h2>Process &amp; Pay</h2>
+        <h2>Process payroll</h2>
         <p className="sub">No company selected. Use the company switcher in the header.</p>
       </div>
     );
@@ -23,8 +24,18 @@ export default async function ProcessPage() {
 
   const db = await createServerSupabase();
   const allPeriods = await fetchPeriodSummaries(db, companyId);
-  // Process screen only shows locked/paid periods
-  const periods = allPeriods.filter((p) => p.state === 'locked' || p.state === 'paid');
 
-  return <ProcessShell companyId={companyId} isOwner={admin.isOwner} initialPeriods={periods} />;
+  // Legacy "Process payroll": a LIST of locked-but-not-yet-paid batches.
+  const ready = allPeriods.filter((p) => p.state === 'locked');
+
+  // Waiting-upstream prep (legacy `prep`): OPEN periods that actually have
+  // payment rows (real calculated drafts), plus the count of pending time
+  // entries in Time & Approval. Empty open periods are NOT counted.
+  const drafts = allPeriods
+    .filter((p) => p.state === 'open' && p.contractorCount > 0)
+    .map((p) => ({ start: p.periodStart, end: p.periodEnd }))
+    .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+  const pending = await countPendingTimeApprovals(db, companyId);
+
+  return <ProcessShell ready={ready} drafts={drafts} pending={pending} />;
 }

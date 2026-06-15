@@ -46,7 +46,7 @@
   --dur: 0.16s;
   --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
   /* Shell metrics (legacy Phase 7 sidebar nav). */
-  --topbar-h: 65px;
+  --topbar-h: 78px;
   --side-w: 212px;
   --side-w-collapsed: 60px;
   /* Breakpoint + spacing tokens (legacy Phase 0 responsive foundation).
@@ -283,6 +283,10 @@ label .opt {
 .shell > .wrap {
   flex: 1 1 auto;
   min-width: 0;
+  /* Admin desktop: use the available width next to the sidebar (overrides the
+     base .wrap 1180px cap). max-width only affects desktop — on mobile the
+     viewport is already narrower, so this leaves the mobile layout untouched. */
+  max-width: 1600px;
 }
 .sidebar {
   flex: 0 0 var(--side-w);
@@ -1336,14 +1340,6 @@ a.btn:hover {
   width: 100%;
   margin-bottom: 10px;
 }
-/* IMPROVED: brand mark sizing on the login card (legacy used an <img>). */
-.connect .brand-mark {
-  width: 64px;
-  height: 64px;
-  margin: 4px auto 16px;
-  display: block;
-}
-
 /* ===== Modal / overlay ==================================================== */
 .modal-bg {
   position: fixed;
@@ -2461,6 +2457,72 @@ dialog.modal {
   }
 }
 
+/* ===========================================================================
+ * PORTAL SHELL — extras for the Next.js shell port. The legacy portal rendered
+ * its bottom-tab / sidebar items as <button>; here they are Next <Link> (<a>)
+ * elements, so mirror the legacy `.tabs button` rules onto `.tabs a`. The
+ * `.pbuild` build-stamp footer (inline-styled in legacy) gets a base rule too.
+ * Scoped under `.portal` so the admin app is untouched.
+ * ========================================================================= */
+.portal .pbuild {
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 10px 0 84px;
+}
+/* mobile bottom tab bar — anchors styled to match legacy `.tabs button` */
+.portal .tabs a {
+  flex: 1;
+  display: block;
+  background: none;
+  border: 0;
+  padding: 10px 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.portal .tabs a:hover {
+  text-decoration: none;
+}
+.portal .tabs a.on {
+  color: var(--accent);
+  font-weight: 700;
+}
+@media (min-width: 900px) {
+  /* desktop sidebar — anchors styled to match legacy `.tabs button` */
+  .portal.portal-shell .tabs a {
+    flex: none;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .portal.portal-shell .tabs a:hover {
+    background: var(--bg);
+  }
+  .portal.portal-shell .tabs a.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .portal.portal-shell.nav-collapsed .tabs a {
+    justify-content: center;
+    gap: 0;
+    padding: 10px 0;
+    font-size: 0;
+  }
+}
+
 /* ===== Reduced motion (global, last so it wins) =========================== */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -2471,4 +2533,246 @@ dialog.modal {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ==========================================================================
+ * Portal "From New York" hero — faithful port of the legacy portal/index.html
+ * living time-of-day skyline + animated weather FX. Portal-scoped class names.
+ * ========================================================================== */
+.nyhero {
+  position: relative;
+  overflow: hidden;
+  color: #fff;
+  border-radius: 14px;
+  padding: 16px 16px 0;
+  margin: 12px 0;
+  background: linear-gradient(180deg, #14213d, #1f3a68 62%, #24305a);
+  transition: background 1.2s ease;
+}
+.nyhero .eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  position: relative;
+  z-index: 3;
+}
+.nyhero .zones {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  position: relative;
+  z-index: 3;
+}
+.nyhero .z {
+  flex: 1;
+}
+.nyhero .z .lbl {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+.nyhero .z .t {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+.nyhero .z .d {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.72);
+}
+.nyhero .vline {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.nyhero .ghr {
+  height: 1px;
+  background: var(--gold);
+  opacity: 0.85;
+  margin: 13px 0 9px;
+  position: relative;
+  z-index: 3;
+}
+.nyhero .fact {
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.92);
+  position: relative;
+  z-index: 3;
+  padding-bottom: 64px;
+}
+.nyhero .fact b {
+  color: var(--gold);
+}
+.nyhero .sky {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 74px;
+  display: block;
+  z-index: 1;
+}
+.nyhero .celestial {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+}
+.nyhero .win {
+  animation: winOn .5s ease both;
+}
+@keyframes winOn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.nyhero .wxfx {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.nyhero .wxfx::before,
+.nyhero .wxfx::after {
+  content: "";
+  position: absolute;
+  inset: -25%;
+}
+.wxfx-clear {
+  background: radial-gradient(
+    210px 155px at 86% 6%,
+    rgba(244, 201, 93, 0.52),
+    rgba(244, 201, 93, 0.16) 46%,
+    transparent 72%
+  );
+  animation: wxGlow 3.6s ease-in-out infinite alternate;
+}
+@keyframes wxGlow {
+  from {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}
+.wxfx-cloudy::before {
+  background: radial-gradient(88px 36px at 22% 26%, rgba(255, 255, 255, 0.44), transparent 70%),
+    radial-gradient(112px 42px at 62% 16%, rgba(255, 255, 255, 0.34), transparent 70%),
+    radial-gradient(72px 32px at 90% 32%, rgba(255, 255, 255, 0.36), transparent 70%);
+  animation: wxDrift 16s linear infinite;
+}
+@keyframes wxDrift {
+  from {
+    transform: translateX(-14%);
+  }
+  to {
+    transform: translateX(14%);
+  }
+}
+.wxfx-fog {
+  background: linear-gradient(
+    180deg,
+    rgba(220, 225, 235, 0.12),
+    rgba(220, 225, 235, 0.38) 55%,
+    rgba(220, 225, 235, 0.48)
+  );
+  animation: wxFog 6s ease-in-out infinite alternate;
+}
+@keyframes wxFog {
+  from {
+    opacity: 0.6;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(18px);
+  }
+}
+.wxfx-rain::before,
+.wxfx-storm::before {
+  background-image: repeating-linear-gradient(
+    108deg,
+    transparent 0 5px,
+    rgba(255, 255, 255, 0.4) 5px 7px
+  );
+  animation: wxRain .5s linear infinite;
+}
+@keyframes wxRain {
+  from {
+    transform: translate(0, 0);
+  }
+  to {
+    transform: translate(-20px, 56px);
+  }
+}
+.wxfx-snow::before {
+  background-image: radial-gradient(3px 3px at 12% 18%, rgba(255, 255, 255, 1), transparent),
+    radial-gradient(2.5px 2.5px at 38% 38%, rgba(255, 255, 255, 0.9), transparent),
+    radial-gradient(2.5px 2.5px at 58% 8%, rgba(255, 255, 255, 0.95), transparent),
+    radial-gradient(3px 3px at 70% 12%, rgba(255, 255, 255, 0.95), transparent),
+    radial-gradient(2.5px 2.5px at 88% 46%, rgba(255, 255, 255, 0.85), transparent);
+  background-size: 120px 120px;
+  animation: wxSnow 5.5s linear infinite;
+}
+.wxfx-snow::after {
+  background-image: radial-gradient(2px 2px at 28% 60%, rgba(255, 255, 255, 0.8), transparent),
+    radial-gradient(2px 2px at 50% 86%, rgba(255, 255, 255, 0.72), transparent),
+    radial-gradient(2.5px 2.5px at 60% 80%, rgba(255, 255, 255, 0.75), transparent),
+    radial-gradient(2.5px 2.5px at 80% 66%, rgba(255, 255, 255, 0.8), transparent);
+  background-size: 160px 160px;
+  animation: wxSnow 8.5s linear infinite;
+}
+@keyframes wxSnow {
+  from {
+    transform: translateY(-26%);
+  }
+  to {
+    transform: translateY(30%);
+  }
+}
+.wxfx-storm::after {
+  inset: 0;
+  background: rgba(255, 255, 255, 0.85);
+  opacity: 0;
+  animation: wxFlash 5s linear infinite;
+}
+@keyframes wxFlash {
+  0%,
+  86%,
+  100% {
+    opacity: 0;
+  }
+  87% {
+    opacity: 0.78;
+  }
+  88.5% {
+    opacity: 0.12;
+  }
+  90% {
+    opacity: 0.7;
+  }
+  92% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nyhero .wxfx,
+  .nyhero .wxfx::before,
+  .nyhero .wxfx::after {
+    animation: none !important;
+  }
+}
+/* brand logo lockup in nav/header */
+.brand-logo {
+  display: block;
+  height: auto;
 }

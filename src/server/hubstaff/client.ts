@@ -155,6 +155,32 @@ export async function pageAll<T = unknown>(url: string, token: string, key: stri
   return out;
 }
 
+// ─── Projects ──────────────────────────────────────────────────────────────────
+
+/** A Hubstaff project (subset used by the Configuration mapping panel). */
+export interface HubstaffProject {
+  id: number;
+  name: string;
+}
+
+/**
+ * Fetch all projects for a Hubstaff organization (cursor-paginated).
+ * Thin wrapper over `pageAll`; the caller upserts these into `hubstaff_projects`.
+ */
+export async function fetchHubstaffProjects(
+  orgId: number,
+  token: string,
+): Promise<HubstaffProject[]> {
+  const raw = await pageAll<{ id?: number; name?: string | null }>(
+    `${HUBSTAFF_API_BASE}/organizations/${orgId}/projects`,
+    token,
+    'projects',
+  );
+  return raw
+    .filter((p): p is { id: number; name?: string | null } => p.id != null)
+    .map((p) => ({ id: p.id, name: p.name ?? `project ${p.id}` }));
+}
+
 // ─── Member/user name resolution ──────────────────────────────────────────────
 
 /**

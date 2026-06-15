@@ -124,6 +124,61 @@ export const countExpiringDocuments = async (
   return count ?? 0;
 };
 
+/**
+ * Delete any fileless (no upload) placeholder rows for a worker's doc slot.
+ * Never touches real uploads (those have a storage_path).
+ */
+export const clearFilelessDocumentSlot = async (
+  db: Db,
+  workerId: string,
+  kind: Database['public']['Enums']['document_kind'],
+  side: string | null,
+): Promise<void> => {
+  let q = db
+    .from('documents')
+    .delete()
+    .eq('worker_id', workerId)
+    .eq('kind', kind)
+    .is('storage_path', null);
+  q = side === null ? q.is('side', null) : q.eq('side', side);
+  const { error } = await q;
+  if (error) throw new Error(`clear placeholder: ${error.message}`);
+};
+
+/**
+ * Record an admin waive/defer for a REQUIRED document the contractor hasn't
+ * uploaded yet, as a fileless documents row (storage_path null). A prior
+ * fileless placeholder for the same slot is replaced so they don't accumulate.
+ * `expiresOn` carries the defer-until date (null for a waiver). Service client.
+ */
+export const resolveMissingDocumentSlot = async (
+  db: Db,
+  args: {
+    workerId: string;
+    kind: Database['public']['Enums']['document_kind'];
+    side: string | null;
+    reviewStatus: 'waived' | 'deferred';
+    reviewedBy: string;
+    reviewReason: string | null;
+    expiresOn: string | null;
+    title: string;
+  },
+): Promise<void> => {
+  await clearFilelessDocumentSlot(db, args.workerId, args.kind, args.side);
+  const { error } = await db.from('documents').insert({
+    worker_id: args.workerId,
+    kind: args.kind,
+    side: args.side,
+    review_status: args.reviewStatus,
+    reviewed_by: args.reviewedBy,
+    reviewed_at: new Date().toISOString(),
+    review_reason: args.reviewReason,
+    expires_on: args.expiresOn,
+    title: args.title,
+  });
+  if (error) throw new Error(`resolve missing document: ${error.message}`);
+};
+
 /** Update review status/reason on a document. Uses service client (caller checks). */
 export const updateDocumentReview = async (
   db: Db,

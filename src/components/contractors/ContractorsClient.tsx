@@ -1,26 +1,41 @@
 'use client';
 
+import { AnnouncementsCard } from '@/components/config/AnnouncementsCard';
 import type { SortableColumn } from '@/components/ui';
-import { Badge, ConfirmDangerModal, EmptyState, SortableTable, useToast } from '@/components/ui';
+import {
+  Badge,
+  ConfirmDangerModal,
+  EmptyState,
+  Modal,
+  SortableTable,
+  useToast,
+} from '@/components/ui';
+import type { AnnouncementRow } from '@/db/queries/config';
 import type { RosterWorker } from '@/db/queries/workers';
-import { centavosToPhp, fmtDate, money } from '@/lib/format';
 import type { RateRow } from '@/lib/pay/rates';
-import { resolveRate } from '@/lib/pay/rates';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
+import { deleteContractor } from '@/server/actions/portal-admin';
+import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { AddContractorModal } from './AddContractorModal';
+import { AddContractorWizard } from './AddContractorWizard';
+import { BulkImportModal } from './BulkImportModal';
 import { ProfilePanel } from './ProfilePanel';
+import { PullWiseRecipientsModal } from './PullWiseRecipientsModal';
 
 type Props = {
   companyId: string;
   roster: RosterWorker[];
   allRates: RateRow[];
   today: string;
+  isOwner: boolean;
+  countersigners: { userId: string; name: string }[];
+  clientsByWorker: Record<string, string[]>;
+  companies: { id: string; name: string }[];
+  announcements: AnnouncementRow[];
 };
 
 type RowShape = RosterWorker & {
   _name: string;
-  _currentRateCentavos: number | null;
   _statusLabel: 'active' | 'inactive';
 };
 
@@ -28,33 +43,29 @@ function fullName(w: RosterWorker): string {
   return [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
 }
 
-export function ContractorsClient({ companyId, roster, allRates, today }: Props) {
+export function ContractorsClient({
+  companyId,
+  roster,
+  isOwner,
+  countersigners,
+  clientsByWorker,
+  companies,
+  announcements,
+}: Props) {
   const { notify } = useToast();
+  const router = useRouter();
 
-  // Derive period edges from today (semi-monthly: 1–15 or 16–end).
-  const todayParts = today.split('-').map(Number);
-  const yyyy = todayParts[0] ?? new Date().getFullYear();
-  const mm = todayParts[1] ?? 1;
-  const dd = todayParts[2] ?? 1;
-  const day = dd;
-  const mmStr = String(mm).padStart(2, '0');
-  const periodStart = day <= 15 ? `${yyyy}-${mmStr}-01` : `${yyyy}-${mmStr}-16`;
-  const periodEnd =
-    day <= 15
-      ? `${yyyy}-${mmStr}-15`
-      : (() => {
-          const last = new Date(yyyy, mm, 0).getDate();
-          return `${yyyy}-${mmStr}-${String(last).padStart(2, '0')}`;
-        })();
-
-  const [rows, setRows] = useState<RowShape[]>(() =>
-    buildRows(roster, allRates, periodStart, periodEnd),
-  );
+  const [rows, setRows] = useState<RowShape[]>(() => buildRows(roster));
   const [showInactive, setShowInactive] = useState(false);
   const [selectedWorker, setSelectedWorker] = useState<RosterWorker | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [showPullWise, setShowPullWise] = useState(false);
+  const [showAnnounce, setShowAnnounce] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<RosterWorker | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<RosterWorker | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RosterWorker | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
 
@@ -68,22 +79,11 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
         const shaped: RowShape = {
           ...updated,
           _name: fullName(updated),
-          _currentRateCentavos: resolveRate(allRates, updated.workerId, periodStart, periodEnd),
           _statusLabel: isActive(updated) ? 'active' : 'inactive',
         };
         return shaped;
       }),
     );
-  }
-
-  function appendRow(worker: RosterWorker) {
-    const shaped: RowShape = {
-      ...worker,
-      _name: fullName(worker),
-      _currentRateCentavos: resolveRate(allRates, worker.workerId, periodStart, periodEnd),
-      _statusLabel: isActive(worker) ? 'active' : 'inactive',
-    };
-    setRows((prev) => [shaped, ...prev]);
   }
 
   function handleDeactivate(worker: RosterWorker) {
@@ -141,6 +141,15 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
       ),
     },
     {
+      key: 'clients',
+      label: 'Client',
+      sortable: false,
+      render: (r) => {
+        const names = clientsByWorker[r.workerId];
+        return names && names.length > 0 ? names.join(', ') : <span className="muted">—</span>;
+      },
+    },
+    {
       key: 'role',
       label: 'Role',
       sortable: true,
@@ -155,34 +164,6 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
       render: (r) => <Badge tone={r.contract === 'FT' ? 'good' : 'neutral'}>{r.contract}</Badge>,
     },
     {
-      key: '_statusLabel',
-      label: 'Status',
-      sortable: true,
-      accessor: (r) => r._statusLabel,
-      render: (r) => (
-        <Badge tone={r._statusLabel === 'active' ? 'good' : 'neutral'}>{r._statusLabel}</Badge>
-      ),
-    },
-    {
-      key: '_currentRateCentavos',
-      label: 'Current rate',
-      sortable: true,
-      accessor: (r) => r._currentRateCentavos ?? -1,
-      render: (r) =>
-        r._currentRateCentavos != null ? (
-          money(centavosToPhp(r._currentRateCentavos))
-        ) : (
-          <span className="muted">not set</span>
-        ),
-    },
-    {
-      key: 'hireDate',
-      label: 'Hire date',
-      sortable: true,
-      accessor: (r) => r.hireDate ?? '',
-      render: (r) => fmtDate(r.hireDate),
-    },
-    {
       key: 'payoutMethod',
       label: 'Payout',
       sortable: true,
@@ -190,11 +171,13 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
       render: (r) => (r.payoutMethod ? r.payoutMethod : <Badge tone="warn">not set</Badge>),
     },
     {
-      key: 'hubstaffName',
-      label: 'Hubstaff',
+      key: '_statusLabel',
+      label: 'Status',
       sortable: true,
-      accessor: (r) => r.hubstaffName ?? '',
-      render: (r) => r.hubstaffName ?? <span className="muted">—</span>,
+      accessor: (r) => r._statusLabel,
+      render: (r) => (
+        <Badge tone={r._statusLabel === 'active' ? 'good' : 'neutral'}>{r._statusLabel}</Badge>
+      ),
     },
     {
       key: '_actions',
@@ -224,6 +207,11 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
               Reactivate
             </button>
           )}
+          {isOwner && r._statusLabel !== 'active' && (
+            <button type="button" className="btn ghost sm" onClick={() => setDeleteTarget(r)}>
+              Delete
+            </button>
+          )}
         </div>
       ),
     },
@@ -236,8 +224,8 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
           <div>
             <h2 style={{ margin: 0 }}>Contractors</h2>
             <p className="sub" style={{ margin: '4px 0 0' }}>
-              {visibleRows.length} shown
-              {inactiveCount > 0 ? ` · ${inactiveCount} inactive` : ''} · Click a name or Edit for
+              Current company · {visibleRows.length} shown
+              {inactiveCount > 0 ? ` · ${inactiveCount} inactive` : ''}. Click a row (or Edit) for
               the full profile.
             </p>
           </div>
@@ -250,6 +238,20 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
               />
               Show inactive
             </label>
+            <button type="button" className="btn ghost" onClick={() => setShowPullWise(true)}>
+              ⤓ Pull IDs from Wise
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setShowBulk(true)}>
+              ⇪ Bulk import
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => setShowAnnounce(true)}
+              title="Post announcements to the contractor portal welcome page"
+            >
+              📣 Announcements
+            </button>
             <button type="button" className="btn" onClick={() => setShowAdd(true)}>
               + Add contractor
             </button>
@@ -259,7 +261,7 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
         {visibleRows.length === 0 && !isPending ? (
           <EmptyState
             icon="👥"
-            message="No contractors yet."
+            message="No contractors match."
             action={
               <button type="button" className="btn" onClick={() => setShowAdd(true)}>
                 Add your first contractor
@@ -271,7 +273,7 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
             columns={columns}
             rows={visibleRows}
             rowKey={(r) => r.workerId}
-            filterPlaceholder="Filter by name, role, hubstaff…"
+            filterPlaceholder="Filter by name, client, role…"
             onRowClick={(r) => setSelectedWorker(r)}
           />
         )}
@@ -281,6 +283,7 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
         <ProfilePanel
           worker={selectedWorker}
           companyId={companyId}
+          companies={companies}
           onClose={() => setSelectedWorker(null)}
           onSaved={(updated) => {
             refreshRow(updated);
@@ -291,16 +294,26 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
       )}
 
       {showAdd && (
-        <AddContractorModal
+        <AddContractorWizard
           companyId={companyId}
+          companyName={companies.find((c) => c.id === companyId)?.name ?? ''}
+          countersigners={countersigners}
           onClose={() => setShowAdd(false)}
-          onCreated={(worker) => {
-            appendRow(worker);
+          onCreated={() => {
             setShowAdd(false);
-            setSelectedWorker(worker);
-            notify('Contractor created — fill in their profile below.', { type: 'success' });
+            router.refresh();
           }}
         />
+      )}
+
+      {showBulk && <BulkImportModal companyId={companyId} onClose={() => setShowBulk(false)} />}
+
+      {showPullWise && <PullWiseRecipientsModal onClose={() => setShowPullWise(false)} />}
+
+      {showAnnounce && (
+        <Modal onClose={() => setShowAnnounce(false)} maxWidth={640}>
+          <AnnouncementsCard announcements={announcements} />
+        </Modal>
       )}
 
       {deactivateTarget && (
@@ -333,6 +346,33 @@ export function ContractorsClient({ companyId, roster, allRates, today }: Props)
           onCancel={() => setReactivateTarget(null)}
         />
       )}
+
+      {deleteTarget && (
+        <ConfirmDangerModal
+          title="Delete contractor permanently"
+          message={`Permanently delete ${fullName(deleteTarget)}? This removes their portal login, rates, onboarding, and uploaded documents.`}
+          consequence="Cannot be undone. Blocked if they have any payroll or time history — deactivate instead."
+          confirmWord={fullName(deleteTarget) || 'DELETE'}
+          confirmLabel="Delete forever"
+          busy={deleting}
+          onConfirm={() => {
+            const target = deleteTarget;
+            setDeleting(true);
+            startTransition(async () => {
+              const res = await deleteContractor({ workerId: target.workerId, force: true });
+              setDeleting(false);
+              setDeleteTarget(null);
+              if (!res.ok) {
+                notify(res.error, { type: 'error' });
+                return;
+              }
+              notify('Contractor deleted.', { type: 'success' });
+              router.refresh();
+            });
+          }}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </>
   );
 }
@@ -341,16 +381,10 @@ function isActive(w: RosterWorker): boolean {
   return w.workerStatus === 'active' && w.linkStatus === 'active';
 }
 
-function buildRows(
-  roster: RosterWorker[],
-  allRates: RateRow[],
-  periodStart: string,
-  periodEnd: string,
-): RowShape[] {
+function buildRows(roster: RosterWorker[]): RowShape[] {
   return roster.map((w) => ({
     ...w,
     _name: [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim(),
-    _currentRateCentavos: resolveRate(allRates, w.workerId, periodStart, periodEnd),
     _statusLabel: isActive(w) ? ('active' as const) : ('inactive' as const),
   }));
 }

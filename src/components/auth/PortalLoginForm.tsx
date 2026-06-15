@@ -1,25 +1,39 @@
 'use client';
 
 import { createBrowserSupabase } from '@/db/clients/browser';
-import { type FormEvent, useId, useState } from 'react';
+import Script from 'next/script';
+import { type FormEvent, useEffect, useId, useState } from 'react';
 
 /**
- * Contractor portal sign-in — email/password with a self-serve password
- * reset, port of the legacy portal Login.
+ * Contractor portal sign-in — email/password with a self-serve password reset.
  *
- * TODO(turnstile): the legacy portal rendered a Cloudflare Turnstile widget
- * here and attached its single-use token to signInWithPassword /
- * resetPasswordForEmail (`options.captchaToken`), never client-blocking on it.
- * Re-add the widget when the Turnstile site key is configured.
+ * Cloudflare Turnstile (§7.6): rendered only when NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ * is configured. Its single-use token is attached to signInWithPassword /
+ * resetPasswordForEmail via `options.captchaToken`; we never client-block on it
+ * (Supabase Auth is the enforcer when the project has Turnstile enabled).
  */
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+
+type TurnstileWindow = Window & { __abcTurnstileToken?: ((token: string) => void) | undefined };
+
 export const PortalLoginForm = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sent, setSent] = useState('');
+  const [captchaToken, setCaptchaToken] = useState<string | undefined>(undefined);
   const emailId = useId();
   const passwordId = useId();
+
+  // Turnstile invokes a named global callback with the token; mirror it to state.
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    (window as TurnstileWindow).__abcTurnstileToken = (token: string) => setCaptchaToken(token);
+    return () => {
+      (window as TurnstileWindow).__abcTurnstileToken = undefined;
+    };
+  }, []);
 
   const signIn = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -31,6 +45,7 @@ export const PortalLoginForm = () => {
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
+      ...(captchaToken ? { options: { captchaToken } } : {}),
     });
     if (error) {
       setErr(error.message);
@@ -50,6 +65,7 @@ export const PortalLoginForm = () => {
     const supabase = createBrowserSupabase();
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
       redirectTo: `${location.origin}/auth/callback?next=/portal`,
+      ...(captchaToken ? { captchaToken } : {}),
     });
     if (error) setErr(error.message);
     else setSent('Password-reset email sent — check your inbox.');
@@ -81,6 +97,17 @@ export const PortalLoginForm = () => {
         onChange={(e) => setPassword(e.target.value)}
         required
       />
+      {TURNSTILE_SITE_KEY && (
+        <>
+          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer />
+          <div
+            className="cf-turnstile"
+            data-sitekey={TURNSTILE_SITE_KEY}
+            data-callback="__abcTurnstileToken"
+            style={{ marginTop: 8 }}
+          />
+        </>
+      )}
       {err && (
         <div className="err" role="alert">
           {err}

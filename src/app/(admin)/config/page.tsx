@@ -1,18 +1,24 @@
-import { AdminsCard } from '@/components/config/AdminsCard';
-import { HolidaysCard } from '@/components/config/HolidaysCard';
+import { ConfigClient } from '@/components/config/ConfigClient';
 import { createServerSupabase } from '@/db/clients/server';
-import { listAdmins } from '@/db/queries/admins';
+import {
+  getEmployer,
+  getPortalSettings,
+  listAgreementTemplates,
+  listClients,
+  listHubstaffProjects,
+  parseOnboardingConfig,
+} from '@/db/queries/config';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId, listCompanies } from '@/server/company';
+import { getSelectedCompanyId } from '@/server/company';
 import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Configuration — ABC Kids HR' };
+export const metadata = { title: 'Configuration — Aaron Anderson E.H.S. LLC' };
 
 export default async function ConfigPage() {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const [companyId, companies] = await Promise.all([getSelectedCompanyId(), listCompanies()]);
+  const companyId = await getSelectedCompanyId();
 
   if (!companyId) {
     return (
@@ -24,18 +30,30 @@ export default async function ConfigPage() {
   }
 
   const supabase = await createServerSupabase();
-  const admins = await listAdmins(supabase);
+  const [employer, clients, projects, templates, portalSettings] = await Promise.all([
+    getEmployer(supabase),
+    listClients(supabase),
+    listHubstaffProjects(supabase),
+    listAgreementTemplates(supabase),
+    getPortalSettings(supabase),
+  ]);
 
   return (
     <>
       <div className="card" style={{ marginBottom: 16 }}>
         <h2>Configuration</h2>
-        <p className="sub">Admin management and per-year holiday settings.</p>
+        <p className="sub">Admin setup and global maintenance tools.</p>
       </div>
 
-      <AdminsCard admins={admins} companyOptions={companies} isOwner={admin.isOwner} />
-
-      <HolidaysCard />
+      <ConfigClient
+        isOwner={admin.isOwner}
+        employer={employer}
+        clients={clients}
+        projects={projects}
+        templates={templates}
+        editableFields={portalSettings.editableFields}
+        onboardingConfig={parseOnboardingConfig(portalSettings.onboardingConfigRaw)}
+      />
     </>
   );
 }

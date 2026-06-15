@@ -1,29 +1,73 @@
 'use client';
 
+import { Logo } from '@/components/brand/Logo';
 import { ToastProvider } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 interface Props {
   workerName: string;
   onboarded: boolean;
+  /** Email shown under the workspace title in the header. */
+  email?: string;
+  /** Count of documents needing the contractor's attention (nav badge). */
+  docsBadge?: number;
   children: ReactNode;
 }
 
-const NAV_ITEMS = [
-  { href: '/portal', label: 'Dashboard', icon: '🏠', exact: true },
-  { href: '/portal/statements', label: 'Pay Statements', icon: '💰' },
+interface NavItem {
+  href: string;
+  label: string;
+  icon: string;
+  exact?: boolean;
+}
+
+const NAV_ITEMS: NavItem[] = [
+  { href: '/portal', label: 'Home', icon: '🏠', exact: true },
+  { href: '/portal/statements', label: 'Pay slips', icon: '₱' },
+  { href: '/portal/time', label: 'Time', icon: '⏱' },
+  { href: '/portal/docs', label: 'Docs', icon: '📄' },
   { href: '/portal/profile', label: 'Profile', icon: '👤' },
-  { href: '/portal/onboarding', label: 'Onboarding', icon: '🧭' },
 ];
 
-export const PortalShell = ({ workerName, onboarded, children }: Props) => {
+export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, children }: Props) => {
   const pathname = usePathname();
   const [signingOut, setSigningOut] = useState(false);
+  // Desktop sidebar: collapse state (persisted), mirroring the legacy portal.
+  const [navCollapsed, setNavCollapsed] = useState(false);
 
-  const isActive = (item: (typeof NAV_ITEMS)[number]) =>
+  useEffect(() => {
+    try {
+      setNavCollapsed(localStorage.getItem('portal_nav_collapsed') === '1');
+    } catch {
+      // ignore (private mode / SSR)
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('portal_nav_collapsed', navCollapsed ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [navCollapsed]);
+
+  // Pin the desktop sidebar below the full-width header using its real height.
+  useEffect(() => {
+    const set = () => {
+      const t = document.querySelector('.portal-shell .top');
+      if (t instanceof HTMLElement) {
+        document.documentElement.style.setProperty('--ptop-h', `${t.offsetHeight}px`);
+      }
+    };
+    set();
+    window.addEventListener('resize', set);
+    return () => window.removeEventListener('resize', set);
+  }, []);
+
+  const isActive = (item: NavItem) =>
     item.exact
       ? pathname === item.href
       : pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -39,50 +83,112 @@ export const PortalShell = ({ workerName, onboarded, children }: Props) => {
 
   return (
     <ToastProvider>
-      <div className="portal">
-        <header className="topbar">
-          <h1 className="brand">
-            Contractor Portal
-            <small>ABC Kids NY</small>
-          </h1>
-          <div className="topbar-actions">
-            <span className="sub" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-              {workerName}
-            </span>
-            <button type="button" className="btn ghost sm" onClick={signOut} disabled={signingOut}>
-              {signingOut ? 'Signing out…' : 'Sign out'}
-            </button>
+      <div className={`portal portal-shell${navCollapsed ? ' nav-collapsed' : ''}`}>
+        <div className="top">
+          <span
+            style={{
+              background: '#fff',
+              borderRadius: 8,
+              padding: '4px 8px',
+              display: 'inline-flex',
+              lineHeight: 0,
+              marginRight: 12,
+            }}
+          >
+            <Logo height={26} priority />
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <b>{workerName ? `${workerName}'s Workspace` : 'Workspace'}</b>
+            {email && <small>{email}</small>}
           </div>
-        </header>
-
-        <div className="shell">
-          <nav className="sidebar no-print" aria-label="Portal sections">
-            {NAV_ITEMS.map((item) => {
-              // Hide non-onboarding items until onboarded (except dashboard)
-              const hidden =
-                !onboarded && item.href !== '/portal' && item.href !== '/portal/onboarding';
-              if (hidden) return null;
-              const active = isActive(item);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={active ? 'side-item active' : 'side-item'}
-                  aria-current={active ? 'page' : undefined}
-                >
-                  <span className="side-ico" aria-hidden="true">
-                    {item.icon}
-                  </span>
-                  <span className="side-label">{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-
-          <main className="wrap" id="main">
-            {children}
-          </main>
+          <button
+            type="button"
+            className="btn ghost"
+            style={{ padding: '6px 10px', fontSize: 13 }}
+            onClick={signOut}
+            disabled={signingOut}
+          >
+            {signingOut ? 'Signing out…' : 'Sign out'}
+          </button>
         </div>
+
+        <main className="wrap" id="main">
+          {children}
+        </main>
+
+        <div
+          className="pbuild"
+          style={{
+            textAlign: 'center',
+            color: 'var(--muted)',
+            fontSize: 11,
+            padding: '10px 0 84px',
+          }}
+        >
+          Aaron Anderson E.H.S. LLC
+        </div>
+
+        <nav className="tabs no-print" aria-label="Portal sections">
+          {NAV_ITEMS.map((item) => {
+            // Hide sub-page items until onboarded (Home stays visible).
+            const hidden = !onboarded && item.href !== '/portal';
+            if (hidden) return null;
+            const active = isActive(item);
+            const showBadge = item.href === '/portal/docs' && docsBadge > 0;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={active ? 'on' : undefined}
+                aria-current={active ? 'page' : undefined}
+              >
+                <span className="ic" aria-hidden="true">
+                  {showBadge ? (
+                    <span style={{ position: 'relative', display: 'inline-block' }}>
+                      {item.icon}
+                      <span
+                        aria-label={`${docsBadge} to upload`}
+                        style={{
+                          position: 'absolute',
+                          top: -6,
+                          right: -11,
+                          background: '#dc2626',
+                          color: '#fff',
+                          borderRadius: 999,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          minWidth: 15,
+                          height: 15,
+                          lineHeight: '15px',
+                          textAlign: 'center',
+                          padding: '0 3px',
+                          boxShadow: '0 0 0 2px #fff',
+                        }}
+                      >
+                        {docsBadge}
+                      </span>
+                    </span>
+                  ) : (
+                    item.icon
+                  )}
+                </span>
+                {item.label}
+              </Link>
+            );
+          })}
+          <button
+            type="button"
+            className="nav-collapse"
+            onClick={() => setNavCollapsed((c) => !c)}
+            aria-label={navCollapsed ? 'Expand menu' : 'Collapse menu'}
+            title={navCollapsed ? 'Expand' : 'Collapse'}
+          >
+            <span className="ic" aria-hidden="true">
+              {navCollapsed ? '»' : '«'}
+            </span>
+            Collapse
+          </button>
+        </nav>
       </div>
     </ToastProvider>
   );

@@ -139,7 +139,7 @@ export const PayrollShell = ({
   // Modals
   const [miscRowId, setMiscRowId] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{
-    kind: 'recalculate' | 'deleteAll' | 'unlock';
+    kind: 'recalculate' | 'deleteAll' | 'unlock' | 'lock';
     message?: string;
     consequence?: string;
     confirmWord?: string;
@@ -591,7 +591,20 @@ export const PayrollShell = ({
             {currentPeriod && currentPeriod.state !== 'open' && (
               <Badge tone={periodStateTone(currentPeriod.state)}>🔒 {currentPeriod.state}</Badge>
             )}
-            <button type="button" className="btn" disabled={busy || isPaid} onClick={handleLock}>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || isPaid}
+              onClick={() =>
+                setConfirmModal({
+                  kind: 'lock',
+                  message: `Lock ${rows?.length ?? 0} pay statement(s) for ${periodStart} → ${periodEnd}?`,
+                  consequence:
+                    'Locking freezes the snapshot for processing. Unlocking later needs a typed reason.',
+                  confirmWord: 'LOCK',
+                })
+              }
+            >
               {isLocked ? 'Re-lock batch' : isPaid ? 'Marked paid' : 'Lock batch for processing'}
             </button>
             {(isLocked || isPaid) && (
@@ -987,6 +1000,22 @@ export const PayrollShell = ({
           onConfirm={() => {
             setConfirmModal(null);
             handleCalculate(true);
+          }}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
+
+      {confirmModal?.kind === 'lock' && (
+        <ConfirmDangerModal
+          title="Lock this pay batch?"
+          message={confirmModal.message}
+          consequence={confirmModal.consequence}
+          confirmWord={confirmModal.confirmWord}
+          confirmLabel="Lock batch"
+          busy={busy}
+          onConfirm={() => {
+            setConfirmModal(null);
+            handleLock();
           }}
           onCancel={() => setConfirmModal(null)}
         />

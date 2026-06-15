@@ -72,7 +72,7 @@ ratio   = min(worked / expected, 5)                       // cap 5
 gross   = rate == null ? null
         : ratio >= 1 ? rate                               // CAPPED AT RATE — no overtime premium
         : round2(ratio * rate)                            // legacy: +(ratio*rate).toFixed(2)
-ded     = rate == null ? 0 : round2(rate − gross)         // informational shortfall, NOT in net
+shortfall = rate == null ? 0 : round2(rate − gross)       // informational perf shortfall, NOT in net (stored as shortfall_php; real deductions are misc items)
 ha      = (includeHA && health_allowance_eligible) ? healthAllowance(hire, start, end) : 0
 t13     = (include13 && thirteenth_month_eligible && rate != null)
         ? thirteenthAccrual(rate, hire, end) : 0
@@ -129,7 +129,7 @@ States: `open` → `locked` (lock sets locked_at) → `paid`. Draft saves are bl
 state = 'open'; lock blocks rows with no rate; net==null rows are never persisted.
 Persisted payment columns: expected_hours, worked_hours, performance_ratio (4 dp),
 rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php,
-bonus_php, deduction_php, net_php, misc_items (jsonb), fx_rate, payout_currency='PHP',
+bonus_php, shortfall_php, net_php, misc_items (jsonb), fx_rate, payout_currency='PHP',
 payout_amount=net, payout_method, status.
 
 ## 10. Rate persistence — `upsertRate` 1919 / `saveRate` 3189 → `src/lib/pay/rates.ts` + server action

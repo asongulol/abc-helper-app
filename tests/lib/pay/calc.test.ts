@@ -19,7 +19,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.ratio).toBe(1);
     expect(r.gross).toBe(1_500_000);
-    expect(r.deduction).toBe(0);
+    expect(r.shortfall).toBe(0);
     expect(r.net).toBe(1_500_000);
   });
 
@@ -42,7 +42,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.ratio).toBeCloseTo(0.5, 10);
     expect(r.gross).toBe(750_000);
-    expect(r.deduction).toBe(750_000);
+    expect(r.shortfall).toBe(750_000);
     expect(r.net).toBe(750_000);
   });
 
@@ -75,7 +75,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.gross).toBeNull();
     expect(r.net).toBeNull();
-    expect(r.deduction).toBe(0);
+    expect(r.shortfall).toBe(0);
   });
 
   it('PTO seconds count as worked time (paid leave)', () => {

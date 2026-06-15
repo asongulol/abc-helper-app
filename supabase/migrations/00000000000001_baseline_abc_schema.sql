@@ -305,33 +305,48 @@ $$;
 ALTER FUNCTION "public"."bind_pending_admin"() OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."decrypt_worker_tools"("p_worker_id" "uuid") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "public"."reveal_worker_tools"("p_worker_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
     AS $$
-declare k text; e text;
+declare k text; e text; creds jsonb;
 begin
+  -- Admin one-time reveal (replaces the old unlimited-re-read decrypt_worker_tools):
+  -- authorize, decrypt once, then permanently purge `enc`. Returns null once the
+  -- credentials have already been revealed (by this path or the worker's own
+  -- get_my_tools) — re-provision via set_worker_tools to re-arm.
+  if not admin_can_see_worker(p_worker_id) then raise exception 'not authorized'; end if;
   select enc into e from worker_tools where worker_id = p_worker_id;
   if e is null then return null; end if;
   select value into k from app_secrets where key='tools_enc_key';
-  return extensions.pgp_sym_decrypt(extensions.dearmor(e), k)::jsonb;
+  creds := extensions.pgp_sym_decrypt(extensions.dearmor(e), k)::jsonb;
+  update worker_tools
+     set enc = null, popup_pending = false, revealed_at = now(), updated_at = now()
+   where worker_id = p_worker_id;
+  return creds;
 end$$;
 
 
-ALTER FUNCTION "public"."decrypt_worker_tools"("p_worker_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "public"."reveal_worker_tools"("p_worker_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."get_my_tools"() RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
     AS $$
-declare k text; e text; pend boolean;
+declare k text; e text; pend boolean; wid uuid; creds jsonb;
 begin
-  select enc, popup_pending into e, pend from worker_tools where worker_id = my_worker_id();
+  -- One-time reveal: decrypt the worker's own credentials, then immediately and
+  -- permanently purge `enc` so they can never be recovered again (by anyone).
+  wid := my_worker_id();
+  select enc, popup_pending into e, pend from worker_tools where worker_id = wid;
   if e is null then return null; end if;
   select value into k from app_secrets where key='tools_enc_key';
-  return jsonb_build_object('popup_pending', pend,
-    'creds', extensions.pgp_sym_decrypt(extensions.dearmor(e), k)::jsonb);
+  creds := extensions.pgp_sym_decrypt(extensions.dearmor(e), k)::jsonb;
+  update worker_tools
+     set enc = null, popup_pending = false, revealed_at = now(), updated_at = now()
+   where worker_id = wid;
+  return jsonb_build_object('popup_pending', pend, 'creds', creds);
 end$$;
 
 
@@ -447,7 +462,7 @@ begin
   if new.pdd_lunch_php        is distinct from old.pdd_lunch_php        then changed_cols := array_append(changed_cols,'pdd_lunch_php'); end if;
   if new.bonus_php            is distinct from old.bonus_php            then changed_cols := array_append(changed_cols,'bonus_php'); end if;
   if new.thirteenth_month_php is distinct from old.thirteenth_month_php then changed_cols := array_append(changed_cols,'thirteenth_month_php'); end if;
-  if new.deduction_php        is distinct from old.deduction_php        then changed_cols := array_append(changed_cols,'deduction_php'); end if;
+  if new.shortfall_php        is distinct from old.shortfall_php        then changed_cols := array_append(changed_cols,'shortfall_php'); end if;
   if new.net_php              is distinct from old.net_php              then changed_cols := array_append(changed_cols,'net_php'); end if;
   if new.original_net_php     is distinct from old.original_net_php     then changed_cols := array_append(changed_cols,'original_net_php'); end if;
   if new.payout_currency      is distinct from old.payout_currency      then changed_cols := array_append(changed_cols,'payout_currency'); end if;
@@ -512,10 +527,11 @@ begin
   if not admin_can_see_worker(p_worker_id) then raise exception 'not authorized'; end if;
   select value into k from app_secrets where key='tools_enc_key';
   if k is null then raise exception 'tools_enc_key not set'; end if;
-  insert into worker_tools(worker_id, enc, provisioned_at, popup_pending, acked_at, updated_at)
-  values (p_worker_id, extensions.armor(extensions.pgp_sym_encrypt(p_creds::text, k)), now(), true, null, now())
+  -- (Re)provisioning re-arms a fresh one-time reveal: clears revealed_at.
+  insert into worker_tools(worker_id, enc, provisioned_at, popup_pending, acked_at, revealed_at, updated_at)
+  values (p_worker_id, extensions.armor(extensions.pgp_sym_encrypt(p_creds::text, k)), now(), true, null, null, now())
   on conflict (worker_id) do update
-    set enc=excluded.enc, provisioned_at=now(), popup_pending=true, acked_at=null, updated_at=now();
+    set enc=excluded.enc, provisioned_at=now(), popup_pending=true, acked_at=null, revealed_at=null, updated_at=now();
 end$$;
 
 
@@ -855,7 +871,7 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
     "gross_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "health_allowance_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "thirteenth_month_php" numeric(12,2) DEFAULT 0 NOT NULL,
-    "deduction_php" numeric(12,2) DEFAULT 0 NOT NULL,
+    "shortfall_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "net_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "fx_rate" numeric(14,6),
     "payout_currency" "text" DEFAULT 'USD'::"text" NOT NULL,
@@ -877,6 +893,9 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
 
 
 ALTER TABLE "public"."payments" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."payments"."shortfall_php" IS 'Performance shortfall (rate − gross). INFORMATIONAL ONLY — never subtracted from net_php. Renamed from the legacy "deduction_php", whose name wrongly implied money was withheld. Real, subtracted deductions live in misc_items (kind=deduction).';
 
 
 CREATE TABLE IF NOT EXISTS "public"."pending_admins" (
@@ -1000,11 +1019,17 @@ CREATE TABLE IF NOT EXISTS "public"."worker_tools" (
     "provisioned_at" timestamp with time zone,
     "popup_pending" boolean DEFAULT false NOT NULL,
     "acked_at" timestamp with time zone,
-    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "revealed_at" timestamp with time zone
 );
 
 
 ALTER TABLE "public"."worker_tools" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."worker_tools"."enc" IS 'Encrypted 3rd-party tool credentials, recoverable EXACTLY ONCE. The first reveal — worker via get_my_tools() or admin via reveal_worker_tools() — decrypts then immediately nulls this column. Re-provision with set_worker_tools() to re-arm. No code path re-reads a credential after reveal.';
+
+COMMENT ON COLUMN "public"."worker_tools"."revealed_at" IS 'When enc was revealed-and-purged (one-time reveal). NULL = not yet revealed.';
 
 
 CREATE TABLE IF NOT EXISTS "public"."workers" (
@@ -1973,8 +1998,8 @@ GRANT ALL ON FUNCTION "public"."bind_pending_admin"() TO "service_role";
 
 
 
-REVOKE ALL ON FUNCTION "public"."decrypt_worker_tools"("p_worker_id" "uuid") FROM PUBLIC;
-GRANT ALL ON FUNCTION "public"."decrypt_worker_tools"("p_worker_id" "uuid") TO "service_role";
+REVOKE ALL ON FUNCTION "public"."reveal_worker_tools"("p_worker_id" "uuid") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."reveal_worker_tools"("p_worker_id" "uuid") TO "service_role";
 
 
 

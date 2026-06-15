@@ -56,7 +56,7 @@ export const ConfirmDangerModal = ({
       {needWord && (
         <div className="field" style={{ marginBottom: 4 }}>
           <label htmlFor={inputId}>
-            Type <b>{confirmWord}</b> to confirm
+            TYPE <b>{String(confirmWord).toUpperCase()}</b> TO CONFIRM
           </label>
           <input
             id={inputId}
