@@ -1,6 +1,6 @@
 'use client';
 
-import { Logo } from '@/components/brand/Logo';
+import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { AdminRow } from '@/db/queries/admins';
@@ -143,13 +143,9 @@ export const AdminShell = ({
               verticalAlign: 'middle',
               display: 'inline-flex',
               alignItems: 'center',
-              background: '#fff',
-              borderRadius: 10,
-              padding: '5px 10px',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.2)',
             }}
           >
-            <Logo height={40} priority />
+            <Mark height={38} priority />
           </span>
           HR &amp; Payroll<small>PH independent contractors</small>
         </h1>

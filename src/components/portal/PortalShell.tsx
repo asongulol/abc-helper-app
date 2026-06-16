@@ -1,6 +1,6 @@
 'use client';
 
-import { Logo } from '@/components/brand/Logo';
+import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import Link from 'next/link';
@@ -87,15 +87,12 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
         <div className="top">
           <span
             style={{
-              background: '#fff',
-              borderRadius: 8,
-              padding: '4px 8px',
               display: 'inline-flex',
               lineHeight: 0,
               marginRight: 12,
             }}
           >
-            <Logo height={26} priority />
+            <Mark height={26} priority />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <b>{workerName ? `${workerName}'s Workspace` : 'Workspace'}</b>

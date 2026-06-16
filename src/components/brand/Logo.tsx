@@ -12,8 +12,8 @@ interface LogoProps {
 
 /**
  * The real Aaron Anderson E.H.S. LLC brand lockup (AAA monogram + wordmark).
- * The artwork has a white background, so on dark surfaces (e.g. the navy admin
- * topbar) wrap it in a light chip.
+ * The artwork is transparent (navy + gold), so it drops onto any surface with no
+ * chip. Note: the navy elements are low-contrast on a navy background.
  */
 export const Logo = ({ height = 34, className, priority = false }: LogoProps) => (
   <Image
