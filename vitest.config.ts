@@ -9,7 +9,7 @@ import { defineConfig } from 'vitest/config';
  * and mirror the `src/` layout (see CLAUDE.md).
  */
 export default defineConfig({
-  esbuild: { jsx: 'automatic' },
+  // Vitest 4 transforms via oxc (esbuild options are ignored); oxc handles JSX automatically.
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
