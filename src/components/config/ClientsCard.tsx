@@ -1,17 +1,19 @@
 'use client';
 
-import { ContactsEditor } from '@/components/config/ContactsEditor';
-import { Badge } from '@/components/ui';
-import { ConfirmDangerModal } from '@/components/ui';
-import { EmptyState } from '@/components/ui';
-import { PhoneInput } from '@/components/ui';
-import { SortableTable } from '@/components/ui';
-import { useToast } from '@/components/ui';
-import type { SortableColumn } from '@/components/ui';
-import type { CompanyContact, CompanyFullRow } from '@/db/queries/config';
-import { deleteClient, saveClient, setClientStatus } from '@/server/actions/config';
 import { useRouter } from 'next/navigation';
 import { useId, useState, useTransition } from 'react';
+import { ContactsEditor } from '@/components/config/ContactsEditor';
+import type { SortableColumn } from '@/components/ui';
+import {
+  Badge,
+  ConfirmDangerModal,
+  EmptyState,
+  PhoneInput,
+  SortableTable,
+  useToast,
+} from '@/components/ui';
+import type { CompanyContact, CompanyFullRow } from '@/db/queries/config';
+import { deleteClient, saveClient, setClientStatus } from '@/server/actions/config';
 
 interface ClientsCardProps {
   clients: CompanyFullRow[];
@@ -56,7 +58,10 @@ export const ClientsCard = ({ clients }: ClientsCardProps) => {
   const editWebsiteId = useId();
 
   const [isPending, startTransition] = useTransition();
-  const [addForm, setAddForm] = useState<AddFormState>({ name: '', hubstaffOrgId: '' });
+  const [addForm, setAddForm] = useState<AddFormState>({
+    name: '',
+    hubstaffOrgId: '',
+  });
   const [editId, setEditId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CompanyFullRow | null>(null);
@@ -106,7 +111,9 @@ export const ClientsCard = ({ clients }: ClientsCardProps) => {
           toast.notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        toast.notify(e instanceof Error ? e.message : 'Failed to add client.', { type: 'error' });
+        toast.notify(e instanceof Error ? e.message : 'Failed to add client.', {
+          type: 'error',
+        });
       }
     });
   };
@@ -168,7 +175,10 @@ export const ClientsCard = ({ clients }: ClientsCardProps) => {
     setDeleteBusy(true);
     startTransition(async () => {
       try {
-        const res = await deleteClient({ id: deleteTarget.id, confirmName: deleteTarget.name });
+        const res = await deleteClient({
+          id: deleteTarget.id,
+          confirmName: deleteTarget.name,
+        });
         if (res.ok) {
           toast.notify(`${deleteTarget.name} deleted.`, { type: 'success' });
           setDeleteTarget(null);

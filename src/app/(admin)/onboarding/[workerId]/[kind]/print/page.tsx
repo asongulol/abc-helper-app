@@ -1,3 +1,5 @@
+import type { Metadata } from 'next';
+import { notFound, redirect } from 'next/navigation';
 import { AutoPrint } from '@/components/print/AutoPrint';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
@@ -11,10 +13,10 @@ import {
 } from '@/lib/agreements/merge';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import type { Metadata } from 'next';
-import { notFound, redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Agreement — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Agreement — Aaron Anderson E.H.S. LLC',
+};
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 const KINDS: AgreementKind[] = ['ic_agreement', 'non_compete', 'confidentiality_nda', 'baa'];
@@ -140,10 +142,16 @@ function Signatory({ part }: { part: ReturnType<typeof renderAgreementParts>['co
       >
         {part.imgSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
+          // biome-ignore lint/performance/noImgElement: print layout needs a real <img> for the signature data URL to render in PDF/print
           <img
             src={part.imgSrc}
             alt="signature"
-            style={{ height: 46, maxWidth: 240, objectFit: 'contain', display: 'block' }}
+            style={{
+              height: 46,
+              maxWidth: 240,
+              objectFit: 'contain',
+              display: 'block',
+            }}
           />
         ) : part.name ? (
           <span style={{ fontFamily: 'cursive', fontSize: 18 }}>{part.name}</span>

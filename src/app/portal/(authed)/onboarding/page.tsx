@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { PortalOnboarding } from '@/components/portal/PortalOnboarding';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchAgreements } from '@/db/queries/onboarding';
@@ -5,7 +6,6 @@ import { fetchAgreementTemplate, fetchOwnOnboarding, fetchOwnProfile } from '@/d
 import type { Database } from '@/db/types';
 import { type AgreementVars, mergeAgreement, monthlyFromPeriod } from '@/lib/agreements/merge';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 

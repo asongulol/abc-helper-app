@@ -1,8 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import type { PortalPaymentRow } from '@/db/queries/portal';
 import { peso } from '@/lib/format';
-import { useState } from 'react';
 
 interface Props {
   payments: PortalPaymentRow[];
@@ -50,15 +50,28 @@ export const PortalStatements = ({ payments }: Props) => {
         const paid = isPaid(p.status);
         const isOpen = open === p.paymentId;
         return (
-          // biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable card that expands inline.
+          // biome-ignore lint/a11y/useSemanticElements: card wraps block-level rows/sections that cannot be nested inside a native <button>; role=button + key handler give keyboard parity.
           <div
             className="card"
             key={p.paymentId}
+            role="button"
+            tabIndex={0}
+            aria-expanded={isOpen}
             onClick={() => setOpen(isOpen ? null : p.paymentId)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setOpen(isOpen ? null : p.paymentId);
+              }
+            }}
             style={{ cursor: 'pointer' }}
           >
             <div
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-start',
+              }}
             >
               <div>
                 <div style={{ fontWeight: 700 }}>
@@ -75,7 +88,13 @@ export const PortalStatements = ({ payments }: Props) => {
               <div className="net">{peso(p.netPhp)}</div>
             </div>
             {isOpen && (
-              <div style={{ marginTop: 10, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+              <div
+                style={{
+                  marginTop: 10,
+                  borderTop: '1px solid var(--line)',
+                  paddingTop: 8,
+                }}
+              >
                 <div
                   className="row"
                   style={{
@@ -126,7 +145,11 @@ export const PortalStatements = ({ payments }: Props) => {
                 </div>
                 <div
                   className="row"
-                  style={{ borderTop: '1px solid var(--line)', marginTop: 4, paddingTop: 6 }}
+                  style={{
+                    borderTop: '1px solid var(--line)',
+                    marginTop: 4,
+                    paddingTop: 6,
+                  }}
                 >
                   <span className="k">Paid via</span>
                   <span>{p.payoutMethod || '—'}</span>

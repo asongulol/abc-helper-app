@@ -1,8 +1,8 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { Modal, useToast } from '@/components/ui';
 import { ackMyTools, revealMyTools } from '@/server/actions/portal';
-import { useEffect, useRef, useState } from 'react';
 
 /**
  * One-time tools reveal (§10.6). Shown when worker_tools.popup_pending. Calls
@@ -22,7 +22,7 @@ export const ToolsPopup = ({ pending }: { pending: boolean }) => {
     void (async () => {
       const res = await revealMyTools();
       setLoading(false);
-      if (res.ok && res.data && res.data.creds && typeof res.data.creds === 'object') {
+      if (res.ok && res.data?.creds && typeof res.data.creds === 'object') {
         setCreds(res.data.creds as Record<string, unknown>);
       } else {
         // already revealed / nothing to show — close quietly
@@ -52,7 +52,11 @@ export const ToolsPopup = ({ pending }: { pending: boolean }) => {
             {Object.entries(creds).map(([tool, fields]) => (
               <div
                 key={tool}
-                style={{ padding: '8px 12px', background: 'var(--surface2)', borderRadius: 6 }}
+                style={{
+                  padding: '8px 12px',
+                  background: 'var(--surface2)',
+                  borderRadius: 6,
+                }}
               >
                 <strong style={{ textTransform: 'capitalize' }}>{tool}</strong>
                 <div className="sub" style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>

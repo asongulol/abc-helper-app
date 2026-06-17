@@ -6,10 +6,10 @@
  * Faithful to the legacy per-row addHoursForContractor logic.
  */
 
+import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import { periodDates } from '@/lib/dates/periods';
 import { addHoursDaily, addHoursTotal } from '@/server/actions/time';
-import { useState, useTransition } from 'react';
 
 interface AddHoursPanelProps {
   companyId: string;
@@ -59,7 +59,10 @@ export const AddHoursPanel = ({
         }
       } else {
         const days = dates
-          .map((date) => ({ date, hours: Number.parseFloat(dailyMap[date] ?? '') || 0 }))
+          .map((date) => ({
+            date,
+            hours: Number.parseFloat(dailyMap[date] ?? '') || 0,
+          }))
           .filter((d) => d.hours > 0);
         if (days.length === 0) {
           notify('Enter hours for at least one day.', { type: 'warn' });
@@ -146,7 +149,12 @@ export const AddHoursPanel = ({
                       style={{ width: 90 }}
                       placeholder="0"
                       value={dailyMap[dt] ?? ''}
-                      onChange={(e) => setDailyMap((prev) => ({ ...prev, [dt]: e.target.value }))}
+                      onChange={(e) =>
+                        setDailyMap((prev) => ({
+                          ...prev,
+                          [dt]: e.target.value,
+                        }))
+                      }
                       disabled={pending}
                     />
                   </td>

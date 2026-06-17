@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { PortalDashboard } from '@/components/portal/PortalDashboard';
 import { createServerSupabase } from '@/db/clients/server';
 import {
@@ -9,19 +10,27 @@ import {
   fetchPortalSettings,
 } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Current semi-monthly period (Manila), mirroring the legacy curPeriod(). */
-function curPeriod(todayISO: string): { start: string; end: string; pay: string } {
+function curPeriod(todayISO: string): {
+  start: string;
+  end: string;
+  pay: string;
+} {
   const [y, m, d] = todayISO.split('-').map(Number);
   const yy = y ?? 2026;
   const mm = m ?? 1;
   const dd = d ?? 1;
   const lastDay = new Date(yy, mm, 0).getDate();
   const iso = (day: number) => `${yy}-${pad(mm)}-${pad(day)}`;
-  if (dd <= 15) return { start: iso(1), end: iso(15), pay: `${yy}-${pad(mm)}-${pad(lastDay)}` };
+  if (dd <= 15)
+    return {
+      start: iso(1),
+      end: iso(15),
+      pay: `${yy}-${pad(mm)}-${pad(lastDay)}`,
+    };
   const ny = mm === 12 ? yy + 1 : yy;
   const nm = mm === 12 ? 1 : mm + 1;
   return { start: iso(16), end: iso(lastDay), pay: `${ny}-${pad(nm)}-15` };
@@ -78,9 +87,9 @@ export default async function PortalHomePage() {
     .slice(-18);
 
   // Pay timeline.
-  const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(
-    new Date(),
-  );
+  const todayManila = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila',
+  }).format(new Date());
   const period = curPeriod(todayManila);
   const dNum = (iso: string) => Number(iso.slice(8, 10));
   const totalDays = Math.max(1, dNum(period.end) - dNum(period.start) + 1);

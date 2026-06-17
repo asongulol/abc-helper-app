@@ -1,5 +1,5 @@
-import { buildUndoPayload } from '@/lib/time/approvalUndo';
 import { describe, expect, it } from 'vitest';
+import { buildUndoPayload } from '@/lib/time/approvalUndo';
 
 describe('buildUndoPayload', () => {
   it('returns only entries whose prior approval differs from the new status', () => {

@@ -7,7 +7,7 @@
  */
 
 import { weekdayCount } from '@/lib/dates/periods';
-import { type Holiday, defaultHolidaysForRange, holidaysInRange } from '@/lib/pay/holidays';
+import { defaultHolidaysForRange, type Holiday, holidaysInRange } from '@/lib/pay/holidays';
 
 export const FT_DAY_HOURS = 8;
 export const PT_DAY_HOURS = 4;

@@ -1,7 +1,7 @@
 import 'server-only';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { env } from '@/server/env';
-import { type SupabaseClient, createClient } from '@supabase/supabase-js';
 
 /**
  * Service-role Supabase client — **bypasses Row Level Security**.

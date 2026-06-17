@@ -1,8 +1,8 @@
 'use client';
 
+import { useId, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import type { MiscItem } from '@/lib/pay/calc';
-import { useId, useState } from 'react';
 
 export type MiscModalPayload = {
   haPhp: number;
@@ -29,7 +29,11 @@ type EarnRow = { label: string; amount: string };
 type HoursRow = { label: string; hours: string; hourlyRate: number };
 type DedRow = { label: string; amount: string };
 
-const numInp: React.CSSProperties = { width: 120, padding: '4px 6px', fontSize: 13 };
+const numInp: React.CSSProperties = {
+  width: 120,
+  padding: '4px 6px',
+  fontSize: 13,
+};
 const lblInp: React.CSSProperties = {
   flex: 1,
   padding: '4px 6px',
@@ -223,7 +227,13 @@ export const MiscModal = ({
 
       {/* Other Earns */}
       <div style={sectionStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <span
             style={{
               fontSize: 11,
@@ -289,7 +299,13 @@ export const MiscModal = ({
 
       {/* Other Hours */}
       <div style={sectionStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <span
             style={{
               fontSize: 11,
@@ -300,7 +316,9 @@ export const MiscModal = ({
           >
             Other hours{' '}
             <span style={{ textTransform: 'none' }}>
-              (₱{hourlyRate.toLocaleString('en-US', { minimumFractionDigits: 2 })}/h)
+              (₱
+              {hourlyRate.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              /h)
             </span>
           </span>
           <button
@@ -346,8 +364,17 @@ export const MiscModal = ({
                 style={{ width: 90, padding: '4px 6px', fontSize: 13 }}
               />
               <span className="muted" style={{ fontSize: 12 }}>
-                × ₱{Number(e.hourlyRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}/h ={' '}
-                <b>₱{hoursAmount(e).toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>
+                × ₱
+                {Number(e.hourlyRate).toLocaleString('en-US', {
+                  minimumFractionDigits: 2,
+                })}
+                /h ={' '}
+                <b>
+                  ₱
+                  {hoursAmount(e).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                  })}
+                </b>
               </span>
               <button
                 type="button"
@@ -364,7 +391,13 @@ export const MiscModal = ({
 
       {/* Deductions */}
       <div style={sectionStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <span
             style={{
               fontSize: 11,
@@ -441,7 +474,9 @@ export const MiscModal = ({
           Net impact:{' '}
           <b style={{ color: netImpact < 0 ? '#b91c1c' : '#166534' }}>
             {netImpact < 0 ? '-' : '+'}₱
-            {Math.abs(netImpact).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {Math.abs(netImpact).toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+            })}
           </b>
         </div>
         <div>

@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { ConfigClient } from '@/components/config/ConfigClient';
 import { createServerSupabase } from '@/db/clients/server';
 import {
@@ -10,7 +11,6 @@ import {
 } from '@/db/queries/config';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Configuration — Aaron Anderson E.H.S. LLC' };
 

@@ -6,12 +6,12 @@
  * component (app/index.html). Copy/labels are verbatim from the legacy app.
  */
 
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { ImportBatchGroup, RangeDryRun } from '@/server/actions/import';
 import { deleteImportRange, dryRunDeleteRange } from '@/server/actions/import';
 import { deleteImportBatch } from '@/server/actions/time';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
 
 interface DeleteImportsClientProps {
   companyId: string;
@@ -56,7 +56,11 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
       return;
     }
     startTransition(async () => {
-      const res = await dryRunDeleteRange({ companyId, start: delStart, stop: delStop });
+      const res = await dryRunDeleteRange({
+        companyId,
+        start: delStart,
+        stop: delStop,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error', persistent: true });
         return;
@@ -132,7 +136,14 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
 
       <div style={{ marginBottom: 14 }}>
         <span style={labelStyle}>By date range</span>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-end',
+            marginTop: 6,
+          }}
+        >
           <div>
             <label htmlFor="del-from" style={{ fontSize: 10, color: 'var(--muted)' }}>
               From
@@ -166,7 +177,12 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
           {armed && armed.type === 'range' ? (
             armed.overlap.length > 0 ? (
               <span
-                style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                style={{
+                  display: 'inline-flex',
+                  gap: 6,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
               >
                 <span style={{ fontSize: 12, color: 'var(--bad)', fontWeight: 600 }}>
                   Delete {armed.count} rows · {armed.start} → {armed.stop}
@@ -262,7 +278,11 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                     <tr key={i}>
                       <td>{g.name}</td>
                       <td>{g.rows}</td>
-                      <td>{g.hours.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                      <td>
+                        {g.hours.toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
                       <td className="muted">
                         {g.firstDate === g.lastDate
                           ? g.firstDate
@@ -291,12 +311,26 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
               borderRadius: 4,
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4, color: '#92400e' }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 4,
+                color: '#92400e',
+              }}
+            >
               This range overlaps {armed.overlap.length}{' '}
               {armed.overlap.length === 1 ? 'period' : 'periods'} that{' '}
               {armed.overlap.length === 1 ? 'is' : 'are'} already locked/paid:
             </div>
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#92400e' }}>
+            <ul
+              style={{
+                margin: 0,
+                paddingLeft: 18,
+                fontSize: 12,
+                color: '#92400e',
+              }}
+            >
               {armed.overlap.slice(0, 10).map((p, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: overlap periods have no stable id
                 <li key={i}>
@@ -341,7 +375,13 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                   <td data-label="Rows">{b.rows}</td>
                   <td className="card-action" style={{ textAlign: 'right' }}>
                     {armedBatch === i ? (
-                      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          gap: 6,
+                          alignItems: 'center',
+                        }}
+                      >
                         <button
                           type="button"
                           className="btn sm"
@@ -363,7 +403,10 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                       <button
                         type="button"
                         className="btn ghost sm"
-                        style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                        style={{
+                          borderColor: 'var(--bad)',
+                          color: 'var(--bad)',
+                        }}
                         disabled={pending}
                         onClick={() => setArmedBatch(i)}
                       >

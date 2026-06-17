@@ -1,13 +1,11 @@
 'use client';
 
-import { ContactsEditor } from '@/components/config/ContactsEditor';
-import { Badge } from '@/components/ui';
-import { PhoneInput } from '@/components/ui';
-import { useToast } from '@/components/ui';
-import type { CompanyContact, CompanyFullRow } from '@/db/queries/config';
-import { saveEmployer } from '@/server/actions/config';
 import { useRouter } from 'next/navigation';
 import { useId, useState, useTransition } from 'react';
+import { ContactsEditor } from '@/components/config/ContactsEditor';
+import { Badge, PhoneInput, useToast } from '@/components/ui';
+import type { CompanyContact, CompanyFullRow } from '@/db/queries/config';
+import { saveEmployer } from '@/server/actions/config';
 
 interface EmployerCardProps {
   employer: CompanyFullRow | null;
@@ -316,7 +314,14 @@ export const EmployerCard = ({ employer }: EmployerCardProps) => {
             }}
           >
             <div style={{ minWidth: 200 }}>
-              <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div
+                style={{
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                }}
+              >
                 {employer.name} <Badge tone="good">Active</Badge>
               </div>
               <div className="sub" style={{ fontSize: 12 }}>

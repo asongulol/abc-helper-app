@@ -1,11 +1,13 @@
+import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { ReportsClient } from '@/components/reports/ReportsClient';
 import { getReportsData } from '@/server/actions/reports-detail';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Reports — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Reports — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function ReportsPage() {
   const admin = await getCurrentAdmin();

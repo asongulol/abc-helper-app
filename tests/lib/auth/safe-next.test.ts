@@ -1,5 +1,5 @@
-import { safeNext } from '@/lib/auth/safe-next';
 import { describe, expect, it } from 'vitest';
+import { safeNext } from '@/lib/auth/safe-next';
 
 describe('safeNext', () => {
   it('preserves same-site path-only targets', () => {

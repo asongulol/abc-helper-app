@@ -1,9 +1,9 @@
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { cookies } from 'next/headers';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import { env } from '@/server/env';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
 
 /** Cookie holding the admin's selected company (legacy: company switcher). */
 export const COMPANY_COOKIE = 'abc_company';

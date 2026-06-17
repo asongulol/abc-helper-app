@@ -9,9 +9,9 @@
  * Pure: no DB, no React, no server-only.
  */
 
-import { type Centavos, addMinor, centavos } from '@/lib/money';
-import { miscTotal } from '@/lib/pay/calc';
+import { addMinor, type Centavos, centavos } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
+import { miscTotal } from '@/lib/pay/calc';
 import { phpToCentavos } from '@/lib/payroll/mappers';
 
 export type EditableRowValues = {

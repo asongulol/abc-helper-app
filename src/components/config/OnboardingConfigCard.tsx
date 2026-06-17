@@ -1,11 +1,11 @@
 'use client';
 
+import { useId, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { OnbAgreement, OnbDocument, OnboardingConfig } from '@/db/queries/config';
 import { REMINDER_FREQUENCIES, SIGNATURE_METHOD_CHOICES } from '@/lib/config/fields';
 import { saveOnboardingConfig } from '@/server/actions/config';
 import { DEFAULT_HIRE_EMAILS } from '@/server/email/templates';
-import { useId, useState, useTransition } from 'react';
 
 interface OnboardingConfigCardProps {
   config: OnboardingConfig;
@@ -15,8 +15,17 @@ interface OnboardingConfigCardProps {
 /** Default documents new contractors upload, used by "Reset to defaults". */
 const DEFAULT_DOCUMENTS: OnbDocument[] = [
   { kind: 'resume', title: 'Resume / CV', required: true },
-  { kind: 'diploma', title: 'Diploma or Transcript of Records', required: true },
-  { kind: 'nbi_clearance', title: 'NBI Clearance', required: true, freshness_months: 6 },
+  {
+    kind: 'diploma',
+    title: 'Diploma or Transcript of Records',
+    required: true,
+  },
+  {
+    kind: 'nbi_clearance',
+    title: 'NBI Clearance',
+    required: true,
+    freshness_months: 6,
+  },
   {
     kind: 'gov_id',
     title: 'Government-issued ID or Passport',
@@ -27,14 +36,24 @@ const DEFAULT_DOCUMENTS: OnbDocument[] = [
 
 /** Default agreements presented for signature, used by "Reset to defaults". */
 const DEFAULT_AGREEMENTS: OnbAgreement[] = [
-  { kind: 'ic_agreement', order: 0, title: 'Independent Contractor Agreement', required: true },
+  {
+    kind: 'ic_agreement',
+    order: 0,
+    title: 'Independent Contractor Agreement',
+    required: true,
+  },
   {
     kind: 'confidentiality_nda',
     order: 1,
     title: 'Confidentiality / Non-Disclosure Agreement / Non-Compete',
     required: true,
   },
-  { kind: 'baa', order: 2, title: 'Business Associate Agreement (BAA)', required: true },
+  {
+    kind: 'baa',
+    order: 2,
+    title: 'Business Associate Agreement (BAA)',
+    required: true,
+  },
 ];
 
 /**
@@ -98,7 +117,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
   };
 
   const removeDoc = (i: number) => {
-    setState((s) => ({ ...s, documents: s.documents.filter((_, idx) => idx !== i) }));
+    setState((s) => ({
+      ...s,
+      documents: s.documents.filter((_, idx) => idx !== i),
+    }));
   };
 
   const addDoc = () => {
@@ -126,7 +148,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
       if (!a || !b) return s;
       next[i] = b;
       next[j] = a;
-      return { ...s, agreements: next.map((ag, idx) => ({ ...ag, order: idx })) };
+      return {
+        ...s,
+        agreements: next.map((ag, idx) => ({ ...ag, order: idx })),
+      };
     });
   };
 
@@ -260,7 +285,9 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
                   type="checkbox"
                   checked={Array.isArray(doc.sides)}
                   onChange={(e) =>
-                    updateDoc(i, { sides: e.target.checked ? ['front', 'back'] : undefined })
+                    updateDoc(i, {
+                      sides: e.target.checked ? ['front', 'back'] : undefined,
+                    })
                   }
                 />{' '}
                 Front &amp; back
@@ -458,7 +485,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
             type="checkbox"
             checked={state.emails.auto_send}
             onChange={(e) =>
-              setState((s) => ({ ...s, emails: { ...s.emails, auto_send: e.target.checked } }))
+              setState((s) => ({
+                ...s,
+                emails: { ...s.emails, auto_send: e.target.checked },
+              }))
             }
           />{' '}
           Auto-send the welcome on hire
@@ -472,7 +502,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
             type="text"
             value={state.emails.portal_url}
             onChange={(e) =>
-              setState((s) => ({ ...s, emails: { ...s.emails, portal_url: e.target.value } }))
+              setState((s) => ({
+                ...s,
+                emails: { ...s.emails, portal_url: e.target.value },
+              }))
             }
           />
         </div>
@@ -502,7 +535,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
           onChange={(e) =>
             setState((s) => ({
               ...s,
-              emails: { ...s.emails, welcome: { ...s.emails.welcome, subject: e.target.value } },
+              emails: {
+                ...s.emails,
+                welcome: { ...s.emails.welcome, subject: e.target.value },
+              },
             }))
           }
         />
@@ -516,7 +552,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
           onChange={(e) =>
             setState((s) => ({
               ...s,
-              emails: { ...s.emails, welcome: { ...s.emails.welcome, html: e.target.value } },
+              emails: {
+                ...s.emails,
+                welcome: { ...s.emails.welcome, html: e.target.value },
+              },
             }))
           }
         />
@@ -536,7 +575,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
           onChange={(e) =>
             setState((s) => ({
               ...s,
-              emails: { ...s.emails, tools: { ...s.emails.tools, subject: e.target.value } },
+              emails: {
+                ...s.emails,
+                tools: { ...s.emails.tools, subject: e.target.value },
+              },
             }))
           }
         />
@@ -550,7 +592,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
           onChange={(e) =>
             setState((s) => ({
               ...s,
-              emails: { ...s.emails, tools: { ...s.emails.tools, html: e.target.value } },
+              emails: {
+                ...s.emails,
+                tools: { ...s.emails.tools, html: e.target.value },
+              },
             }))
           }
         />
@@ -572,7 +617,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
               ...s,
               emails: {
                 ...s.emails,
-                credentials: { ...s.emails.credentials, subject: e.target.value },
+                credentials: {
+                  ...s.emails.credentials,
+                  subject: e.target.value,
+                },
               },
             }))
           }
@@ -615,7 +663,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
             type="checkbox"
             checked={state.reminders.enabled}
             onChange={(e) =>
-              setState((s) => ({ ...s, reminders: { ...s.reminders, enabled: e.target.checked } }))
+              setState((s) => ({
+                ...s,
+                reminders: { ...s.reminders, enabled: e.target.checked },
+              }))
             }
           />{' '}
           Send reminders
@@ -630,7 +681,10 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
             onChange={(e) =>
               setState((s) => ({
                 ...s,
-                reminders: { ...s.reminders, include_deferred: e.target.checked },
+                reminders: {
+                  ...s.reminders,
+                  include_deferred: e.target.checked,
+                },
               }))
             }
           />{' '}

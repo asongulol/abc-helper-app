@@ -8,9 +8,9 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { DEFAULT_HIRE_EMAILS } from '@/server/email/templates';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 

@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { centavos } from '@/lib/money';
 import { calcContractorRow, miscTotal, usdReference } from '@/lib/pay/calc';
 import { resolveRate } from '@/lib/pay/rates';
-import { describe, expect, it } from 'vitest';
 
 /** Legacy float reference for gross: ratio>=1 ? rate : +(ratio*rate).toFixed(2). */
 const legacyGross = (ratePhp: number, ratio: number): number =>
@@ -148,8 +148,18 @@ describe('resolveRate (legacy rateFor ~6160)', () => {
       effectiveStart: '2025-01-01',
       effectiveEnd: '2025-12-31',
     },
-    { workerId: 'w1', amountPhp: '15000.00', effectiveStart: '2026-01-01', effectiveEnd: null },
-    { workerId: 'w2', amountPhp: '9000.00', effectiveStart: '2026-07-01', effectiveEnd: null },
+    {
+      workerId: 'w1',
+      amountPhp: '15000.00',
+      effectiveStart: '2026-01-01',
+      effectiveEnd: null,
+    },
+    {
+      workerId: 'w2',
+      amountPhp: '9000.00',
+      effectiveStart: '2026-07-01',
+      effectiveEnd: null,
+    },
   ];
 
   it('picks the most recent rate overlapping the period', () => {

@@ -20,6 +20,7 @@
  *  ambiguous variance             → 'multiple variance candidates — matched_with_variance (no override)'
  */
 
+import { describe, expect, it } from 'vitest';
 import { majorToMinor } from '@/lib/money';
 import {
   annotateOrphans,
@@ -30,7 +31,6 @@ import {
   filterLive,
 } from '@/lib/wise/matcher';
 import type { MatcherPayment, WiseDates, WiseTransfer } from '@/lib/wise/types';
-import { describe, expect, it } from 'vitest';
 
 // ─── test fixtures ────────────────────────────────────────────────────────────
 
@@ -416,7 +416,11 @@ describe('decideRefresh', () => {
   it('refresh: stored id not found in pull window → refresh_transfer_not_in_history', () => {
     const idIndex = new Map<string, WiseTransfer>(); // empty — not pulled
     const p = makePayment('p1', 20000, 999, { wiseTransferId: '99' });
-    const dates: WiseDates = { created: null, dateFunded: null, dateSent: null };
+    const dates: WiseDates = {
+      created: null,
+      dateFunded: null,
+      dateSent: null,
+    };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
     expect(d.result.outcome).toBe('refresh_transfer_not_in_history');
     expect(d.patch).toBeUndefined();
@@ -429,7 +433,11 @@ describe('decideRefresh', () => {
       wiseTransferId: '99',
       originalNetPhp: null, // first run — not yet overridden
     });
-    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+    const dates: WiseDates = {
+      created: NOW_ISO,
+      dateFunded: null,
+      dateSent: null,
+    };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
     expect(d.result.outcome).toBe('matched_with_variance_overridden');
     expect(d.patch?.original_net_php).toBe(20000);
@@ -443,7 +451,11 @@ describe('decideRefresh', () => {
       wiseTransferId: '99',
       originalNetPhp: 20000, // already overridden
     });
-    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+    const dates: WiseDates = {
+      created: NOW_ISO,
+      dateFunded: null,
+      dateSent: null,
+    };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
     // net_php == wiseAmt (19000) → exact (original_net_php already set, check tolerance)
     // 19000 == 19000 centavos delta == 0 → within tolerance → refreshed_clean
@@ -459,7 +471,11 @@ describe('decideRefresh', () => {
       wiseTransferId: '99',
       status: 'sent', // recorded as sent by CSV import / prior poll
     });
-    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+    const dates: WiseDates = {
+      created: NOW_ISO,
+      dateFunded: null,
+      dateSent: null,
+    };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
     // Should still lock (trusted recorded 'sent').
     expect(d.patch?.wise_locked_at).toBe(NOW_ISO);

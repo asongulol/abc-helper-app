@@ -1,10 +1,9 @@
 'use client';
 
-import { useToast } from '@/components/ui';
-import { useUnsavedGuard } from '@/components/ui';
+import { useId, useState, useTransition } from 'react';
+import { useToast, useUnsavedGuard } from '@/components/ui';
 import { EDITABLE_FIELDS } from '@/lib/config/fields';
 import { setEditableFields } from '@/server/actions/config';
-import { useId, useState, useTransition } from 'react';
 
 interface PortalFieldsCardProps {
   /** Currently-selected editable field keys. */

@@ -151,7 +151,10 @@ export async function updateOwnProfile(
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Update failed.',
+    };
   }
 }
 
@@ -170,8 +173,7 @@ export async function completeOnboardingTab(args: { tab: string }): Promise<Acti
       .select('stage1_complete, completed_at, current_stage')
       .eq('worker_id', worker.workerId)
       .maybeSingle();
-    if (!op || !op.stage1_complete)
-      return { ok: false, error: 'Finish signing your agreements first.' };
+    if (!op?.stage1_complete) return { ok: false, error: 'Finish signing your agreements first.' };
     if (op.completed_at) return { ok: false, error: 'Onboarding is already complete.' };
 
     // Service client for the worker write (no contractor write RLS).
@@ -252,11 +254,16 @@ export async function completeOnboardingTab(args: { tab: string }): Promise<Acti
     return {
       ok: true,
       ...(errors.length
-        ? { message: `Tab saved with ${errors.length} field(s) still required.` }
+        ? {
+            message: `Tab saved with ${errors.length} field(s) still required.`,
+          }
         : {}),
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Tab completion failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Tab completion failed.',
+    };
   }
 }
 
@@ -308,7 +315,10 @@ export async function advanceFromStage1(): Promise<ActionResult> {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Advance failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Advance failed.',
+    };
   }
 }
 
@@ -356,11 +366,18 @@ export async function finishOnboarding(): Promise<ActionResult> {
         updated_at: now,
       })
       .eq('worker_id', worker.workerId);
-    if (error) return { ok: false, error: `Could not finish onboarding: ${error.message}` };
+    if (error)
+      return {
+        ok: false,
+        error: `Could not finish onboarding: ${error.message}`,
+      };
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Finish onboarding failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Finish onboarding failed.',
+    };
   }
 }
 
@@ -389,7 +406,10 @@ export async function signAgreement(args: {
     const isDataUrl = /^data:image\/(png|jpe?g|webp);base64,[A-Za-z0-9+/]+=*$/.test(signatureData);
     const isTypedName = !signatureData.startsWith('data:');
     if (!isDataUrl && !isTypedName) {
-      return { ok: false, error: 'Signature must be a data:image URI or typed name.' };
+      return {
+        ok: false,
+        error: 'Signature must be a data:image URI or typed name.',
+      };
     }
     if (signatureData.length > 1_000_000) return { ok: false, error: 'Signature data too large.' };
   }
@@ -418,9 +438,9 @@ export async function signAgreement(args: {
     }
 
     const now = new Date().toISOString();
-    const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(
-      new Date(),
-    );
+    const todayManila = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+    }).format(new Date());
 
     // Insert signature (ignore-duplicates = immutable evidence)
     const { error: insErr } = await svc.from('onboarding_signatures').upsert(
@@ -435,9 +455,16 @@ export async function signAgreement(args: {
         signed_date: todayManila,
         status: 'signed',
       },
-      { onConflict: 'worker_id,agreement_kind,doc_version', ignoreDuplicates: true },
+      {
+        onConflict: 'worker_id,agreement_kind,doc_version',
+        ignoreDuplicates: true,
+      },
     );
-    if (insErr) return { ok: false, error: `Could not record signature: ${insErr.message}` };
+    if (insErr)
+      return {
+        ok: false,
+        error: `Could not record signature: ${insErr.message}`,
+      };
 
     // Re-evaluate stage 1
     const { data: postSigs } = await svc
@@ -489,7 +516,10 @@ export async function signAgreement(args: {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Sign failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Sign failed.',
+    };
   }
 }
 
@@ -506,7 +536,10 @@ export async function countersignAgreement(args: {
 }): Promise<ActionResult> {
   const admin = await requireAdmin();
   if (!admin.canCountersign)
-    return { ok: false, error: 'Your admin account does not have countersign permission.' };
+    return {
+      ok: false,
+      error: 'Your admin account does not have countersign permission.',
+    };
 
   const validKinds = new Set<string>(AGREEMENT_ORDER);
   if (!validKinds.has(args.agreementKey)) return { ok: false, error: 'Unknown agreement kind.' };
@@ -524,7 +557,10 @@ export async function countersignAgreement(args: {
       .eq('agreement_kind', agreementKey)
       .eq('status', 'signed');
     if (!sigs?.length)
-      return { ok: false, error: 'The contractor has not signed this agreement yet.' };
+      return {
+        ok: false,
+        error: 'The contractor has not signed this agreement yet.',
+      };
 
     // Check existing + immutability
     const { data: existing } = await svc
@@ -574,7 +610,10 @@ export async function countersignAgreement(args: {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Countersign failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Countersign failed.',
+    };
   }
 }
 
@@ -615,7 +654,10 @@ export async function reviewDocument(args: {
   const admin = await requireAdmin();
 
   if (args.decision === 'needs_replacement' && !args.note?.trim())
-    return { ok: false, error: 'A reason is required when requesting a replacement.' };
+    return {
+      ok: false,
+      error: 'A reason is required when requesting a replacement.',
+    };
 
   try {
     // Service client required: document review writes need service role (admin verified above).
@@ -680,7 +722,10 @@ export async function reviewDocument(args: {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Review failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Review failed.',
+    };
   }
 }
 
@@ -722,7 +767,11 @@ export async function resolveMissingDocument(args: {
     const d = (args.deferUntil ?? '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d))
       return { ok: false, error: 'Choose a defer-until date (YYYY-MM-DD).' };
-    if (d < todayIso()) return { ok: false, error: 'The defer-until date must be today or later.' };
+    if (d < todayIso())
+      return {
+        ok: false,
+        error: 'The defer-until date must be today or later.',
+      };
     expiresOn = d;
   }
 
@@ -859,7 +908,10 @@ export async function setSignedDate(args: {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Set signed date failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Set signed date failed.',
+    };
   }
 }
 
@@ -885,7 +937,10 @@ export async function saveMoodCheckin(args: {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not save check-in.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not save check-in.',
+    };
   }
 }
 
@@ -914,7 +969,10 @@ export async function getDocumentSignedUrl(args: {
       return { ok: false, error: sErr?.message ?? 'Could not sign URL.' };
     return { ok: true, data: { url: signed.signedUrl } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not open document.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not open document.',
+    };
   }
 }
 
@@ -936,8 +994,7 @@ export async function getAdminDocumentUrl(args: {
       .eq('id', args.documentId)
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
-    if (!doc || !doc.storage_path)
-      return { ok: false, error: 'No file to preview for this document.' };
+    if (!doc?.storage_path) return { ok: false, error: 'No file to preview for this document.' };
     // Company scope: the service client bypasses RLS, so re-check ownership here.
     // Non-owner admins may only preview documents for their assigned companies
     // (mirrors the companyIds gate used across the admin actions and the
@@ -955,9 +1012,15 @@ export async function getAdminDocumentUrl(args: {
       : /application\/pdf|\.pdf(\?|$)/.test(hint)
         ? 'pdf'
         : 'other';
-    return { ok: true, data: { url: signed.signedUrl, name: doc.title ?? 'Document', type } };
+    return {
+      ok: true,
+      data: { url: signed.signedUrl, name: doc.title ?? 'Document', type },
+    };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not open document.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not open document.',
+    };
   }
 }
 
@@ -977,10 +1040,16 @@ export async function revealMyTools(): Promise<
     const obj = data as Record<string, unknown>;
     return {
       ok: true,
-      data: { creds: obj.creds ?? null, popupPending: obj.popup_pending === true },
+      data: {
+        creds: obj.creds ?? null,
+        popupPending: obj.popup_pending === true,
+      },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not reveal tools.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not reveal tools.',
+    };
   }
 }
 
@@ -993,6 +1062,9 @@ export async function ackMyTools(): Promise<ActionResult> {
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Acknowledge failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Acknowledge failed.',
+    };
   }
 }

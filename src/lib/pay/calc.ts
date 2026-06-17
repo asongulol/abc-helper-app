@@ -9,9 +9,9 @@
  */
 
 import {
+  addMinor,
   type Centavos,
   type Cents,
-  addMinor,
   centavos,
   majorToMinor,
   mulRatioMinor,

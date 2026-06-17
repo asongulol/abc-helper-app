@@ -12,7 +12,7 @@
 
 import { type Centavos, majorToMinor } from '@/lib/money';
 import { nameKey } from '@/lib/names';
-import { type ContractorRowResult, type MiscItem, calcContractorRow } from '@/lib/pay/calc';
+import { type ContractorRowResult, calcContractorRow, type MiscItem } from '@/lib/pay/calc';
 import type { Holiday } from '@/lib/pay/holidays';
 import { type RateRow, resolveRate } from '@/lib/pay/rates';
 

@@ -1,8 +1,8 @@
 import 'server-only';
-import type { Database } from '@/db/types';
-import { env } from '@/server/env';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import type { Database } from '@/db/types';
+import { env } from '@/server/env';
 
 /**
  * Request-scoped Supabase client backed by the auth cookie (RLS applies).

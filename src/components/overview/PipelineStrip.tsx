@@ -74,7 +74,7 @@ export const PipelineStrip = ({ pipeline }: PipelineStripProps) => {
         const status = resolveStatus(stages, idx);
         return (
           <li key={stage.key} className={`ov-pipe-step ${status}`}>
-            <div className="ov-pipe-pip" aria-label={`${stage.label}: ${status}`}>
+            <div className="ov-pipe-pip" role="img" aria-label={`${stage.label}: ${status}`}>
               {status === 'done' ? '✓' : stage.icon}
             </div>
             <div className="ov-pipe-label">{stage.label}</div>

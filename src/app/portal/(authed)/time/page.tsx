@@ -1,8 +1,8 @@
+import { redirect } from 'next/navigation';
 import { PortalTime } from '@/components/portal/PortalTime';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchOwnTimeEntries } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 export default async function PortalTimePage() {
   const worker = await getCurrentWorker();

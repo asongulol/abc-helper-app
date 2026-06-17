@@ -13,11 +13,11 @@
  * Time Approval table (pending); there is no preview for the API path.
  */
 
+import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import { periodFor } from '@/lib/dates/periods';
 import type { HubstaffOrg } from '@/server/actions/hubstaff-sync';
 import { importHubstaffTime, listHubstaffOrgs } from '@/server/actions/hubstaff-sync';
-import { useState, useTransition } from 'react';
 
 interface OptionBPanelProps {
   companyId: string;
@@ -54,7 +54,12 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
       return;
     }
     startSync(async () => {
-      const res = await importHubstaffTime({ companyId, orgId, start: syncStart, stop: syncStop });
+      const res = await importHubstaffTime({
+        companyId,
+        orgId,
+        start: syncStart,
+        stop: syncStop,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -70,7 +75,10 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
           : '';
       notify(
         `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}`,
-        { type: rowsWritten > 0 ? 'success' : 'info', persistent: unmatched.length > 0 },
+        {
+          type: rowsWritten > 0 ? 'success' : 'info',
+          persistent: unmatched.length > 0,
+        },
       );
       onImported();
     });
@@ -92,7 +100,14 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
         Pulls directly. Needs the <code>hubstaff-sync</code> Edge Function deployed and the token
         set (see setup).
       </p>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+          alignItems: 'flex-end',
+        }}
+      >
         <div>
           <span style={{ fontSize: 10, color: 'var(--muted)' }}>Organization</span>
           <br />

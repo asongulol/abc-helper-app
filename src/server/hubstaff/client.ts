@@ -62,12 +62,14 @@ async function saveTokens(fields: {
 }): Promise<void> {
   try {
     const db = createServiceClient();
-    await db
-      .from('api_tokens')
-      .upsert(
-        { provider: 'hubstaff', updated_at: new Date().toISOString(), ...fields },
-        { onConflict: 'provider' },
-      );
+    await db.from('api_tokens').upsert(
+      {
+        provider: 'hubstaff',
+        updated_at: new Date().toISOString(),
+        ...fields,
+      },
+      { onConflict: 'provider' },
+    );
   } catch {
     // best-effort — a failed persist just means we refresh again next call
   }
@@ -94,7 +96,10 @@ export async function getAccessToken(): Promise<string> {
   const res = await fetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh }),
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refresh,
+    }),
   });
   if (!res.ok) {
     throw new Error(`Hubstaff token exchange failed (${res.status}): ${await res.text()}`);
@@ -214,7 +219,9 @@ export async function fetchMemberNames(orgId: number, token: string): Promise<Ma
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) break;
-      const data = (await res.json()) as { users?: Array<{ id: number; name?: string | null }> };
+      const data = (await res.json()) as {
+        users?: Array<{ id: number; name?: string | null }>;
+      };
       for (const u of data.users ?? []) {
         nameById.set(u.id, u.name ?? `user ${u.id}`);
       }
@@ -230,7 +237,10 @@ export async function fetchMemberNames(orgId: number, token: string): Promise<Ma
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) continue;
-      const data = (await res.json()) as { user?: { name?: string | null }; name?: string | null };
+      const data = (await res.json()) as {
+        user?: { name?: string | null };
+        name?: string | null;
+      };
       const u = data.user ?? data;
       nameById.set(id, (u as { name?: string | null }).name ?? `user ${id}`);
     } catch {

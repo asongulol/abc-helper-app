@@ -1,9 +1,9 @@
 'use client';
 
+import { type FormEvent, useState, useTransition } from 'react';
 import { Modal, Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
 import { addContractor } from '@/server/actions/contractors';
-import { type FormEvent, useState, useTransition } from 'react';
 
 type Props = {
   companyId: string;

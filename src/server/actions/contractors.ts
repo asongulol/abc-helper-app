@@ -6,6 +6,7 @@
  * audit log. No inline SQL, no money math.
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import {
@@ -25,7 +26,6 @@ import {
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
 } from '@/types/schemas/contractors';
-import { revalidatePath } from 'next/cache';
 
 /** Quick-add a blank contractor and link them to the selected company. */
 export async function addContractor(args: unknown): Promise<ActionResult<{ workerId: string }>> {
@@ -34,7 +34,10 @@ export async function addContractor(args: unknown): Promise<ActionResult<{ worke
 
   const parsed = AddContractorSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -69,7 +72,10 @@ export async function addContractor(args: unknown): Promise<ActionResult<{ worke
     });
     return { ok: true, data: { workerId } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Create failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Create failed.',
+    };
   }
 }
 
@@ -80,7 +86,10 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
 
   const parsed = SaveWorkerProfileSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -138,7 +147,10 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Save failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Save failed.',
+    };
   }
 }
 
@@ -149,7 +161,10 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
 
   const parsed = SetLinkStatusSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -167,7 +182,10 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Status update failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Status update failed.',
+    };
   }
 }
 
@@ -220,14 +238,20 @@ export async function hireContractor(
 
   const parsed = HireContractorSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
   }
   if (input.invite && !input.email) {
-    return { ok: false, error: 'A personal email is required to invite to the portal.' };
+    return {
+      ok: false,
+      error: 'A personal email is required to invite to the portal.',
+    };
   }
 
   const db = await createServerSupabase();
@@ -356,7 +380,10 @@ export async function hireContractor(
     // authoritative duplicate-email guard (it can see ALL auth accounts).
     let tempPassword: string | undefined;
     if (input.invite && input.email) {
-      const loginRes = await createPortalLogin({ workerId, email: input.email });
+      const loginRes = await createPortalLogin({
+        workerId,
+        email: input.email,
+      });
       if (!loginRes.ok) throw new Error(loginRes.error);
       tempPassword = loginRes.data.tempPassword;
     }
@@ -484,7 +511,10 @@ export async function hireContractor(
         /* best-effort cleanup */
       }
     }
-    return { ok: false, error: err instanceof Error ? err.message : 'Hire failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Hire failed.',
+    };
   }
 }
 
@@ -506,11 +536,18 @@ export async function setWorkerPhoto(args: {
       .update({ photo_url: args.path })
       .eq('id', args.workerId);
     if (error) return { ok: false, error: error.message };
-    await logEvent({ action: 'edit_contractor', entity: args.workerId, detail: { photo: true } });
+    await logEvent({
+      action: 'edit_contractor',
+      entity: args.workerId,
+      detail: { photo: true },
+    });
     revalidatePath('/contractors');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Failed to set photo.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to set photo.',
+    };
   }
 }
 
@@ -532,7 +569,10 @@ export async function getWorkerPhotoUrl(args: {
     const { data: signed } = await svc.storage.from('avatars').createSignedUrl(path, 300);
     return { ok: true, data: { url: signed?.signedUrl ?? null } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Failed to load photo.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to load photo.',
+    };
   }
 }
 
@@ -571,7 +611,10 @@ export async function getWorkerCompanies(args: {
     }));
     return { ok: true, data: { engagements } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Failed to load engagements.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to load engagements.',
+    };
   }
 }
 
@@ -607,7 +650,10 @@ export async function saveWorkerCompanyLink(args: {
     revalidatePath('/contractors');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Save failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Save failed.',
+    };
   }
 }
 
@@ -642,6 +688,9 @@ export async function assignWorkerCompany(args: {
     revalidatePath('/contractors');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Assign failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Assign failed.',
+    };
   }
 }

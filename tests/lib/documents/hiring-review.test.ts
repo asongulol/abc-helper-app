@@ -16,9 +16,9 @@
  *   multiple docs per worker                         → 'multiple pending docs per worker collected'
  */
 
-import { classifyHiringReview, docLabel } from '@/lib/documents/hiring-review';
-import type { HiringDocInput } from '@/lib/documents/hiring-review';
 import { describe, expect, it } from 'vitest';
+import type { HiringDocInput } from '@/lib/documents/hiring-review';
+import { classifyHiringReview, docLabel } from '@/lib/documents/hiring-review';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -141,9 +141,18 @@ describe('classifyHiringReview', () => {
 
   it('contractors sorted alphabetically by worker name', () => {
     const inputs = [
-      { ...makeDoc('wZ', 'resume', 'pending', '2026-06-01T00:00:00Z'), workerName: 'Zelda' },
-      { ...makeDoc('wA', 'diploma', 'pending', '2026-06-01T00:00:00Z'), workerName: 'Abby' },
-      { ...makeDoc('wM', 'nbi_clearance', 'pending', '2026-06-01T00:00:00Z'), workerName: 'Maria' },
+      {
+        ...makeDoc('wZ', 'resume', 'pending', '2026-06-01T00:00:00Z'),
+        workerName: 'Zelda',
+      },
+      {
+        ...makeDoc('wA', 'diploma', 'pending', '2026-06-01T00:00:00Z'),
+        workerName: 'Abby',
+      },
+      {
+        ...makeDoc('wM', 'nbi_clearance', 'pending', '2026-06-01T00:00:00Z'),
+        workerName: 'Maria',
+      },
     ];
     const result = classifyHiringReview(inputs);
     expect(result.contractors.map((c) => c.worker)).toEqual(['Abby', 'Maria', 'Zelda']);

@@ -6,6 +6,7 @@
  * Admin-only; read-only (review mutations use `reviewDocument` in portal.ts).
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
 import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
@@ -13,7 +14,6 @@ import type { Database } from '@/db/types';
 import { type DocSlotStatus, deriveDocChecklist } from '@/lib/onboarding/documents';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
-import { revalidatePath } from 'next/cache';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 type OnboardingStage = Database['public']['Enums']['onboarding_stage'];
@@ -190,7 +190,10 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
       },
     };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Failed to load detail.' };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Failed to load detail.',
+    };
   }
 }
 
@@ -339,7 +342,11 @@ export async function editAgreementDate(args: {
     await logEvent({
       action: 'onboarding.edit_agreement_date',
       entity: args.workerId,
-      detail: { kind: args.agreementKind, date: args.signedDate, by: admin.email },
+      detail: {
+        kind: args.agreementKind,
+        date: args.signedDate,
+        by: admin.email,
+      },
     });
     revalidatePath('/onboarding');
     return { ok: true };

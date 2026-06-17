@@ -1,18 +1,18 @@
 'use client';
 
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useMemo, useState, useTransition } from 'react';
 import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { ClientOption, InvoiceListRow } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports/csv';
 import {
-  type InvoicePreviewResult,
   generateInvoice,
+  type InvoicePreviewResult,
   previewInvoice,
   setInvoiceStatus,
 } from '@/server/actions/invoicing';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useMemo, useState, useTransition } from 'react';
 
 interface Props {
   clients: ClientOption[];
@@ -60,7 +60,12 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       return;
     }
     startPreview(async () => {
-      const res = await previewInvoice({ clientId, from, to, markupPct: Number(markup) || 0 });
+      const res = await previewInvoice({
+        clientId,
+        from,
+        to,
+        markupPct: Number(markup) || 0,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         setPreview(null);
@@ -68,7 +73,9 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       }
       setPreview(res.data);
       if (res.data.lines.length === 0) {
-        notify('No worked hours for this client in the window.', { type: 'warn' });
+        notify('No worked hours for this client in the window.', {
+          type: 'warn',
+        });
       } else if (res.data.zeroRateNames.length > 0) {
         notify(`No USD bill rate for ${res.data.zeroRateNames.join(', ')} — their lines bill $0.`, {
           type: 'warn',
@@ -84,7 +91,12 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
     }
     const total = preview.totalUsd;
     startGenerate(async () => {
-      const res = await generateInvoice({ clientId, from, to, markupPct: Number(markup) || 0 });
+      const res = await generateInvoice({
+        clientId,
+        from,
+        to,
+        markupPct: Number(markup) || 0,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -107,7 +119,9 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(status === 'void' ? 'Invoice voided.' : `Marked ${status}.`, { type: 'success' });
+      notify(status === 'void' ? 'Invoice voided.' : `Marked ${status}.`, {
+        type: 'success',
+      });
       router.refresh();
     });
   };
@@ -138,7 +152,14 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            flexWrap: 'wrap',
+            alignItems: 'flex-end',
+          }}
+        >
           <label style={{ minWidth: 200, flex: 1 }}>
             <span className="sub" style={labelStyle}>
               Client

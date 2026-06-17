@@ -1,9 +1,9 @@
 'use client';
 
+import { type ReactNode, useState } from 'react';
 import { ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import { hireContractor } from '@/server/actions/contractors';
-import { type ReactNode, useState } from 'react';
-import { type HireDraft, draftClear, draftLoad, useAutoDraft } from './hire-draft';
+import { draftClear, draftLoad, type HireDraft, useAutoDraft } from './hire-draft';
 
 export interface Countersigner {
   userId: string;
@@ -71,7 +71,12 @@ const EMPTY: FormState = {
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const checkRow = { display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 } as const;
+const checkRow = {
+  display: 'flex',
+  gap: 6,
+  alignItems: 'center',
+  fontSize: 13,
+} as const;
 
 /** Block caption + nested control (the nesting associates the label, a11y-clean). */
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -231,7 +236,13 @@ export function AddContractorWizard({
 
   return (
     <Modal onClose={onClose} maxWidth={560}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <h2 style={{ margin: 0 }}>
           Add contractor{' '}
           <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
@@ -337,7 +348,11 @@ export function AddContractorWizard({
               value={form.contract}
               onChange={(e) => {
                 const c = e.target.value as 'FT' | 'PT';
-                setForm((f) => ({ ...f, contract: c, weeklyHours: c === 'FT' ? '40' : '20' }));
+                setForm((f) => ({
+                  ...f,
+                  contract: c,
+                  weeklyHours: c === 'FT' ? '40' : '20',
+                }));
               }}
             >
               <option value="FT">Full-time</option>
@@ -504,7 +519,14 @@ export function AddContractorWizard({
         ✓ Progress auto-saved on this device — you can close and pick up where you left off.
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16, gap: 8 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginTop: 16,
+          gap: 8,
+        }}
+      >
         <button
           type="button"
           className="btn ghost"

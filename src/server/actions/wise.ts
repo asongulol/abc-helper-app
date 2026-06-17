@@ -17,6 +17,7 @@
  *            wiseFindTransfersByRecipient) → any admin
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
@@ -39,7 +40,6 @@ import {
   WiseMatchSchema,
   WiseStatusSchema,
 } from '@/types/schemas/wise';
-import { revalidatePath } from 'next/cache';
 
 export type WiseActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -198,7 +198,10 @@ export async function wiseMatch(_args: {
       void logEvent({
         action: 'wise_match_override',
         entity: 'payments',
-        detail: { count: overrides.length, paymentIds: overrides.map((r) => r.payment_id) },
+        detail: {
+          count: overrides.length,
+          paymentIds: overrides.map((r) => r.payment_id),
+        },
       });
     }
 

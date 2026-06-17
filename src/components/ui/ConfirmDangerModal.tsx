@@ -44,7 +44,13 @@ export const ConfirmDangerModal = ({
   return (
     <Modal title={title} onClose={onCancel} maxWidth={460}>
       {message != null && (
-        <p className="sub" style={{ marginBottom: consequence ? 10 : 14, whiteSpace: 'pre-wrap' }}>
+        <p
+          className="sub"
+          style={{
+            marginBottom: consequence ? 10 : 14,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
           {message}
         </p>
       )}

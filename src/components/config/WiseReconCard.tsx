@@ -1,10 +1,8 @@
 'use client';
 
-import { Badge } from '@/components/ui';
-import { Spinner } from '@/components/ui';
-import { useToast } from '@/components/ui';
-import { wiseMatch, wisePoll } from '@/server/actions/wise';
 import { useState, useTransition } from 'react';
+import { Badge, Spinner, useToast } from '@/components/ui';
+import { wiseMatch, wisePoll } from '@/server/actions/wise';
 
 type PendingAction = 'backfill' | 'scan' | null;
 
@@ -26,12 +24,16 @@ export const WiseReconCard = () => {
       try {
         const res = await wiseMatch({});
         if (res.ok) {
-          toast.notify(`Matched ${res.data.matched} payment(s).`, { type: 'success' });
+          toast.notify(`Matched ${res.data.matched} payment(s).`, {
+            type: 'success',
+          });
         } else {
           toast.notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        toast.notify(e instanceof Error ? e.message : 'Backfill failed.', { type: 'error' });
+        toast.notify(e instanceof Error ? e.message : 'Backfill failed.', {
+          type: 'error',
+        });
       } finally {
         setPending(null);
       }
@@ -51,7 +53,9 @@ export const WiseReconCard = () => {
           toast.notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        toast.notify(e instanceof Error ? e.message : 'Scan failed.', { type: 'error' });
+        toast.notify(e instanceof Error ? e.message : 'Scan failed.', {
+          type: 'error',
+        });
       } finally {
         setPending(null);
       }
@@ -75,7 +79,13 @@ export const WiseReconCard = () => {
         </button>
       </div>
 
-      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <div
+        style={{
+          marginTop: 16,
+          paddingTop: 12,
+          borderTop: '1px solid var(--border)',
+        }}
+      >
         <h4 style={{ margin: '0 0 4px' }}>Email cross-check</h4>
         <p className="sub">
           Compares the email on each contractor against the email Wise has on their linked
@@ -95,7 +105,13 @@ export const WiseReconCard = () => {
         </div>
       </div>
 
-      <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+      <div
+        style={{
+          marginTop: 16,
+          paddingTop: 12,
+          borderTop: '1px solid var(--border)',
+        }}
+      >
         <h4 style={{ margin: '0 0 4px' }}>Cross-system drift (Wise + Hubstaff)</h4>
         <p className="sub">
           Scans every contractor with a Wise recipient or Hubstaff user and lists where the external

@@ -10,7 +10,7 @@
  * Pure Node, no deps. Exits 1 (with file:line) on any violation.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 
 // Scan the app source AND the cron edge functions — wise-payouts reconciles

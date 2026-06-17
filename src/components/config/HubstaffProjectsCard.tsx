@@ -1,14 +1,11 @@
 'use client';
 
-import { EmptyState } from '@/components/ui';
-import { SortableTable } from '@/components/ui';
-import { Spinner } from '@/components/ui';
-import { useToast } from '@/components/ui';
-import type { SortableColumn } from '@/components/ui';
-import type { CompanyFullRow, HubstaffProjectRow } from '@/db/queries/config';
-import { assignHubstaffProject, loadHubstaffProjects } from '@/server/actions/config';
 import { useRouter } from 'next/navigation';
 import { useTransition } from 'react';
+import type { SortableColumn } from '@/components/ui';
+import { EmptyState, SortableTable, Spinner, useToast } from '@/components/ui';
+import type { CompanyFullRow, HubstaffProjectRow } from '@/db/queries/config';
+import { assignHubstaffProject, loadHubstaffProjects } from '@/server/actions/config';
 
 interface HubstaffProjectsCardProps {
   projects: HubstaffProjectRow[];
@@ -39,13 +36,17 @@ export const HubstaffProjectsCard = ({
       try {
         const res = await loadHubstaffProjects();
         if (res.ok) {
-          notify(`Loaded ${res.data?.count ?? 0} project(s).`, { type: 'success' });
+          notify(`Loaded ${res.data?.count ?? 0} project(s).`, {
+            type: 'success',
+          });
           router.refresh();
         } else {
           notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        notify(e instanceof Error ? e.message : 'Failed to load projects.', { type: 'error' });
+        notify(e instanceof Error ? e.message : 'Failed to load projects.', {
+          type: 'error',
+        });
       }
     });
   };
@@ -63,7 +64,9 @@ export const HubstaffProjectsCard = ({
           notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        notify(e instanceof Error ? e.message : 'Failed to assign project.', { type: 'error' });
+        notify(e instanceof Error ? e.message : 'Failed to assign project.', {
+          type: 'error',
+        });
       }
     });
   };

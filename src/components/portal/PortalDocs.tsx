@@ -1,11 +1,11 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useRef, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { PortalDocumentRow } from '@/db/queries/portal';
 import { getDocumentSignedUrl } from '@/server/actions/portal';
 import { type OutstandingDocSlot, uploadOwnDocument } from '@/server/actions/portal-docs';
-import { useRouter } from 'next/navigation';
-import { useRef, useState, useTransition } from 'react';
 
 /** Document "Type" choices for the free-form "Upload a document" card. */
 const DOC_TYPES = [
@@ -87,7 +87,11 @@ export const UploadSlot = ({
         <button
           type="button"
           className="btn ghost"
-          style={{ color: 'var(--accent)', borderColor: 'var(--accent)', padding: '6px 12px' }}
+          style={{
+            color: 'var(--accent)',
+            borderColor: 'var(--accent)',
+            padding: '6px 12px',
+          }}
           disabled={busy}
           onClick={upload}
         >

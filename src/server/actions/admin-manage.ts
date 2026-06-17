@@ -162,7 +162,11 @@ export async function removeAdmin(args: { email: string }): Promise<ActionResult
     // Cancel a pending invite.
     const { error } = await svc.from('pending_admins').delete().eq('email', email);
     if (error) return { ok: false, error: `Couldn't remove invite: ${error.message}` };
-    await logEvent({ action: 'admin.invite_removed', entity: email, detail: { email } });
+    await logEvent({
+      action: 'admin.invite_removed',
+      entity: email,
+      detail: { email },
+    });
     return { ok: true };
   }
 

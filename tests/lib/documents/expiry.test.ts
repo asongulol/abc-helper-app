@@ -19,8 +19,8 @@
  *   default withinDays=30                → 'classifyExpiry: default withinDays is 30'
  */
 
-import { classifyExpiry, countExpiryBanner, daysUntil } from '@/lib/documents/expiry';
 import { describe, expect, it } from 'vitest';
+import { classifyExpiry, countExpiryBanner, daysUntil } from '@/lib/documents/expiry';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,7 +38,13 @@ function makeDoc(
   title: string | null;
   expiresOn: string;
 } {
-  return { workerName: 'Ana Reyes', companyName: 'ABC Kids', kind, title: null, expiresOn };
+  return {
+    workerName: 'Ana Reyes',
+    companyName: 'ABC Kids',
+    kind,
+    title: null,
+    expiresOn,
+  };
 }
 
 // ---------------------------------------------------------------------------

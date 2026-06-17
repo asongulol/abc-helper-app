@@ -1,12 +1,14 @@
+import type { Metadata } from 'next';
+import { notFound, redirect } from 'next/navigation';
 import { AutoPrint } from '@/components/print/AutoPrint';
 import { PaySlip } from '@/components/print/PaySlip';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchPaymentDetail } from '@/db/queries/payroll';
 import { getCurrentWorker } from '@/server/auth/worker';
-import type { Metadata } from 'next';
-import { notFound, redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Pay slip — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Pay slip — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function StatementPrintPage({
   params,

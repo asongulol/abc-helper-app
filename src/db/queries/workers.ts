@@ -4,8 +4,8 @@
  */
 
 import 'server-only';
-import type { Database } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
@@ -140,7 +140,7 @@ export const fetchWorkerLink = async (
     .eq('company_id', companyId)
     .maybeSingle();
   if (error) throw new Error(`worker_companies: ${error.message}`);
-  if (!data || !data.workers) return null;
+  if (!data?.workers) return null;
   const w = data.workers;
   return {
     workerId: data.worker_id,
@@ -206,7 +206,7 @@ export const fetchWorkerClientsMap = async (
   const map: Record<string, string[]> = {};
   for (const r of data ?? []) {
     const c = r.companies;
-    if (!c || c.kind !== 'client' || r.status === 'ended') continue;
+    if (c?.kind !== 'client' || r.status === 'ended') continue;
     const arr = map[r.worker_id] ?? [];
     arr.push(c.name);
     map[r.worker_id] = arr;

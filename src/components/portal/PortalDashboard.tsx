@@ -46,7 +46,13 @@ const TOOLKIT = [
     domain: 'web.providersoftllc.com',
     href: 'https://web.providersoftllc.com/AbilityBuilders/security/login.aspx',
   },
-  { label: 'Wise', sub: 'Get paid', icon: '💸', domain: 'wise.com', href: 'https://wise.com/home' },
+  {
+    label: 'Wise',
+    sub: 'Get paid',
+    icon: '💸',
+    domain: 'wise.com',
+    href: 'https://wise.com/home',
+  },
 ];
 
 /**
@@ -67,6 +73,7 @@ const ToolIcon = ({ domain, emoji }: { domain: string; emoji: string }) => {
     );
   }
   return (
+    // biome-ignore lint/performance/noImgElement: remote third-party favicon service URL with an onError fallback chain, not a static asset next/image can optimize
     <img
       className="qico"
       src={src}
@@ -138,7 +145,14 @@ export const PortalDashboard = ({
       <div style={{ margin: '8px 2px 2px', fontSize: 13, color: 'var(--muted)' }}>
         {clock ? `${clock} · PHT` : ' '}
       </div>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', margin: '6px 2px 2px' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          margin: '6px 2px 2px',
+        }}
+      >
         <div className="avatar">{initials}</div>
         <div>
           <h2 style={{ margin: 0, fontSize: 19 }}>

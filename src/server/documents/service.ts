@@ -39,10 +39,10 @@ import {
   fetchDocumentsForExpiryCheck,
   fetchDocumentsForHiringReview,
 } from '@/db/queries/documents';
-import { classifyExpiry } from '@/lib/documents/expiry';
 import type { ExpiryResult } from '@/lib/documents/expiry';
-import { classifyHiringReview } from '@/lib/documents/hiring-review';
+import { classifyExpiry } from '@/lib/documents/expiry';
 import type { HiringReviewResult } from '@/lib/documents/hiring-review';
+import { classifyHiringReview } from '@/lib/documents/hiring-review';
 import { escapeHtml } from '@/server/email/templates';
 import { sendEmail } from '@/server/email/transport';
 import { env } from '@/server/env';

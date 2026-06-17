@@ -13,17 +13,17 @@
  * restructure, rows without stored expected_hours).
  */
 
+import { describe, expect, it } from 'vitest';
 import { weekdayCount } from '@/lib/dates/periods';
 import { centavos, majorToMinor } from '@/lib/money';
 import type { RateRow } from '@/lib/pay/rates';
 import {
-  type RosterRow,
-  type TimeEntryRow,
   attributeTimeEntries,
   buildStatements,
+  type RosterRow,
+  type TimeEntryRow,
   toPaymentDraft,
 } from '@/lib/payroll/mappers';
-import { describe, expect, it } from 'vitest';
 import rowsJson from '../../fixtures/parity-rows.json';
 
 type FixtureRow = {

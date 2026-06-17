@@ -1,11 +1,11 @@
 'use client';
 
-import { Mark } from '@/components/brand/Mark';
-import { ToastProvider } from '@/components/ui';
-import { createBrowserSupabase } from '@/db/clients/browser';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type ReactNode, useEffect, useState } from 'react';
+import { Mark } from '@/components/brand/Mark';
+import { ToastProvider } from '@/components/ui';
+import { createBrowserSupabase } from '@/db/clients/browser';
 
 interface Props {
   workerName: string;
@@ -144,6 +144,7 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
                     <span style={{ position: 'relative', display: 'inline-block' }}>
                       {item.icon}
                       <span
+                        role="img"
                         aria-label={`${docsBadge} to upload`}
                         style={{
                           position: 'absolute',

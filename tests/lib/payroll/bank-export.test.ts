@@ -9,7 +9,10 @@ const rows = [
 
 describe('buildBankExport', () => {
   it('filters out wise rows by default', () => {
-    const { csv } = buildBankExport(rows, { periodStart: '2026-06-01', periodEnd: '2026-06-15' });
+    const { csv } = buildBankExport(rows, {
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+    });
     expect(csv).toContain('Juan dela Cruz');
     expect(csv).toContain('Maria');
     expect(csv).not.toContain('Wise Worker');
@@ -25,13 +28,19 @@ describe('buildBankExport', () => {
   });
 
   it('formats net to 2 decimal places', () => {
-    const { csv } = buildBankExport(rows, { periodStart: '2026-06-01', periodEnd: '2026-06-15' });
+    const { csv } = buildBankExport(rows, {
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+    });
     expect(csv).toContain('19140.00');
     expect(csv).toContain('10000.50');
   });
 
   it('escapes commas and quotes in names (RFC 4180: wrap in quotes, double inner quotes)', () => {
-    const { csv } = buildBankExport(rows, { periodStart: '2026-06-01', periodEnd: '2026-06-15' });
+    const { csv } = buildBankExport(rows, {
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+    });
     expect(csv).toContain('"Maria, ""Smith"""');
   });
 
@@ -44,7 +53,10 @@ describe('buildBankExport', () => {
   });
 
   it('includes header row', () => {
-    const { csv } = buildBankExport(rows, { periodStart: '2026-06-01', periodEnd: '2026-06-15' });
+    const { csv } = buildBankExport(rows, {
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+    });
     expect(csv.startsWith('Name,Bank,Account,Amount (PHP)')).toBe(true);
   });
 });

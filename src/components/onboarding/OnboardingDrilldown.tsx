@@ -88,10 +88,19 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     startDate: string;
   } | null>(null);
   // Inline modals replacing the old window.prompt() calls.
-  const [editDate, setEditDate] = useState<{ kind: string; value: string } | null>(null);
-  const [reason, setReason] = useState<{ documentId: string; text: string } | null>(null);
+  const [editDate, setEditDate] = useState<{
+    kind: string;
+    value: string;
+  } | null>(null);
+  const [reason, setReason] = useState<{
+    documentId: string;
+    text: string;
+  } | null>(null);
   // Pending waive awaiting confirmation (both uploaded + missing-doc paths).
-  const [waiveConfirm, setWaiveConfirm] = useState<{ label: string; run: () => void } | null>(null);
+  const [waiveConfirm, setWaiveConfirm] = useState<{
+    label: string;
+    run: () => void;
+  } | null>(null);
   // Inline document preview (signed URL + previewable type).
   const [docPreview, setDocPreview] = useState<{
     url: string;
@@ -211,7 +220,11 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     const note = text.trim();
     if (!note) return;
     startTransition(async () => {
-      const res = await reviewDocument({ documentId, decision: 'needs_replacement', note });
+      const res = await reviewDocument({
+        documentId,
+        decision: 'needs_replacement',
+        note,
+      });
       if (res.ok) {
         notify('Replacement requested.', { type: 'success' });
         setReason(null);
@@ -412,7 +425,10 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
         className="btn ghost sm"
         disabled={isPending}
         onClick={() =>
-          setWaiveConfirm({ label: fileName(d), run: () => handleReview(d.id, 'waive') })
+          setWaiveConfirm({
+            label: fileName(d),
+            run: () => handleReview(d.id, 'waive'),
+          })
         }
       >
         Waive
@@ -434,7 +450,14 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
     const key = slotKey(slot);
     if (deferSlotKey === key) {
       return (
-        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <span className="muted" style={{ fontSize: 12 }}>
             Defer until
           </span>
@@ -473,7 +496,10 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           className="btn ghost sm"
           disabled={isPending}
           onClick={() =>
-            setWaiveConfirm({ label: slot.label, run: () => handleResolveMissing(slot, 'waive') })
+            setWaiveConfirm({
+              label: slot.label,
+              run: () => handleResolveMissing(slot, 'waive'),
+            })
           }
         >
           Waive
@@ -559,7 +585,12 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
             disabled={isPending}
             onClick={() =>
               runStage(
-                () => setOnboardingStage({ workerId: row.workerId, stage: n, complete: false }),
+                () =>
+                  setOnboardingStage({
+                    workerId: row.workerId,
+                    stage: n,
+                    complete: false,
+                  }),
                 `Stage ${n} reopened.`,
               )
             }
@@ -629,9 +660,19 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           {agreements.map((a) => (
             <div
               key={a.agreementKind}
-              style={{ padding: '6px 0', borderBottom: '1px solid var(--border)' }}
+              style={{
+                padding: '6px 0',
+                borderBottom: '1px solid var(--border)',
+              }}
             >
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
+              >
                 <strong style={{ fontSize: 13 }}>
                   {AGREEMENT_LABELS[a.agreementKind] ?? a.agreementKind}
                 </strong>
@@ -652,12 +693,24 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
                     .join(' · ')}
                 </div>
               )}
-              <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  marginTop: 6,
+                  flexWrap: 'wrap',
+                }}
+              >
                 <button
                   type="button"
                   className="btn ghost sm"
                   disabled={isPending}
-                  onClick={() => setEditDate({ kind: a.agreementKind, value: a.fStartDate ?? '' })}
+                  onClick={() =>
+                    setEditDate({
+                      kind: a.agreementKind,
+                      value: a.fStartDate ?? '',
+                    })
+                  }
                 >
                   Edit date
                 </button>
@@ -932,13 +985,27 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
         </Modal>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button
             type="button"
             className="btn ghost sm"
             disabled={isPending}
-            onClick={() => setResend({ email: loginEmail ?? '', busy: false, err: '', done: null })}
+            onClick={() =>
+              setResend({
+                email: loginEmail ?? '',
+                busy: false,
+                err: '',
+                done: null,
+              })
+            }
           >
             ✉ Update login &amp; resend
           </button>
@@ -1004,6 +1071,7 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
         <Modal title={docPreview.name} onClose={() => setDocPreview(null)} maxWidth={920}>
           {docPreview.type === 'image' ? (
             // eslint-disable-next-line @next/next/no-img-element
+            // biome-ignore lint/performance/noImgElement: remote Supabase signed-URL document preview, not a static asset
             <img
               src={docPreview.url}
               alt={docPreview.name}
@@ -1095,7 +1163,10 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
           busy={isPending}
           onConfirm={() => {
             startTransition(async () => {
-              const res = await deleteContractor({ workerId: row.workerId, force: true });
+              const res = await deleteContractor({
+                workerId: row.workerId,
+                force: true,
+              });
               if (!res.ok) {
                 notify(res.error, { type: 'error' });
                 return;

@@ -1,5 +1,5 @@
-import { isOAuthSignIn } from '@/lib/auth/oauth-provider';
 import { describe, expect, it } from 'vitest';
+import { isOAuthSignIn } from '@/lib/auth/oauth-provider';
 
 describe('isOAuthSignIn', () => {
   it('is false for an email-provider user (contractor password / recovery)', () => {
@@ -12,13 +12,18 @@ describe('isOAuthSignIn', () => {
 
   it('is true when the providers array contains a non-email entry', () => {
     expect(
-      isOAuthSignIn({ app_metadata: { provider: 'email', providers: ['email', 'google'] } }),
+      isOAuthSignIn({
+        app_metadata: { provider: 'email', providers: ['email', 'google'] },
+      }),
     ).toBe(true);
   });
 
   it('is true when an identity uses a non-email provider', () => {
     expect(
-      isOAuthSignIn({ app_metadata: { provider: 'email' }, identities: [{ provider: 'google' }] }),
+      isOAuthSignIn({
+        app_metadata: { provider: 'email' },
+        identities: [{ provider: 'google' }],
+      }),
     ).toBe(true);
   });
 

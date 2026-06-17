@@ -5,9 +5,9 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import type { RosterEntry, WorkerSeconds } from '@/lib/invoicing/compute';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 
@@ -58,7 +58,11 @@ export type NewInvoiceLine = {
 };
 
 const joinName = (
-  w: { first_name: string | null; middle_name: string | null; last_name: string | null } | null,
+  w: {
+    first_name: string | null;
+    middle_name: string | null;
+    last_name: string | null;
+  } | null,
 ): string => [w?.first_name, w?.middle_name, w?.last_name].filter(Boolean).join(' ').trim();
 
 /** The single employer company — all time + payroll live here (derive, never hardcode). */
@@ -128,7 +132,10 @@ export const fetchEmployerTrackedSeconds = async (
   if (error) throw new Error(`time: ${error.message}`);
   return (data ?? [])
     .filter((t): t is typeof t & { worker_id: string } => Boolean(t.worker_id))
-    .map((t) => ({ workerId: t.worker_id, trackedSeconds: Number(t.tracked_seconds) || 0 }));
+    .map((t) => ({
+      workerId: t.worker_id,
+      trackedSeconds: Number(t.tracked_seconds) || 0,
+    }));
 };
 
 /** Invoice history, newest first; optionally scoped to one client. */

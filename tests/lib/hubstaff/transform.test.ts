@@ -73,6 +73,7 @@
  *    → 'matchWorker resolves "Ma Dela Cruz Jr" via nameKey normalisation'
  */
 
+import { describe, expect, it } from 'vitest';
 import {
   accumulateActivities,
   accumulatePto,
@@ -89,7 +90,6 @@ import type {
   HubstaffTimeOffRequest,
   WorkerLink,
 } from '@/lib/hubstaff/types';
-import { describe, expect, it } from 'vitest';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -266,7 +266,10 @@ describe('accumulatePto', () => {
 describe('matchWorker', () => {
   it('prefers hubstaff_user_id over name match', () => {
     const links: WorkerLink[] = [
-      makeLink(WORKER_ID_A, COMPANY_ID, { hubstaffUserId: 101, hubstaffName: 'Alice Smith' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        hubstaffUserId: 101,
+        hubstaffName: 'Alice Smith',
+      }),
       makeLink(WORKER_ID_B, COMPANY_ID, { hubstaffName: 'user 101' }),
     ];
     const idx = buildWorkerMatchIndex(links);
@@ -276,7 +279,10 @@ describe('matchWorker', () => {
 
   it('strict name key matches accent-stripped, order-insensitive', () => {
     const links: WorkerLink[] = [
-      makeLink(WORKER_ID_A, COMPANY_ID, { firstName: 'María', lastName: 'Santos' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        firstName: 'María',
+        lastName: 'Santos',
+      }),
     ];
     const idx = buildWorkerMatchIndex(links);
     // "Santos Maria" → sorted tokens ["maria","santos"] → same key
@@ -285,7 +291,10 @@ describe('matchWorker', () => {
 
   it('loose name key matches with extra middle token', () => {
     const links: WorkerLink[] = [
-      makeLink(WORKER_ID_A, COMPANY_ID, { firstName: 'Juan', lastName: 'Cruz' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        firstName: 'Juan',
+        lastName: 'Cruz',
+      }),
     ];
     const idx = buildWorkerMatchIndex(links);
     // "Juan Miguel Cruz" → loose key = "juan cruz"
@@ -303,7 +312,10 @@ describe('matchWorker', () => {
   it('resolves "Ma Dela Cruz Jr" via nameKey normalisation', () => {
     // "Ma" → "Maria", "Jr" stripped → tokens ["dela","cruz","maria"] → sorted key
     const links: WorkerLink[] = [
-      makeLink(WORKER_ID_A, COMPANY_ID, { firstName: 'Maria Dela', lastName: 'Cruz' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        firstName: 'Maria Dela',
+        lastName: 'Cruz',
+      }),
     ];
     const idx = buildWorkerMatchIndex(links);
     expect(matchWorker(999, 'Ma Dela Cruz Jr', idx)).toBe(WORKER_ID_A);
@@ -372,7 +384,10 @@ describe('transformActivities', () => {
   }) {
     const acts = opts.acts ?? [];
     const links = opts.links ?? [
-      makeLink(WORKER_ID_A, COMPANY_ID, { hubstaffUserId: 1, hubstaffName: 'Alice Smith' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        hubstaffUserId: 1,
+        hubstaffName: 'Alice Smith',
+      }),
     ];
     const accum = accumulateActivities(acts);
     const idx = buildWorkerMatchIndex(links);
@@ -486,7 +501,10 @@ describe('transformActivities', () => {
       new Date('2026-06-03T23:59:59Z').getTime(),
     );
     const links: WorkerLink[] = [
-      makeLink(WORKER_ID_A, COMPANY_ID, { hubstaffUserId: 1, hubstaffName: 'Alice Smith' }),
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        hubstaffUserId: 1,
+        hubstaffName: 'Alice Smith',
+      }),
     ];
     const idx = buildWorkerMatchIndex(links);
     const result = transformActivities({

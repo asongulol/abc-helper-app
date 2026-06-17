@@ -8,13 +8,13 @@
  * (ADR-0004).
  */
 
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin, requireAdmin } from '@/server/auth/admin';
 import { serviceGetRecipient } from '@/server/wise/service';
-import { revalidatePath } from 'next/cache';
-import { z } from 'zod';
 
 export type ImportActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -95,7 +95,9 @@ export async function importContractors(
         let lastName = r.lastName;
         if (preferWiseName && r.wiseRecipientId != null) {
           try {
-            const rec = (await serviceGetRecipient(r.wiseRecipientId)) as { name?: string } | null;
+            const rec = (await serviceGetRecipient(r.wiseRecipientId)) as {
+              name?: string;
+            } | null;
             const nm = (rec?.name ?? '').trim();
             if (nm) {
               const parts = nm.split(/\s+/);
@@ -330,7 +332,13 @@ export async function dryRunDeleteRange(args: unknown): Promise<ImportActionResu
 
     const byName = new Map<
       string,
-      { name: string; rows: number; firstDate: string; lastDate: string; sec: number }
+      {
+        name: string;
+        rows: number;
+        firstDate: string;
+        lastDate: string;
+        sec: number;
+      }
     >();
     for (const r of rows ?? []) {
       const name = r.source_name ?? '';
@@ -370,7 +378,11 @@ export async function dryRunDeleteRange(args: unknown): Promise<ImportActionResu
       .gte('period_end', start);
     const overlap: RangeOverlapPeriod[] = (pps ?? [])
       .filter((p) => p.period_start <= stop && p.period_end >= start)
-      .map((p) => ({ periodStart: p.period_start, periodEnd: p.period_end, state: p.state }));
+      .map((p) => ({
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        state: p.state,
+      }));
 
     return { ok: true, data: { count, preview, overlap } };
   } catch (e) {
@@ -389,7 +401,9 @@ export async function deleteImportRange(
   args: unknown,
 ): Promise<ImportActionResult<{ deleted: number; clearedBatches: number }>> {
   try {
-    const parsed = RangeSchema.extend({ confirmText: z.string().optional() }).safeParse(args);
+    const parsed = RangeSchema.extend({
+      confirmText: z.string().optional(),
+    }).safeParse(args);
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input.');
     const { companyId, start, stop, confirmText } = parsed.data;
     if (start > stop) return fail("'From' must be on or before 'To'.");

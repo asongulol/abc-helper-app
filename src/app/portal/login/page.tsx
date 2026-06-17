@@ -1,6 +1,6 @@
+import type { Metadata } from 'next';
 import { PortalLoginForm } from '@/components/auth/PortalLoginForm';
 import { Logo } from '@/components/brand/Logo';
-import type { Metadata } from 'next';
 
 export const metadata: Metadata = { title: 'Sign in — Contractor Portal' };
 

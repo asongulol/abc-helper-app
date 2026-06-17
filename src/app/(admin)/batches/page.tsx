@@ -1,11 +1,13 @@
+import { redirect } from 'next/navigation';
 import { BatchesClient } from '@/components/batches/BatchesClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Review & Recon Batches — Aaron Anderson E.H.S. LLC' };
+export const metadata = {
+  title: 'Review & Recon Batches — Aaron Anderson E.H.S. LLC',
+};
 
 /**
  * Review & Recon Batches (legacy screenshot 09 — ProcessPayroll reconcileOnly).

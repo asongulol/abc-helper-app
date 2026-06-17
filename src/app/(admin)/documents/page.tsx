@@ -1,13 +1,15 @@
+import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { DocumentsClient } from '@/components/documents/DocumentsClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchDocuments } from '@/db/queries/documents';
 import { fetchRoster } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Documents — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Documents — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function DocumentsPage() {
   const admin = await getCurrentAdmin();
@@ -36,9 +38,10 @@ export default async function DocumentsPage() {
     const name = [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
     if (name) nameById.set(w.workerId, name);
   }
-  const workerOptions = Array.from(nameById, ([id, name]) => ({ id, name })).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  );
+  const workerOptions = Array.from(nameById, ([id, name]) => ({
+    id,
+    name,
+  })).sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <DocumentsClient

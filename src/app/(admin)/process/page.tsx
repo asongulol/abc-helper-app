@@ -1,12 +1,14 @@
+import { redirect } from 'next/navigation';
 import { ProcessShell } from '@/components/process/ProcessShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { countPendingTimeApprovals } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Process payroll — Aaron Anderson E.H.S. LLC' };
+export const metadata = {
+  title: 'Process payroll — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function ProcessPage() {
   const admin = await getCurrentAdmin();

@@ -14,11 +14,11 @@
  * Faithful to the legacy TimeImport approval section (~5300–5800).
  */
 
+import { Fragment, useState, useTransition } from 'react';
 import { Badge, EmptyState, useToast } from '@/components/ui';
 import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { editContractorTotal, setTimeApproval, undoApproval } from '@/server/actions/time';
-import { Fragment, useState, useTransition } from 'react';
 import { AddHoursPanel } from './AddHoursPanel';
 import { AddUnlistedRow } from './AddUnlistedRow';
 
@@ -81,7 +81,10 @@ export const TimeApprovalTable = ({
           onClick={() => {
             dismiss(toastId);
             startTransition(async () => {
-              const res = await undoApproval({ companyId, entries: undoEntries });
+              const res = await undoApproval({
+                companyId,
+                entries: undoEntries,
+              });
               if (!res.ok) {
                 notify(res.error, { type: 'error' });
                 return;
@@ -160,8 +163,9 @@ export const TimeApprovalTable = ({
         }}
       >
         <p className="sub" style={{ margin: 0 }}>
-          {pendingIds.length} pending entr{pendingIds.length === 1 ? 'y' : 'ies'} · {periodDays}{' '}
-          days in period · {workingDays} working days
+          {pendingIds.length} pending entr
+          {pendingIds.length === 1 ? 'y' : 'ies'} · {periodDays} days in period · {workingDays}{' '}
+          working days
         </p>
         {rows.length > 0 && (
           <div style={{ display: 'flex', gap: 8 }}>
@@ -197,8 +201,8 @@ export const TimeApprovalTable = ({
           }}
         >
           <strong>
-            {unmatchedNames.length} source name{unmatchedNames.length === 1 ? '' : 's'} not matched
-            to a contractor
+            {unmatchedNames.length} source name
+            {unmatchedNames.length === 1 ? '' : 's'} not matched to a contractor
           </strong>{' '}
           — these rows will not be paid until matched. Set up their profile on the Contractors tab.
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -258,7 +262,13 @@ export const TimeApprovalTable = ({
                       {/* Tracked — editable (manual edit-total override). */}
                       <td data-label="Tracked (h)">
                         {isEditing ? (
-                          <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              gap: 4,
+                              alignItems: 'center',
+                            }}
+                          >
                             <input
                               type="number"
                               step="0.01"
@@ -363,7 +373,10 @@ export const TimeApprovalTable = ({
                         <button
                           type="button"
                           className="btn ghost sm"
-                          style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                          style={{
+                            borderColor: 'var(--bad)',
+                            color: 'var(--bad)',
+                          }}
                           disabled={pendingTx}
                           onClick={() => handleApproval(allIds, 'rejected')}
                           title="Reject this contractor's time for the period"

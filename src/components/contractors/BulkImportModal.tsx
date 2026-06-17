@@ -1,9 +1,9 @@
 'use client';
 
-import { Modal, useToast } from '@/components/ui';
-import { type ImportRow, importContractors } from '@/server/actions/import';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
+import { Modal, useToast } from '@/components/ui';
+import { type ImportRow, importContractors } from '@/server/actions/import';
 
 interface Props {
   companyId: string;
@@ -50,7 +50,10 @@ function parseRows(text: string): { rows: ImportRow[]; error: string | null } {
   const cols = header.map((h) => HEADER_MAP[h] ?? null);
 
   if (!cols.some((c) => c === 'name' || c === 'firstName')) {
-    return { rows: [], error: 'Need a "Name" (or "First name"/"Last name") column.' };
+    return {
+      rows: [],
+      error: 'Need a "Name" (or "First name"/"Last name") column.',
+    };
   }
 
   const rows: ImportRow[] = [];
@@ -228,8 +231,8 @@ export const BulkImportModal = ({ companyId, onClose }: Props) => {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.firstName}-${r.lastName}-${i}`}>
+              {rows.map((r) => (
+                <tr key={r.email ?? `${r.firstName}-${r.lastName}-${r.wiseRecipientId ?? ''}`}>
                   <td>{r.firstName}</td>
                   <td>{r.lastName}</td>
                   <td>{r.email ?? '—'}</td>

@@ -1,13 +1,13 @@
 'use client';
 
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { type ReactNode, useEffect, useState, useTransition } from 'react';
 import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { AdminRow } from '@/db/queries/admins';
 import { selectCompany } from '@/server/actions/company';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { type ReactNode, useEffect, useState, useTransition } from 'react';
 import { AdminsModal } from './AdminsModal';
 import { CommandPalette } from './CommandPalette';
 import { NAV_GROUPS } from './nav';
@@ -160,7 +160,14 @@ export const AdminShell = ({
             🔎 Find
           </button>
           <div className="company-switcher">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginLeft: 'auto',
+              }}
+            >
               <span className="muted" style={{ fontSize: 12 }}>
                 Employer
               </span>

@@ -1,5 +1,5 @@
-import { isAllowedEmailForDomains, parseAllowedDomains } from '@/lib/auth/allowed-domains';
 import { describe, expect, it } from 'vitest';
+import { isAllowedEmailForDomains, parseAllowedDomains } from '@/lib/auth/allowed-domains';
 
 describe('parseAllowedDomains', () => {
   it('trims, lower-cases, and drops empties from a comma list', () => {

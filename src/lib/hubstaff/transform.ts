@@ -61,7 +61,11 @@ export function accumulateActivities(
       prev.tracked += a.tracked ?? 0;
       prev.overall += a.overall ?? 0;
     } else {
-      userMap.set(day, { tracked: a.tracked ?? 0, overall: a.overall ?? 0, pto: 0 });
+      userMap.set(day, {
+        tracked: a.tracked ?? 0,
+        overall: a.overall ?? 0,
+        pto: 0,
+      });
     }
   }
   return out;
@@ -269,7 +273,11 @@ export function transformActivities(opts: {
     const workerLinks = idx.byWorker.get(workerId) ?? [];
     const linkForCo = workerLinks.find((l) => l.companyId === targetCompanyId);
     if (linkForCo && linkForCo.hubstaffUserId == null) {
-      idsToPersist.push({ workerId, companyId: targetCompanyId, hubstaffUserId: uid });
+      idsToPersist.push({
+        workerId,
+        companyId: targetCompanyId,
+        hubstaffUserId: uid,
+      });
     }
 
     const src = resolveSourceName(targetCompanyId, workerId, hubstaffName, canonical);
@@ -371,7 +379,7 @@ export function resolveWindow(opts: {
 
 // ─── Re-export name helpers for edge-fn mirroring ─────────────────────────
 // The Deno wrapper imports these directly (same pure logic, no duplication).
-export { nameKey, looseKey } from '@/lib/names';
+export { looseKey, nameKey } from '@/lib/names';
 
 // Re-export user-list helpers so the service layer doesn't need to import names.ts.
 export type { HubstaffUser };

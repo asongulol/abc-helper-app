@@ -1,18 +1,28 @@
+import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_REQUIRED_DOCS,
-  type RequiredDoc,
-  type Stage3DocRow,
-  type UploadedDocLike,
   deriveDocChecklist,
   isStage3Complete,
   outstandingSlots,
+  type RequiredDoc,
+  type Stage3DocRow,
+  type UploadedDocLike,
 } from '@/lib/onboarding/documents';
-import { describe, expect, it } from 'vitest';
 
 const CFG: RequiredDoc[] = [
   { kind: 'resume', title: 'Resume / CV', required: true },
-  { kind: 'nbi_clearance', title: 'NBI Clearance', required: true, freshness_months: 6 },
-  { kind: 'gov_id', title: 'Government-issued ID', required: true, sides: ['front', 'back'] },
+  {
+    kind: 'nbi_clearance',
+    title: 'NBI Clearance',
+    required: true,
+    freshness_months: 6,
+  },
+  {
+    kind: 'gov_id',
+    title: 'Government-issued ID',
+    required: true,
+    sides: ['front', 'back'],
+  },
   { kind: 'optional_thing', title: 'Optional thing', required: false },
 ];
 
@@ -85,7 +95,12 @@ describe('deriveDocChecklist', () => {
 
   it('matches each side of a two-sided doc independently', () => {
     const slots = deriveDocChecklist(CFG, [
-      upload({ id: 'f1', kind: 'gov_id', side: 'front', reviewStatus: 'approved' }),
+      upload({
+        id: 'f1',
+        kind: 'gov_id',
+        side: 'front',
+        reviewStatus: 'approved',
+      }),
     ]);
     const front = slots.find((s) => s.kind === 'gov_id' && s.side === 'front');
     const back = slots.find((s) => s.kind === 'gov_id' && s.side === 'back');
@@ -137,8 +152,18 @@ describe('deriveDocChecklist — sent-back non-required uploads (legacy parity)'
   const ALL_REQUIRED = [
     upload({ id: 'r1', kind: 'resume', reviewStatus: 'approved' }),
     upload({ id: 'n1', kind: 'nbi_clearance', reviewStatus: 'approved' }),
-    upload({ id: 'gf', kind: 'gov_id', side: 'front', reviewStatus: 'approved' }),
-    upload({ id: 'gb', kind: 'gov_id', side: 'back', reviewStatus: 'approved' }),
+    upload({
+      id: 'gf',
+      kind: 'gov_id',
+      side: 'front',
+      reviewStatus: 'approved',
+    }),
+    upload({
+      id: 'gb',
+      kind: 'gov_id',
+      side: 'back',
+      reviewStatus: 'approved',
+    }),
   ];
 
   it('surfaces a non-required upload (e.g. "other") sent back as needs_replacement', () => {
@@ -245,7 +270,13 @@ describe('isStage3Complete', () => {
       doc({ id: 'r', kind: 'resume' }),
       doc({ id: 'd', kind: 'diploma' }),
       doc({ id: 'n', kind: 'nbi_clearance' }),
-      doc({ id: 'gw', kind: 'gov_id', side: 'front', storage_path: null, review_status: 'waived' }),
+      doc({
+        id: 'gw',
+        kind: 'gov_id',
+        side: 'front',
+        storage_path: null,
+        review_status: 'waived',
+      }),
     ];
     // gov_id 'back' was never uploaded, but waiving the kind clears it — this is
     // the rule finishOnboarding previously got wrong.
@@ -255,7 +286,12 @@ describe('isStage3Complete', () => {
   it('a deferred row clears its kind', () => {
     const rows: Stage3DocRow[] = [
       doc({ id: 'r', kind: 'resume' }),
-      doc({ id: 'd', kind: 'diploma', storage_path: null, review_status: 'deferred' }),
+      doc({
+        id: 'd',
+        kind: 'diploma',
+        storage_path: null,
+        review_status: 'deferred',
+      }),
       doc({ id: 'n', kind: 'nbi_clearance' }),
       doc({ id: 'gf', kind: 'gov_id', side: 'front' }),
       doc({ id: 'gb', kind: 'gov_id', side: 'back' }),

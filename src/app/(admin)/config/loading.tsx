@@ -3,7 +3,7 @@
  */
 export default function ConfigLoading() {
   return (
-    <div aria-busy="true" aria-label="Loading configuration">
+    <div role="status" aria-busy="true" aria-label="Loading configuration">
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="skel">
           <div className="skel-bar" style={{ width: '30%' }} />

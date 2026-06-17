@@ -11,12 +11,12 @@
  * Pattern: verify admin → company scope check → port legacy insert → audit log.
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { revalidatePath } from 'next/cache';
 
 type DocumentKind = Database['public']['Enums']['document_kind'];
 
@@ -72,6 +72,9 @@ export async function addDocument(input: AddDocumentInput): Promise<ActionResult
     revalidatePath('/documents');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Add failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Add failed.',
+    };
   }
 }

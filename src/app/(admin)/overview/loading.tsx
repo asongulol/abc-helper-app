@@ -4,7 +4,7 @@
  */
 export default function OverviewLoading() {
   return (
-    <div aria-busy="true" aria-label="Loading overview">
+    <div role="status" aria-busy="true" aria-label="Loading overview">
       <div className="card">
         <div className="skel" aria-hidden="true">
           <div className="skel-bar" style={{ width: '32%' }} />

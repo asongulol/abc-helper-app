@@ -22,7 +22,10 @@ export interface NavGroup {
  * `.side-group-label` CSS, so they stay title-case here.
  */
 export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
-  { label: 'Home', items: [{ href: '/overview', label: 'Overview', icon: '🏠' }] },
+  {
+    label: 'Home',
+    items: [{ href: '/overview', label: 'Overview', icon: '🏠' }],
+  },
   {
     label: 'Manage Team',
     items: [

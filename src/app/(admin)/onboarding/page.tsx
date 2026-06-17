@@ -7,7 +7,9 @@ import { fetchOnboardingProgress } from '@/db/queries/onboarding';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 
-export const metadata: Metadata = { title: 'Onboarding — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Onboarding — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function OnboardingPage() {
   const admin = await getCurrentAdmin();

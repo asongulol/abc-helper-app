@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Modal } from '@/components/ui';
 import type {
   AgreementTemplateRow,
@@ -7,7 +8,6 @@ import type {
   HubstaffProjectRow,
   OnboardingConfig,
 } from '@/db/queries/config';
-import { useState } from 'react';
 import { AgreementTemplatesCard } from './AgreementTemplatesCard';
 import { ClientsCard } from './ClientsCard';
 import { EmployerCard } from './EmployerCard';

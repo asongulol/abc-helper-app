@@ -11,9 +11,9 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import type { ExistingDecidedEntry, WorkerLink } from '@/lib/hubstaff/types';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 

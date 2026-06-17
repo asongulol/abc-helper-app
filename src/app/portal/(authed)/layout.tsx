@@ -1,8 +1,8 @@
+import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
 import { PortalShell } from '@/components/portal/PortalShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
-import type { ReactNode } from 'react';
 
 /**
  * Authenticated portal layout — verifies the contractor session and renders

@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import { AnnouncementsCard } from '@/components/config/AnnouncementsCard';
 import type { SortableColumn } from '@/components/ui';
 import {
@@ -15,8 +17,6 @@ import type { RosterWorker } from '@/db/queries/workers';
 import type { RateRow } from '@/lib/pay/rates';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
 import { AddContractorWizard } from './AddContractorWizard';
 import { BulkImportModal } from './BulkImportModal';
 import { ProfilePanel } from './ProfilePanel';
@@ -98,7 +98,11 @@ export function ContractorsClient({
     const id = worker.workerId;
     setBusyIds((s) => new Set([...s, id]));
     startTransition(async () => {
-      const result = await setContractorLinkStatus({ workerId: id, companyId, active });
+      const result = await setContractorLinkStatus({
+        workerId: id,
+        companyId,
+        active,
+      });
       setBusyIds((s) => {
         const next = new Set(s);
         next.delete(id);
@@ -230,7 +234,14 @@ export function ContractorsClient({
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label
+              style={{
+                fontSize: 13,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
               <input
                 type="checkbox"
                 checked={showInactive}
@@ -359,7 +370,10 @@ export function ContractorsClient({
             const target = deleteTarget;
             setDeleting(true);
             startTransition(async () => {
-              const res = await deleteContractor({ workerId: target.workerId, force: true });
+              const res = await deleteContractor({
+                workerId: target.workerId,
+                force: true,
+              });
               setDeleting(false);
               setDeleteTarget(null);
               if (!res.ok) {

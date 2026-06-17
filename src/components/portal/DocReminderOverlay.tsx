@@ -1,7 +1,7 @@
 'use client';
 
-import { type OutstandingDocSlot, fetchOutstandingDocSlots } from '@/server/actions/portal-docs';
 import { useEffect, useState } from 'react';
+import { fetchOutstandingDocSlots, type OutstandingDocSlot } from '@/server/actions/portal-docs';
 import { UploadSlot } from './PortalDocs';
 
 interface Props {
@@ -55,7 +55,6 @@ export const DocReminderOverlay = ({ docs }: Props) => {
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close; "Later" button also closes.
-    // biome-ignore lint/a11y/useSemanticElements: legacy bottom-sheet markup (role=dialog div) kept verbatim.
     <div
       role="dialog"
       aria-modal="true"
@@ -72,6 +71,7 @@ export const DocReminderOverlay = ({ docs }: Props) => {
       }}
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: stops backdrop close only. */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: sheet panel only stops backdrop-close propagation; it exposes no action and adds no keyboard semantics. */}
       <div
         className="card"
         onClick={(e) => e.stopPropagation()}
@@ -87,7 +87,12 @@ export const DocReminderOverlay = ({ docs }: Props) => {
       >
         <div
           className="row"
-          style={{ padding: 0, marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}
+          style={{
+            padding: 0,
+            marginBottom: 4,
+            display: 'flex',
+            justifyContent: 'space-between',
+          }}
         >
           <b>Documents to upload</b>
           <button

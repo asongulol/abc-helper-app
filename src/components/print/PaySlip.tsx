@@ -14,7 +14,11 @@
 import type { PaymentDetail } from '@/db/queries/payroll';
 import { fmtDate, money } from '@/lib/format';
 
-const cell = { borderBottom: '1px solid #ddd', padding: '6px 8px', textAlign: 'left' } as const;
+const cell = {
+  borderBottom: '1px solid #ddd',
+  padding: '6px 8px',
+  textAlign: 'left',
+} as const;
 const cellRight = { ...cell, textAlign: 'right' } as const;
 
 export function PaySlip({ pay }: { pay: PaymentDetail }) {
@@ -36,7 +40,14 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
           : kind);
 
   return (
-    <div style={{ maxWidth: 680, margin: '24px auto', padding: '0 24px', color: '#15233b' }}>
+    <div
+      style={{
+        maxWidth: 680,
+        margin: '24px auto',
+        padding: '0 24px',
+        color: '#15233b',
+      }}
+    >
       <h1 style={{ color: '#1F3A68', marginBottom: 4 }}>PAY SLIP</h1>
       <div>
         <strong>Contractor:</strong> {pay.name || '—'}
@@ -88,14 +99,14 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
               <td style={cellRight}>{money(pay.bonusPhp)}</td>
             </tr>
           )}
-          {earnLines.map((m, idx) => (
-            <tr key={`earn-${idx}-${m.label ?? m.kind}`}>
+          {earnLines.map((m) => (
+            <tr key={`earn-${m.kind}-${m.label ?? ''}-${m.amount ?? ''}`}>
               <td style={cell}>{labelFor(m.kind, m.label)}</td>
               <td style={cellRight}>{money(Number(m.amount) || 0)}</td>
             </tr>
           ))}
-          {deductionLines.map((m, idx) => (
-            <tr key={`ded-${idx}-${m.label ?? m.kind}`}>
+          {deductionLines.map((m) => (
+            <tr key={`ded-${m.kind}-${m.label ?? ''}-${m.amount ?? ''}`}>
               <td style={cell}>{labelFor(m.kind, m.label)}</td>
               <td style={{ ...cellRight, color: '#991b1b' }}>−{money(Number(m.amount) || 0)}</td>
             </tr>
@@ -103,8 +114,22 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
         </tbody>
         <tfoot>
           <tr>
-            <td style={{ ...cell, fontWeight: 700, borderTop: '2px solid #1F3A68' }}>Net pay</td>
-            <td style={{ ...cellRight, fontWeight: 700, borderTop: '2px solid #1F3A68' }}>
+            <td
+              style={{
+                ...cell,
+                fontWeight: 700,
+                borderTop: '2px solid #1F3A68',
+              }}
+            >
+              Net pay
+            </td>
+            <td
+              style={{
+                ...cellRight,
+                fontWeight: 700,
+                borderTop: '2px solid #1F3A68',
+              }}
+            >
               {money(pay.netPhp)}
             </td>
           </tr>

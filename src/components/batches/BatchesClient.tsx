@@ -11,6 +11,7 @@
  *     (Period | Contractors | Reconcile status | Open).
  */
 
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -18,11 +19,10 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PeriodSummaryRow } from '@/db/queries/payroll';
 import {
-  type ReconcileOverview,
   getReconcileOverview,
+  type ReconcileOverview,
   reconcileAllPending,
 } from '@/server/actions/reconcile';
-import { useCallback, useEffect, useId, useState } from 'react';
 
 interface BatchesClientProps {
   companyId: string;

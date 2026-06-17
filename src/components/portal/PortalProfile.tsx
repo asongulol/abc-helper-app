@@ -1,10 +1,10 @@
 'use client';
 
-import { useToast } from '@/components/ui';
-import { PhoneInput, formatPhone } from '@/components/ui/PhoneInput';
-import { updateOwnProfile } from '@/server/actions/portal';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useToast } from '@/components/ui';
+import { formatPhone, PhoneInput } from '@/components/ui/PhoneInput';
+import { updateOwnProfile } from '@/server/actions/portal';
 
 type Profile = {
   id: string;
@@ -86,7 +86,12 @@ const FIELD_DEFS: ReadonlyArray<FieldDef & { s: string }> = [
   { k: 'last_name', label: 'Last name', s: 'contact' },
   { k: 'mobile', label: 'Mobile', type: 'tel', s: 'contact' },
   { k: 'ph_address', label: 'Current PH address', s: 'contact' },
-  { k: 'permanent_address', label: 'Permanent address', s: 'contact', sameAs: 'ph_address' },
+  {
+    k: 'permanent_address',
+    label: 'Permanent address',
+    s: 'contact',
+    sameAs: 'ph_address',
+  },
   { k: 'address_landmark', label: 'Landmark', s: 'contact' },
   { k: 'postal_code', label: 'Postal code', s: 'contact' },
   { k: 'date_of_birth', label: 'Date of birth', type: 'date', s: 'contact' },
@@ -97,11 +102,31 @@ const FIELD_DEFS: ReadonlyArray<FieldDef & { s: string }> = [
     opts: REL_OPTS,
     s: 'personal',
   },
-  { k: 'emergency_mobile', label: 'Emergency contact mobile', type: 'tel', s: 'personal' },
-  { k: 'marital_status', label: 'Marital status', opts: MARITAL_OPTS, s: 'personal' },
-  { k: 'education_level', label: 'Highest Degree Attained', opts: EDUCATION_OPTS, s: 'personal' },
+  {
+    k: 'emergency_mobile',
+    label: 'Emergency contact mobile',
+    type: 'tel',
+    s: 'personal',
+  },
+  {
+    k: 'marital_status',
+    label: 'Marital status',
+    opts: MARITAL_OPTS,
+    s: 'personal',
+  },
+  {
+    k: 'education_level',
+    label: 'Highest Degree Attained',
+    opts: EDUCATION_OPTS,
+    s: 'personal',
+  },
   { k: 'course', label: 'Degree and Major', s: 'personal' },
-  { k: 'year_graduated', label: 'Year graduated', opts: GRAD_YEARS, s: 'personal' },
+  {
+    k: 'year_graduated',
+    label: 'Year graduated',
+    opts: GRAD_YEARS,
+    s: 'personal',
+  },
   { k: 'school', label: 'School', s: 'personal' },
   { k: 'gcash', label: 'GCash', s: 'payout' },
   { k: 'paymaya', label: 'PayMaya', s: 'payout' },
@@ -264,7 +289,14 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
     <>
       {/* Profile header card */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            marginBottom: 8,
+          }}
+        >
           <div
             aria-hidden
             style={{
@@ -329,7 +361,12 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
             {f.sameAs && isEditable(f.k) && (
               <label
                 className="sub"
-                style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '2px 0 4px' }}
+                style={{
+                  display: 'flex',
+                  gap: 6,
+                  alignItems: 'center',
+                  margin: '2px 0 4px',
+                }}
               >
                 <input
                   type="checkbox"

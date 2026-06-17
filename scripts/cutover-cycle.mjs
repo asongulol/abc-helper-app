@@ -64,7 +64,11 @@ if (!/(127\.0\.0\.1|localhost)/.test(URL) && !has('--allow-remote')) {
 }
 
 // ---- REST helpers -----------------------------------------------------------
-const H = { apikey: KEY, Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' };
+const H = {
+  apikey: KEY,
+  Authorization: `Bearer ${KEY}`,
+  'Content-Type': 'application/json',
+};
 const get = async (p) => {
   const r = await fetch(`${URL}/rest/v1/${p}`, { headers: H });
   if (!r.ok) throw new Error(`GET ${p}: ${r.status} ${await r.text()}`);

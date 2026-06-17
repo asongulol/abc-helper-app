@@ -1,8 +1,8 @@
 'use client';
 
-import { createBrowserSupabase } from '@/db/clients/browser';
 import Script from 'next/script';
 import { type FormEvent, useEffect, useId, useState } from 'react';
+import { createBrowserSupabase } from '@/db/clients/browser';
 
 /**
  * Contractor portal sign-in — email/password with a self-serve password reset.
@@ -14,7 +14,9 @@ import { type FormEvent, useEffect, useId, useState } from 'react';
  */
 const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
 
-type TurnstileWindow = Window & { __abcTurnstileToken?: ((token: string) => void) | undefined };
+type TurnstileWindow = Window & {
+  __abcTurnstileToken?: ((token: string) => void) | undefined;
+};
 
 export const PortalLoginForm = () => {
   const [email, setEmail] = useState('');

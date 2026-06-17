@@ -23,7 +23,10 @@ const MAX_DIFF_CHARS = 12_000;
 const MODEL = 'claude-haiku-4-5-20251001';
 
 function sh(cmd) {
-  return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  return execSync(cmd, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
 }
 
 function quietExit(msg) {
@@ -98,7 +101,9 @@ writeFileSync('CHANGELOG.md', `## ${date} (${sha})\n\n${note}\n\n${existing}`);
 
 try {
   sh('git add CHANGELOG.md');
-  execSync(`git commit -m "docs: update changelog (${sha})"`, { stdio: 'ignore' });
+  execSync(`git commit -m "docs: update changelog (${sha})"`, {
+    stdio: 'ignore',
+  });
   execSync(
     `git tag "changelog-${new Date()
       .toISOString()

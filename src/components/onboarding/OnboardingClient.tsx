@@ -97,7 +97,13 @@ export const OnboardingClient = ({
                 overflow: 'hidden',
               }}
             >
-              <div style={{ width: `${pct}%`, height: '100%', background: '#1F3A68' }} />
+              <div
+                style={{
+                  width: `${pct}%`,
+                  height: '100%',
+                  background: '#1F3A68',
+                }}
+              />
             </div>
             <span className="muted" style={{ fontSize: 11 }}>
               {pct}%
@@ -173,7 +179,14 @@ export const OnboardingClient = ({
             documents reviewed.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <button
             type="button"
             className="btn"

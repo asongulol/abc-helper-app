@@ -1,11 +1,11 @@
 'use client';
 
+import { useId, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { AgreementTemplateRow } from '@/db/queries/config';
 import { type AgreementVars, mergeAgreement } from '@/lib/agreements/merge';
 import { AGREEMENT_KINDS } from '@/lib/config/fields';
 import { saveAgreementTemplate } from '@/server/actions/config';
-import { useId, useState, useTransition } from 'react';
 
 interface AgreementTemplatesCardProps {
   templates: AgreementTemplateRow[];

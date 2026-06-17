@@ -1,14 +1,20 @@
+import type { Metadata } from 'next';
+import { notFound, redirect } from 'next/navigation';
 import { AutoPrint } from '@/components/invoicing/AutoPrint';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchEmployerCompany, fetchInvoiceDetail } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import type { Metadata } from 'next';
-import { notFound, redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Invoice — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Invoice — Aaron Anderson E.H.S. LLC',
+};
 
-const cell = { borderBottom: '1px solid #ddd', padding: '6px 8px', textAlign: 'left' } as const;
+const cell = {
+  borderBottom: '1px solid #ddd',
+  padding: '6px 8px',
+  textAlign: 'left',
+} as const;
 const cellRight = { ...cell, textAlign: 'right' } as const;
 
 export default async function InvoicePrintPage({ params }: { params: Promise<{ id: string }> }) {
@@ -26,7 +32,14 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
   const markupAmount = invoice.totalUsd - invoice.subtotalUsd;
 
   return (
-    <div style={{ maxWidth: 760, margin: '24px auto', padding: '0 24px', color: '#15233b' }}>
+    <div
+      style={{
+        maxWidth: 760,
+        margin: '24px auto',
+        padding: '0 24px',
+        color: '#15233b',
+      }}
+    >
       <AutoPrint />
 
       <h1 style={{ color: '#1F3A68', marginBottom: 4 }}>INVOICE</h1>
@@ -53,8 +66,8 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
           </tr>
         </thead>
         <tbody>
-          {invoice.lines.map((l, idx) => (
-            <tr key={`${l.workerName ?? 'line'}-${idx}`}>
+          {invoice.lines.map((l) => (
+            <tr key={`${l.workerName ?? 'line'}-${l.position ?? ''}-${l.amountUsd}`}>
               <td style={cell}>{l.workerName ?? '—'}</td>
               <td style={cell}>{l.position ?? '—'}</td>
               <td style={cellRight}>{l.workedHours.toFixed(2)}</td>
@@ -83,11 +96,21 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
           <tr>
             <td
               colSpan={4}
-              style={{ ...cellRight, fontWeight: 700, borderTop: '2px solid #1F3A68' }}
+              style={{
+                ...cellRight,
+                fontWeight: 700,
+                borderTop: '2px solid #1F3A68',
+              }}
             >
               Total (USD)
             </td>
-            <td style={{ ...cellRight, fontWeight: 700, borderTop: '2px solid #1F3A68' }}>
+            <td
+              style={{
+                ...cellRight,
+                fontWeight: 700,
+                borderTop: '2px solid #1F3A68',
+              }}
+            >
               {money(invoice.totalUsd, 'USD')}
             </td>
           </tr>

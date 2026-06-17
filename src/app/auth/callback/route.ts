@@ -1,8 +1,8 @@
+import { NextResponse } from 'next/server';
 import { createServerSupabase } from '@/db/clients/server';
 import { isOAuthSignIn } from '@/lib/auth/oauth-provider';
 import { safeNext } from '@/lib/auth/safe-next';
 import { isAllowedAdminEmail } from '@/server/auth/allowed-domains';
-import { NextResponse } from 'next/server';
 
 /**
  * OAuth / magic-link callback: exchange the auth code for a session cookie,

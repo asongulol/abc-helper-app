@@ -14,17 +14,17 @@
  * History and Activity blocks fetch lazily per pick.
  */
 
+import { Fragment, useEffect, useState, useTransition } from 'react';
 import { ContractorPicker } from '@/components/ui';
 import { money } from '@/lib/format';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
 import {
+  getContractorHistory,
+  getUtilization,
   type HistoryRow,
   type ReportsData,
   type UtilizationRow,
-  getContractorHistory,
-  getUtilization,
 } from '@/server/actions/reports-detail';
-import { Fragment, useEffect, useState, useTransition } from 'react';
 
 interface Props {
   companyId: string;
@@ -151,7 +151,14 @@ export const ReportsClient = ({ companyId, data }: Props) => {
         <h2>Payout by pay period</h2>
         {periods.length > 0 && (
           <div style={{ margin: '6px 0 10px' }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 6,
+                alignItems: 'center',
+              }}
+            >
               <span className="muted" style={{ fontSize: 11, width: 46 }}>
                 Year
               </span>
@@ -246,11 +253,13 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                   const open = openKey === p.key;
                   return (
                     <Fragment key={p.key}>
-                      {/* biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable row expands the per-contractor breakdown inline */}
                       <tr
                         className="clickable"
                         onClick={() => setOpenKey(open ? null : p.key)}
-                        style={{ cursor: 'pointer', background: open ? '#f1f5f9' : undefined }}
+                        style={{
+                          cursor: 'pointer',
+                          background: open ? '#f1f5f9' : undefined,
+                        }}
                       >
                         <td data-label="Details" style={{ color: 'var(--muted)' }}>
                           {open ? '▾' : '▸'}
@@ -277,7 +286,10 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                         <tr>
                           <td
                             colSpan={nCols}
-                            style={{ background: '#f8fafc', padding: '8px 10px' }}
+                            style={{
+                              background: '#f8fafc',
+                              padding: '8px 10px',
+                            }}
                           >
                             <div style={{ maxHeight: 320, overflow: 'auto' }}>
                               <table className="keep-table">
@@ -328,8 +340,8 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                 <tbody>
                                   {[...p.rows]
                                     .sort((a, b) => a.name.localeCompare(b.name))
-                                    .map((r, j) => (
-                                      <tr key={`${p.key}-${j}`}>
+                                    .map((r) => (
+                                      <tr key={`${p.key}-${r.name}`}>
                                         <td>
                                           <b>{r.name}</b>
                                         </td>
@@ -358,8 +370,14 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                             className="pill"
                                             style={
                                               PAID(r.status)
-                                                ? { background: '#dcfce7', color: '#065f46' }
-                                                : { background: '#f3f4f6', color: 'var(--muted)' }
+                                                ? {
+                                                    background: '#dcfce7',
+                                                    color: '#065f46',
+                                                  }
+                                                : {
+                                                    background: '#f3f4f6',
+                                                    color: 'var(--muted)',
+                                                  }
                                             }
                                           >
                                             {PAID(r.status) ? 'paid' : r.status || 'draft'}
@@ -599,7 +617,14 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
         </div>
         <div>
           {/* biome-ignore lint/a11y/noLabelWithoutControl: caption above the contractor picker (legacy markup) */}
-          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'block', marginBottom: 2 }}>
+          <label
+            style={{
+              fontSize: 10,
+              color: 'var(--muted)',
+              display: 'block',
+              marginBottom: 2,
+            }}
+          >
             Contractors
           </label>
           <ContractorPicker
@@ -658,10 +683,12 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                 const open = openKey === r.gkey;
                 return (
                   <Fragment key={r.gkey}>
-                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable row expands the per-period statements inline */}
                     <tr
                       onClick={() => setOpenKey(open ? null : r.gkey)}
-                      style={{ cursor: 'pointer', background: open ? '#f1f5f9' : undefined }}
+                      style={{
+                        cursor: 'pointer',
+                        background: open ? '#f1f5f9' : undefined,
+                      }}
                     >
                       <td className="card-title">
                         <span style={{ color: 'var(--muted)', marginRight: 6 }}>
@@ -709,10 +736,10 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                               </tr>
                             </thead>
                             <tbody>
-                              {r.statements.map((s, j) => {
+                              {r.statements.map((s) => {
                                 const isPaid = PAID(s.status);
                                 return (
-                                  <tr key={`${r.gkey}-${j}`}>
+                                  <tr key={`${r.gkey}-${s.start}-${s.end || ''}`}>
                                     <td>
                                       {s.start} → {s.end || '?'}
                                     </td>
@@ -734,8 +761,14 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                                         className="pill"
                                         style={
                                           isPaid
-                                            ? { background: '#dcfce7', color: '#065f46' }
-                                            : { background: '#f3f4f6', color: 'var(--muted)' }
+                                            ? {
+                                                background: '#dcfce7',
+                                                color: '#065f46',
+                                              }
+                                            : {
+                                                background: '#f3f4f6',
+                                                color: 'var(--muted)',
+                                              }
                                         }
                                       >
                                         {isPaid ? 'paid' : s.status || 'draft'}
@@ -798,7 +831,7 @@ const ContractorHistory = ({
   const sel = workers.find((w) => w.id === wid);
 
   const exportCsv = () => {
-    if (!rows || !rows.length) return;
+    if (!rows?.length) return;
     const header = [
       'Period start',
       'Period end',
@@ -905,8 +938,7 @@ const ContractorHistory = ({
                 const open = openKey === i;
                 const hasDays = r.days && r.days.length > 0;
                 return (
-                  <Fragment key={`${r.start}-${i}`}>
-                    {/* biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable row expands the per-day breakdown inline */}
+                  <Fragment key={`${r.start}-${r.end || ''}`}>
                     <tr
                       onClick={() => hasDays && setOpenKey(open ? null : i)}
                       style={{
@@ -939,7 +971,10 @@ const ContractorHistory = ({
                             style={
                               PAID(r.status)
                                 ? { background: '#dcfce7', color: '#065f46' }
-                                : { background: '#f3f4f6', color: 'var(--muted)' }
+                                : {
+                                    background: '#f3f4f6',
+                                    color: 'var(--muted)',
+                                  }
                             }
                           >
                             {PAID(r.status) ? 'paid' : r.status || 'draft'}
@@ -1052,7 +1087,14 @@ const UtilizationReport = ({ companyId }: { companyId: string }) => {
         </div>
         <div>
           {/* biome-ignore lint/a11y/noLabelWithoutControl: caption above the contractor picker (legacy markup) */}
-          <label style={{ fontSize: 10, color: 'var(--muted)', display: 'block', marginBottom: 2 }}>
+          <label
+            style={{
+              fontSize: 10,
+              color: 'var(--muted)',
+              display: 'block',
+              marginBottom: 2,
+            }}
+          >
             Contractors
           </label>
           <ContractorPicker options={options} value={sel} onChange={onPick} placeholder="Select…" />
@@ -1083,8 +1125,8 @@ const UtilizationReport = ({ companyId }: { companyId: string }) => {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={`${r.workerId}-${r.week}-${i}`}>
+              {rows.map((r) => (
+                <tr key={`${r.workerId}-${r.week}`}>
                   <td className="card-title">
                     <b>{r.name}</b>
                   </td>

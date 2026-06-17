@@ -1,7 +1,7 @@
 'use client';
 
-import { createBrowserSupabase } from '@/db/clients/browser';
 import { type FormEvent, useId, useState } from 'react';
+import { createBrowserSupabase } from '@/db/clients/browser';
 
 type Busy = 'google' | 'password' | null;
 

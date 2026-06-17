@@ -1,7 +1,7 @@
 'use client';
 
-import type { PortalTimeEntryRow } from '@/db/queries/portal';
 import { useState } from 'react';
+import type { PortalTimeEntryRow } from '@/db/queries/portal';
 
 interface DayRow {
   date: string;
@@ -97,9 +97,18 @@ export const PortalTime = ({ entries }: { entries: PortalTimeEntryRow[] }) => {
         const isOpen = !!open[g.key];
         return (
           <div className="card" key={g.key}>
-            {/* biome-ignore lint/a11y/useKeyWithClickEvents: legacy clickable period header that expands the daily drill-down. */}
+            {/* biome-ignore lint/a11y/useSemanticElements: container wraps block-level rows/headers that cannot be nested inside a native <button>; role=button + key handler give keyboard parity. */}
             <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
               onClick={() => setOpen((o) => ({ ...o, [g.key]: !o[g.key] }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setOpen((o) => ({ ...o, [g.key]: !o[g.key] }));
+                }
+              }}
               style={{ cursor: 'pointer' }}
             >
               <div
@@ -133,7 +142,13 @@ export const PortalTime = ({ entries }: { entries: PortalTimeEntryRow[] }) => {
               </div>
             </div>
             {isOpen && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  paddingTop: 8,
+                  borderTop: '1px solid #e5e7eb',
+                }}
+              >
                 {g.daysList.length === 0 ? (
                   <div className="sub">No daily entries.</div>
                 ) : (

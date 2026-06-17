@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { ContractorsClient } from '@/components/contractors/ContractorsClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { listAdmins } from '@/db/queries/admins';
@@ -6,7 +7,6 @@ import { fetchRates } from '@/db/queries/payroll';
 import { fetchRoster, fetchWorkerClientsMap } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
-import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Contractors — Aaron Anderson E.H.S. LLC' };
 

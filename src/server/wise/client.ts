@@ -81,7 +81,5 @@ export async function wiseRequestNullable<T = unknown>(
 }
 
 /** Expose the lazy-validate helper so service.ts can call it when needed. */
-export { getToken };
-
 /** Wise API base URL (re-exported so tests can inspect without importing process.env). */
-export { BASE as WISE_BASE };
+export { BASE as WISE_BASE, getToken };

@@ -6,11 +6,11 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '@/db/types';
 import type { MiscItem } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
 import type { PaymentDraft, RosterRow, TimeEntryRow } from '@/lib/payroll/mappers';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 
@@ -102,7 +102,10 @@ export const fetchLastPayoutMethods = async (
   return out;
 };
 
-export type PeriodRef = { id: string; state: Database['public']['Enums']['pay_period_state'] };
+export type PeriodRef = {
+  id: string;
+  state: Database['public']['Enums']['pay_period_state'];
+};
 
 /** Legacy `resolvePeriod`: look up the pay period by company + dates. */
 export const findPeriod = async (
@@ -259,7 +262,11 @@ export const fetchPeriodSummaries = async (
 export const lockPeriod = async (db: Db, periodId: string, payDate: string): Promise<void> => {
   const { error } = await db
     .from('pay_periods')
-    .update({ state: 'locked', locked_at: new Date().toISOString(), pay_date: payDate })
+    .update({
+      state: 'locked',
+      locked_at: new Date().toISOString(),
+      pay_date: payDate,
+    })
     .eq('id', periodId);
   if (error) throw new Error(`lock period: ${error.message}`);
 };

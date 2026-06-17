@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { NetSparkline } from '@/components/overview/NetSparkline';
 import { PipelineStrip } from '@/components/overview/PipelineStrip';
 import { StatTile } from '@/components/overview/StatTile';
@@ -17,8 +19,6 @@ import { periodFor } from '@/lib/dates/periods';
 import { centavosToPhp, money } from '@/lib/format';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
-import Link from 'next/link';
-import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Overview — Aaron Anderson E.H.S. LLC' };
 
@@ -157,7 +157,14 @@ export default async function OverviewPage() {
             {companyName} · what needs your attention
           </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 6,
+          }}
+        >
           <Link className="btn ghost sm" href="/overview">
             ↻ Refresh
           </Link>

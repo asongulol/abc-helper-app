@@ -199,19 +199,28 @@ export async function createPortalLogin(args: {
       user_metadata: { must_set_password: true },
     });
     if (authErr || !authUser.user) {
-      return { ok: false, error: authErr?.message ?? 'Could not create portal login.' };
+      return {
+        ok: false,
+        error: authErr?.message ?? 'Could not create portal login.',
+      };
     }
     const authUserId = authUser.user.id;
 
     // Link contractor_logins row
-    const { error: linkErr } = await svc
-      .from('contractor_logins')
-      .upsert(
-        { worker_id: args.workerId, auth_user_id: authUserId, email, status: 'active' },
-        { onConflict: 'worker_id', ignoreDuplicates: false },
-      );
+    const { error: linkErr } = await svc.from('contractor_logins').upsert(
+      {
+        worker_id: args.workerId,
+        auth_user_id: authUserId,
+        email,
+        status: 'active',
+      },
+      { onConflict: 'worker_id', ignoreDuplicates: false },
+    );
     if (linkErr) {
-      return { ok: false, error: `Login created but linking failed: ${linkErr.message}` };
+      return {
+        ok: false,
+        error: `Login created but linking failed: ${linkErr.message}`,
+      };
     }
 
     // Seed onboarding_progress so new hire appears in the Onboarding queue.
@@ -228,7 +237,10 @@ export async function createPortalLogin(args: {
 
     return { ok: true, data: { tempPassword: pw } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Create login failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Create login failed.',
+    };
   }
 }
 
@@ -252,7 +264,10 @@ export async function resetPortalPassword(args: {
       .eq('worker_id', args.workerId)
       .maybeSingle();
     if (!login?.auth_user_id)
-      return { ok: false, error: 'This contractor has no portal login yet — create one first.' };
+      return {
+        ok: false,
+        error: 'This contractor has no portal login yet — create one first.',
+      };
 
     // Optionally correct the login email (legacy "Update login & resend").
     const newEmail = args.email?.trim();
@@ -276,7 +291,11 @@ export async function resetPortalPassword(args: {
     await logEvent({
       action: 'portal_login.reset_password',
       entity: effectiveEmail ?? args.workerId,
-      detail: { worker_id: args.workerId, by: admin.email, email_changed: changed },
+      detail: {
+        worker_id: args.workerId,
+        by: admin.email,
+        email_changed: changed,
+      },
     });
 
     // Best-effort credentials email to the (possibly corrected) address.
@@ -286,10 +305,17 @@ export async function resetPortalPassword(args: {
 
     return {
       ok: true,
-      data: { tempPassword: pw, ...(effectiveEmail ? { email: effectiveEmail } : {}), changed },
+      data: {
+        tempPassword: pw,
+        ...(effectiveEmail ? { email: effectiveEmail } : {}),
+        changed,
+      },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Reset failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Reset failed.',
+    };
   }
 }
 
@@ -313,7 +339,10 @@ export async function revokePortalLogin(args: { workerId: string }): Promise<Act
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Revoke failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Revoke failed.',
+    };
   }
 }
 
@@ -364,7 +393,10 @@ export async function resendHireEmails(args: {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Resend failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Resend failed.',
+    };
   }
 }
 
@@ -419,7 +451,10 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Tools email failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Tools email failed.',
+    };
   }
 }
 
@@ -506,7 +541,10 @@ export async function withdrawOffer(args: { workerId: string }): Promise<ActionR
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Withdraw failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Withdraw failed.',
+    };
   }
 }
 
@@ -608,6 +646,9 @@ export async function deleteContractor(args: {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Delete failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Delete failed.',
+    };
   }
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import { Modal } from '@/components/ui';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Modal } from '@/components/ui';
 import type { NavItem } from './nav';
 
 export interface CommandPaletteProps {
@@ -16,9 +16,30 @@ export interface CommandPaletteProps {
 }
 
 type Result =
-  | { type: 'section'; key: string; label: string; sub: string; icon: string; href: string }
-  | { type: 'worker'; key: string; label: string; sub: string; icon: string; id: string }
-  | { type: 'period'; key: string; label: string; sub: string; icon: string; start: string };
+  | {
+      type: 'section';
+      key: string;
+      label: string;
+      sub: string;
+      icon: string;
+      href: string;
+    }
+  | {
+      type: 'worker';
+      key: string;
+      label: string;
+      sub: string;
+      icon: string;
+      id: string;
+    }
+  | {
+      type: 'period';
+      key: string;
+      label: string;
+      sub: string;
+      icon: string;
+      start: string;
+    };
 
 const CAP = 14;
 
@@ -126,7 +147,7 @@ export const CommandPalette = ({
           placeholder="Search contractors, periods, sections…"
           aria-label="Quick find"
         />
-        <div className="cmdk-list" ref={listRef} aria-label="Results">
+        <div className="cmdk-list" ref={listRef} role="listbox" aria-label="Results">
           {results.length === 0 && <div className="cmdk-empty">No matches</div>}
           {results.map((it, i) => (
             <button

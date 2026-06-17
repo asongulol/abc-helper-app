@@ -1,19 +1,19 @@
 'use client';
 
+import { type FormEvent, type ReactNode, useEffect, useState, useTransition } from 'react';
 import { EmailInput, Modal, PhoneInput, Spinner, useToast, useUnsavedGuard } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { RosterWorker } from '@/db/queries/workers';
 import {
-  type WorkerEngagement,
   assignWorkerCompany,
   getWorkerCompanies,
   getWorkerPhotoUrl,
   saveWorkerCompanyLink,
   saveWorkerProfile,
   setWorkerPhoto,
+  type WorkerEngagement,
 } from '@/server/actions/contractors';
 import { createPortalLogin } from '@/server/actions/portal-admin';
-import { type FormEvent, type ReactNode, useEffect, useState, useTransition } from 'react';
 import { RateCard } from './RateCard';
 
 type Props = {
@@ -220,7 +220,9 @@ export function ProfilePanel({
         if (signed.ok) setPhotoUrl(signed.data.url);
         notify('Photo updated.', { type: 'success' });
       } catch (e) {
-        notify(e instanceof Error ? e.message : 'Upload failed.', { type: 'error' });
+        notify(e instanceof Error ? e.message : 'Upload failed.', {
+          type: 'error',
+        });
       } finally {
         setPhotoBusy(false);
       }
@@ -246,14 +248,19 @@ export function ProfilePanel({
         contract: e.contract === 'PT' ? 'PT' : 'FT',
         status: e.status === 'inactive' ? 'inactive' : e.status === 'ended' ? 'ended' : 'active',
       });
-      notify(res.ok ? 'Engagement saved.' : res.error, { type: res.ok ? 'success' : 'error' });
+      notify(res.ok ? 'Engagement saved.' : res.error, {
+        type: res.ok ? 'success' : 'error',
+      });
     });
   };
 
   const handleAssign = () => {
     if (!assignTo) return;
     startTransition(async () => {
-      const res = await assignWorkerCompany({ workerId: worker.workerId, companyId: assignTo });
+      const res = await assignWorkerCompany({
+        workerId: worker.workerId,
+        companyId: assignTo,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -433,7 +440,9 @@ export function ProfilePanel({
           notify(res.error ?? 'Failed.', { type: 'error' });
         }
       } catch (err) {
-        notify(err instanceof Error ? err.message : 'Failed.', { type: 'error' });
+        notify(err instanceof Error ? err.message : 'Failed.', {
+          type: 'error',
+        });
       }
     });
   };
@@ -476,8 +485,16 @@ export function ProfilePanel({
       {/* ─── Profile tab ─── */}
       {activeTab === 'profile' && (
         <form onSubmit={handleSave} noValidate>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              marginBottom: 16,
+            }}
+          >
             {photoUrl ? (
+              // biome-ignore lint/performance/noImgElement: remote Supabase signed-URL photo fetched at runtime, not a static asset
               <img
                 src={photoUrl}
                 alt={fullName}
@@ -609,7 +626,14 @@ export function ProfilePanel({
             </Field>
           </div>
           <div style={{ display: 'flex', gap: 24, marginTop: 16 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+              }}
+            >
               <input
                 type="checkbox"
                 checked={form.healthAllowanceEligible}
@@ -618,7 +642,14 @@ export function ProfilePanel({
               />
               Health allowance
             </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+              }}
+            >
               <input
                 type="checkbox"
                 checked={form.thirteenthMonthEligible}
@@ -1076,7 +1107,13 @@ export function ProfilePanel({
 
       {/* ─── Portal & login tab ─── */}
       {activeTab === 'portal' && (
-        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 8 }}>
+        <div
+          style={{
+            borderTop: '1px solid var(--border)',
+            paddingTop: 12,
+            marginTop: 8,
+          }}
+        >
           <div
             style={{
               display: 'flex',
@@ -1100,7 +1137,11 @@ export function ProfilePanel({
               title={worker.email ? '' : 'Set a personal email first.'}
               onClick={() =>
                 runLogin(
-                  () => createPortalLogin({ workerId: worker.workerId, email: worker.email ?? '' }),
+                  () =>
+                    createPortalLogin({
+                      workerId: worker.workerId,
+                      email: worker.email ?? '',
+                    }),
                   'Portal login created.',
                 )
               }

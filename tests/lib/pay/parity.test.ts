@@ -25,10 +25,10 @@
  * centavo (`toFixed(2)` noise).
  */
 
-import { centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
-import { type MiscItem, RATIO_CAP, miscTotal } from '@/lib/pay/calc';
-import { expectedHours } from '@/lib/pay/expected-hours';
 import { describe, expect, it } from 'vitest';
+import { centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
+import { type MiscItem, miscTotal, RATIO_CAP } from '@/lib/pay/calc';
+import { expectedHours } from '@/lib/pay/expected-hours';
 import rowsJson from '../../fixtures/parity-rows.json';
 
 type FixtureRow = {

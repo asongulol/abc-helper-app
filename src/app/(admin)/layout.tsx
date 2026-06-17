@@ -1,3 +1,5 @@
+import { redirect } from 'next/navigation';
+import type { ReactNode } from 'react';
 import { AdminShell } from '@/components/shell/AdminShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { type AdminRow, listAdmins } from '@/db/queries/admins';
@@ -5,8 +7,6 @@ import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { fetchRoster } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
-import { redirect } from 'next/navigation';
-import type { ReactNode } from 'react';
 
 /**
  * Admin area layout: verifies the signed-in user is an admin (the proxy gate

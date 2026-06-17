@@ -56,8 +56,17 @@ export interface DocSlotStatus {
 /** Legacy DEFAULT_DOCS (portal/index.html ~1113) — used when config has none. */
 export const DEFAULT_REQUIRED_DOCS: readonly RequiredDoc[] = [
   { kind: 'resume', title: 'Resume / CV', required: true },
-  { kind: 'diploma', title: 'Diploma or Transcript of Records', required: true },
-  { kind: 'nbi_clearance', title: 'NBI Clearance', required: true, freshness_months: 6 },
+  {
+    kind: 'diploma',
+    title: 'Diploma or Transcript of Records',
+    required: true,
+  },
+  {
+    kind: 'nbi_clearance',
+    title: 'NBI Clearance',
+    required: true,
+    freshness_months: 6,
+  },
   {
     kind: 'gov_id',
     title: 'Government-issued ID or Passport',

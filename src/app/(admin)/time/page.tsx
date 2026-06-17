@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { TimeShell } from '@/components/time/TimeShell';
 import { createServerSupabase } from '@/db/clients/server';
 import {
@@ -11,7 +12,6 @@ import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Time Import — Aaron Anderson E.H.S. LLC' };
 

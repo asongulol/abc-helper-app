@@ -1,10 +1,10 @@
 'use client';
 
+import { useId, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { DocumentRow } from '@/db/queries/documents';
 import type { Database } from '@/db/types';
 import { addDocument } from '@/server/actions/documents-admin';
-import { useId, useState, useTransition } from 'react';
 
 type DocumentKind = Database['public']['Enums']['document_kind'];
 
@@ -79,7 +79,13 @@ export const DocumentsClient = ({ documents, workerOptions, companyId, consolida
         expiresOn: form.expires_on,
       });
       if (result.ok) {
-        setForm({ worker_id: '', kind: 'ic_agreement', title: '', signed_on: '', expires_on: '' });
+        setForm({
+          worker_id: '',
+          kind: 'ic_agreement',
+          title: '',
+          signed_on: '',
+          expires_on: '',
+        });
       } else {
         notify(result.error, { type: 'error' });
       }

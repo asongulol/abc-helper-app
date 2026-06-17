@@ -16,18 +16,22 @@
  * legacy `payments.*_php` columns. The client renders them with money()/peso().
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 
 /** Joined `workers` row → "First Middle Last" (legacy `fullName`). */
 const workerName = (
-  w: { first_name?: string | null; middle_name?: string | null; last_name?: string | null } | null,
+  w: {
+    first_name?: string | null;
+    middle_name?: string | null;
+    last_name?: string | null;
+  } | null,
 ): string => [w?.first_name, w?.middle_name, w?.last_name].filter(Boolean).join(' ').trim();
 
 // PostgREST caps a single select at 1000 rows. The grand-total cards and the
@@ -37,7 +41,10 @@ const workerName = (
 const PAGE = 1000;
 
 async function pageAll<T>(
-  head: () => PromiseLike<{ count: number | null; error: { message: string } | null }>,
+  head: () => PromiseLike<{
+    count: number | null;
+    error: { message: string } | null;
+  }>,
   range: (
     from: number,
     to: number,
@@ -172,7 +179,11 @@ type PaymentJoin = {
     pay_date: string | null;
     state: string;
   } | null;
-  workers: { first_name: string; middle_name: string | null; last_name: string } | null;
+  workers: {
+    first_name: string;
+    middle_name: string | null;
+    last_name: string;
+  } | null;
 };
 
 const PAYMENT_SELECT =
@@ -223,7 +234,10 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
         }>,
     );
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Reports query failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Reports query failed.',
+    };
   }
 
   // --- Payout by pay period (group by period, keep contractor lines) ---------
@@ -367,7 +381,15 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
 
   return {
     ok: true,
-    data: { periods, grandNet, grandUsd, grandUnpaid, contractors, workers, summary },
+    data: {
+      periods,
+      grandNet,
+      grandUsd,
+      grandUnpaid,
+      contractors,
+      workers,
+      summary,
+    },
   };
 }
 
@@ -425,7 +447,12 @@ export async function getContractorHistory(
       .limit(5000);
     if (te_e) throw new Error(te_e.message);
 
-    type TBucket = { end: string; tracked: number; pto: number; days: Map<string, HistoryDay> };
+    type TBucket = {
+      end: string;
+      tracked: number;
+      pto: number;
+      days: Map<string, HistoryDay>;
+    };
     const tmap = new Map<string, TBucket>();
     for (const r of te ?? []) {
       const p = periodFor(r.work_date);
@@ -437,7 +464,11 @@ export async function getContractorHistory(
       };
       g.tracked += Number(r.tracked_seconds || 0);
       g.pto += Number(r.pto_seconds || 0);
-      const d = g.days.get(r.work_date) ?? { date: r.work_date, tracked: 0, pto: 0 };
+      const d = g.days.get(r.work_date) ?? {
+        date: r.work_date,
+        tracked: 0,
+        pto: 0,
+      };
       d.tracked += Number(r.tracked_seconds || 0);
       d.pto += Number(r.pto_seconds || 0);
       g.days.set(r.work_date, d);
@@ -499,7 +530,10 @@ export async function getContractorHistory(
     });
     return { ok: true, data: { rows } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'History query failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'History query failed.',
+    };
   }
 }
 
@@ -574,7 +608,10 @@ export async function getUtilization(
         }>,
     );
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Activity query failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Activity query failed.',
+    };
   }
 
   const optMap = new Map<string, string>();
@@ -587,7 +624,13 @@ export async function getUtilization(
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const sel = new Set(workerIds);
-  type Bucket = { name: string; week: string; actSum: number; actN: number; hours: number };
+  type Bucket = {
+    name: string;
+    week: string;
+    actSum: number;
+    actN: number;
+    hours: number;
+  };
   const byKey = new Map<string, Bucket>();
   let anyActivity = false;
   for (const t of te) {

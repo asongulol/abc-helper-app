@@ -11,9 +11,9 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '@/db/types';
 import type { WiseDates } from '@/lib/wise/types';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 

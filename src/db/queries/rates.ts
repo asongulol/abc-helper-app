@@ -8,9 +8,9 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { planRateUpsert } from '@/lib/pay/rates';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 
@@ -45,8 +45,16 @@ export const fetchRateHistory = async (
 /** Execute an effective-dated rate save. Returns the prior rate (for audit from→to). */
 export const executeRateUpsert = async (
   db: Db,
-  args: { workerId: string; companyId: string; amountPhp: number; effectiveStart: string },
-): Promise<{ kind: 'same-day-update' | 'close-and-insert'; priorAmountPhp: number | null }> => {
+  args: {
+    workerId: string;
+    companyId: string;
+    amountPhp: number;
+    effectiveStart: string;
+  },
+): Promise<{
+  kind: 'same-day-update' | 'close-and-insert';
+  priorAmountPhp: number | null;
+}> => {
   const history = await fetchRateHistory(db, args.workerId, args.companyId);
   const plan = planRateUpsert(history, args.amountPhp, args.effectiveStart);
   const priorAmountPhp = history[0]?.amountPhp ?? null;
@@ -54,7 +62,11 @@ export const executeRateUpsert = async (
   if (plan.kind === 'same-day-update') {
     const { error } = await db
       .from('rates')
-      .update({ amount_php: plan.amountPhp, period_basis: 'semi_monthly', effective_end: null })
+      .update({
+        amount_php: plan.amountPhp,
+        period_basis: 'semi_monthly',
+        effective_end: null,
+      })
       .eq('id', plan.rateId);
     if (error) throw new Error(`rates update: ${error.message}`);
     return { kind: plan.kind, priorAmountPhp };

@@ -2,9 +2,9 @@
  * Tests for contractor-grouping helpers (src/lib/time/grouping.ts).
  */
 
-import { groupByContractor, periodStats } from '@/lib/time/grouping';
-import type { TimeEntryRaw } from '@/lib/time/grouping';
 import { describe, expect, it } from 'vitest';
+import type { TimeEntryRaw } from '@/lib/time/grouping';
+import { groupByContractor, periodStats } from '@/lib/time/grouping';
 
 const makeEntry = (
   overrides: Partial<TimeEntryRaw> & Pick<TimeEntryRaw, 'sourceName' | 'workDate'>,
@@ -21,9 +21,21 @@ const makeEntry = (
 describe('groupByContractor', () => {
   it('groups entries by source_name', () => {
     const entries: TimeEntryRaw[] = [
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-01', trackedSeconds: 3600 }),
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-02', trackedSeconds: 7200 }),
-      makeEntry({ sourceName: 'Bob', workDate: '2026-06-01', trackedSeconds: 1800 }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-01',
+        trackedSeconds: 3600,
+      }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-02',
+        trackedSeconds: 7200,
+      }),
+      makeEntry({
+        sourceName: 'Bob',
+        workDate: '2026-06-01',
+        trackedSeconds: 1800,
+      }),
     ];
     const rows = groupByContractor(entries);
     expect(rows).toHaveLength(2);
@@ -51,8 +63,16 @@ describe('groupByContractor', () => {
 
   it('reports mixed when statuses differ', () => {
     const entries: TimeEntryRaw[] = [
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-01', approval: 'pending' }),
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-02', approval: 'approved' }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-01',
+        approval: 'pending',
+      }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-02',
+        approval: 'approved',
+      }),
     ];
     const [row] = groupByContractor(entries);
     expect(row?.approvalStatus).toBe('mixed');
@@ -60,8 +80,16 @@ describe('groupByContractor', () => {
 
   it('reports single status when all are the same', () => {
     const entries: TimeEntryRaw[] = [
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-01', approval: 'approved' }),
-      makeEntry({ sourceName: 'Alice', workDate: '2026-06-02', approval: 'approved' }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-01',
+        approval: 'approved',
+      }),
+      makeEntry({
+        sourceName: 'Alice',
+        workDate: '2026-06-02',
+        approval: 'approved',
+      }),
     ];
     const [row] = groupByContractor(entries);
     expect(row?.approvalStatus).toBe('approved');

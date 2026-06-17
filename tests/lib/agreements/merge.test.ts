@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   type AgreementVars,
   escapeHtml,
@@ -7,7 +8,6 @@ import {
   safeSigImg,
   signatureMark,
 } from '@/lib/agreements/merge';
-import { describe, expect, it } from 'vitest';
 
 // A small valid 1x1 PNG data-URI (base64 charset only).
 const VALID_PNG =
@@ -120,7 +120,10 @@ describe('mergeAgreement — token parity + defaults', () => {
   });
 
   it('explicit hours_per_week overrides the type default', () => {
-    const out = mergeAgreement('Body', { employment_type: 'full_time', hours_per_week: 32 });
+    const out = mergeAgreement('Body', {
+      employment_type: 'full_time',
+      hours_per_week: 32,
+    });
     expect(out).toContain('Engagement: Full-time (32 hours/week).');
   });
 

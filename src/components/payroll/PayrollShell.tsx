@@ -6,6 +6,7 @@
  * lock/unlock, delete, misc popup.
  */
 
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -29,9 +30,8 @@ import {
   unlockPeriod,
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { MiscModal } from './MiscModal';
 import type { MiscModalPayload } from './MiscModal';
+import { MiscModal } from './MiscModal';
 
 const PAYOUT_METHODS = ['wise', 'bpi', 'gcash', 'paymaya', 'paypal'] as const;
 const DEFAULT_FX = 58.0;
@@ -247,7 +247,9 @@ export const PayrollShell = ({
       setUnlinked(ul);
       setSkippedNoRate(snr);
       if (ua.length > 0 || ul.length > 0 || snr.length > 0) {
-        notify('Calculation complete with warnings — see banners above.', { type: 'warn' });
+        notify('Calculation complete with warnings — see banners above.', {
+          type: 'warn',
+        });
       } else {
         notify('Calculated successfully.', { type: 'success' });
       }
@@ -309,7 +311,9 @@ export const PayrollShell = ({
         notify(res.error, { type: 'error', persistent: true });
         return;
       }
-      notify(`Locked ${res.data.lockedCount} statement(s).`, { type: 'success' });
+      notify(`Locked ${res.data.lockedCount} statement(s).`, {
+        type: 'success',
+      });
       setCurrentPeriod((p) => (p ? { ...p, state: 'locked' } : null));
       setPeriods((prev) =>
         prev.map((p) =>
@@ -331,7 +335,12 @@ export const PayrollShell = ({
     }
     setBusy(true);
     try {
-      const res = await unlockPeriod({ companyId, periodStart, periodEnd, reason: unlockReason });
+      const res = await unlockPeriod({
+        companyId,
+        periodStart,
+        periodEnd,
+        reason: unlockReason,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error', persistent: true });
         return;
@@ -375,7 +384,11 @@ export const PayrollShell = ({
     suppressSave.current = true;
     setBusy(true);
     try {
-      const res = await deleteAllStatements({ companyId, periodStart, periodEnd });
+      const res = await deleteAllStatements({
+        companyId,
+        periodStart,
+        periodEnd,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -548,7 +561,11 @@ export const PayrollShell = ({
           {skippedNoRate.length > 0 && (
             <div
               className="banner"
-              style={{ background: '#fef3c7', borderColor: '#fcd34d', color: '#92400e' }}
+              style={{
+                background: '#fef3c7',
+                borderColor: '#fcd34d',
+                color: '#92400e',
+              }}
             >
               <b>⚠ {skippedNoRate.length} contractor(s) skipped (no rate):</b>{' '}
               {skippedNoRate.slice(0, 8).join(', ')}
@@ -587,7 +604,14 @@ export const PayrollShell = ({
               </p>
             )}
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+              flexWrap: 'wrap',
+            }}
+          >
             {currentPeriod && currentPeriod.state !== 'open' && (
               <Badge tone={periodStateTone(currentPeriod.state)}>🔒 {currentPeriod.state}</Badge>
             )}
@@ -852,9 +876,19 @@ export const PayrollShell = ({
                           {r.bonusPhp ? r.bonusPhp.toLocaleString('en-US') : '—'}
                         </td>
                         <td data-label="Misc ₱" style={{ whiteSpace: 'nowrap' }}>
-                          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              gap: 6,
+                              alignItems: 'center',
+                            }}
+                          >
                             {Math.abs(miscSum) > 0.005 ? (
-                              <span style={{ color: miscSum < 0 ? '#b91c1c' : 'inherit' }}>
+                              <span
+                                style={{
+                                  color: miscSum < 0 ? '#b91c1c' : 'inherit',
+                                }}
+                              >
                                 {miscSum < 0 ? '-' : ''}
                                 {Math.abs(miscSum).toLocaleString('en-US', {
                                   minimumFractionDigits: 2,
@@ -1037,6 +1071,7 @@ export const PayrollShell = ({
       {confirmModal?.kind === 'unlock' && (
         <>
           {/* Reason field shown before the modal so user fills it before confirming */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: overlay only stops event propagation; it exposes no action and adds no keyboard semantics. */}
           <div
             style={{
               position: 'fixed',
@@ -1050,6 +1085,7 @@ export const PayrollShell = ({
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
+            {/* biome-ignore lint/a11y/noStaticElementInteractions: card only stops event propagation; it exposes no action and adds no keyboard semantics. */}
             <div
               className="card"
               style={{ width: '100%', maxWidth: 480, zIndex: 50, margin: 16 }}
@@ -1085,7 +1121,14 @@ export const PayrollShell = ({
                   placeholder="e.g. Rate correction for Maria Santos"
                 />
               </div>
-              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  justifyContent: 'flex-end',
+                  marginTop: 12,
+                }}
+              >
                 <button
                   type="button"
                   className="btn ghost"
@@ -1100,7 +1143,11 @@ export const PayrollShell = ({
                 <button
                   type="button"
                   className="btn"
-                  style={{ background: '#b91c1c', color: '#fff', borderColor: '#b91c1c' }}
+                  style={{
+                    background: '#b91c1c',
+                    color: '#fff',
+                    borderColor: '#b91c1c',
+                  }}
                   disabled={busy || !unlockReason.trim()}
                   onClick={handleUnlock}
                 >

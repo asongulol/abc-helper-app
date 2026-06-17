@@ -3,8 +3,8 @@
  */
 
 import 'server-only';
-import type { Database } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
@@ -82,10 +82,22 @@ export const fetchReportPeriods = async (
     .in('pay_period_id', periodIds);
   if (paye) throw new Error(`payments: ${paye.message}`);
 
-  type Agg = { count: number; gross: number; ha: number; t13: number; net: number };
+  type Agg = {
+    count: number;
+    gross: number;
+    ha: number;
+    t13: number;
+    net: number;
+  };
   const byPeriod = new Map<string, Agg>();
   for (const p of pays ?? []) {
-    const cur = byPeriod.get(p.pay_period_id) ?? { count: 0, gross: 0, ha: 0, t13: 0, net: 0 };
+    const cur = byPeriod.get(p.pay_period_id) ?? {
+      count: 0,
+      gross: 0,
+      ha: 0,
+      t13: 0,
+      net: 0,
+    };
     cur.count += 1;
     cur.gross += Math.round(Number(p.gross_php ?? 0) * 100);
     cur.ha += Math.round(Number(p.health_allowance_php ?? 0) * 100);
@@ -95,7 +107,13 @@ export const fetchReportPeriods = async (
   }
 
   return periods.map((p) => {
-    const agg = byPeriod.get(p.id) ?? { count: 0, gross: 0, ha: 0, t13: 0, net: 0 };
+    const agg = byPeriod.get(p.id) ?? {
+      count: 0,
+      gross: 0,
+      ha: 0,
+      t13: 0,
+      net: 0,
+    };
     return {
       periodId: p.id,
       periodStart: p.period_start,

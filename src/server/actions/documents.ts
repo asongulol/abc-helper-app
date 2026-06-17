@@ -41,7 +41,10 @@ export const runExpiryCheckNow = async (
     const result = await runExpiryCheck({ withinDays, skipEmail: true });
     return { ok: true, data: result };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 };
 
@@ -57,6 +60,9 @@ export const runHiringReviewCheckNow = async (): Promise<
     const result = await runHiringReviewCheck({ skipEmail: true });
     return { ok: true, data: result };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 };

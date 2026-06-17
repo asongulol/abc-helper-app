@@ -141,7 +141,10 @@ const WIN: [number, number, number][] = [
 export const FromNewYork = () => {
   const [mounted, setMounted] = useState(false);
   const [, tick] = useState(0);
-  const [wx, setWx] = useState<{ temperature_2m: number; weather_code: number } | null>(null);
+  const [wx, setWx] = useState<{
+    temperature_2m: number;
+    weather_code: number;
+  } | null>(null);
 
   useEffect(() => {
     setMounted(true);

@@ -185,7 +185,9 @@ textarea {
   border-radius: var(--radius-sm);
   background: #fff;
   color: var(--text);
-  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 select:focus,
 input:focus,
@@ -335,7 +337,9 @@ label .opt {
   font-weight: 600;
   font-size: 13.5px;
   cursor: pointer;
-  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease);
 }
 /* IMPROVED: nav items are real links in the Next app — suppress underline. */
 a.side-item,
@@ -708,8 +712,10 @@ tr.clickable:hover {
   cursor: pointer;
   font-weight: 600;
   line-height: 1.2;
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease), transform
-    var(--dur) var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 .btn:hover {
   background: var(--navy-700);
@@ -922,7 +928,9 @@ a.btn:hover {
   padding: 14px 16px;
   cursor: pointer;
   font: inherit;
-  transition: box-shadow var(--dur) var(--ease), transform var(--dur) var(--ease);
+  transition:
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
 }
 .ov-tile:hover {
   box-shadow: var(--shadow);
@@ -1688,7 +1696,6 @@ dialog.modal {
   .modal {
     max-width: 100% !important;
     width: 100% !important;
-    max-height: 92vh;
     max-height: 92dvh;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -1922,7 +1929,9 @@ dialog.modal {
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 .portal .ptabs button.on {
   color: var(--accent);
@@ -2552,7 +2561,7 @@ dialog.modal {
 .nyhero .eyebrow {
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.72);
   position: relative;
@@ -2621,7 +2630,7 @@ dialog.modal {
   z-index: 2;
 }
 .nyhero .win {
-  animation: winOn .5s ease both;
+  animation: winOn 0.5s ease both;
 }
 @keyframes winOn {
   from {
@@ -2665,7 +2674,8 @@ dialog.modal {
   }
 }
 .wxfx-cloudy::before {
-  background: radial-gradient(88px 36px at 22% 26%, rgba(255, 255, 255, 0.44), transparent 70%),
+  background:
+    radial-gradient(88px 36px at 22% 26%, rgba(255, 255, 255, 0.44), transparent 70%),
     radial-gradient(112px 42px at 62% 16%, rgba(255, 255, 255, 0.34), transparent 70%),
     radial-gradient(72px 32px at 90% 32%, rgba(255, 255, 255, 0.36), transparent 70%);
   animation: wxDrift 16s linear infinite;
@@ -2704,7 +2714,7 @@ dialog.modal {
     transparent 0 5px,
     rgba(255, 255, 255, 0.4) 5px 7px
   );
-  animation: wxRain .5s linear infinite;
+  animation: wxRain 0.5s linear infinite;
 }
 @keyframes wxRain {
   from {
@@ -2715,7 +2725,8 @@ dialog.modal {
   }
 }
 .wxfx-snow::before {
-  background-image: radial-gradient(3px 3px at 12% 18%, rgba(255, 255, 255, 1), transparent),
+  background-image:
+    radial-gradient(3px 3px at 12% 18%, rgba(255, 255, 255, 1), transparent),
     radial-gradient(2.5px 2.5px at 38% 38%, rgba(255, 255, 255, 0.9), transparent),
     radial-gradient(2.5px 2.5px at 58% 8%, rgba(255, 255, 255, 0.95), transparent),
     radial-gradient(3px 3px at 70% 12%, rgba(255, 255, 255, 0.95), transparent),
@@ -2724,7 +2735,8 @@ dialog.modal {
   animation: wxSnow 5.5s linear infinite;
 }
 .wxfx-snow::after {
-  background-image: radial-gradient(2px 2px at 28% 60%, rgba(255, 255, 255, 0.8), transparent),
+  background-image:
+    radial-gradient(2px 2px at 28% 60%, rgba(255, 255, 255, 0.8), transparent),
     radial-gradient(2px 2px at 50% 86%, rgba(255, 255, 255, 0.72), transparent),
     radial-gradient(2.5px 2.5px at 60% 80%, rgba(255, 255, 255, 0.75), transparent),
     radial-gradient(2.5px 2.5px at 80% 66%, rgba(255, 255, 255, 0.8), transparent);

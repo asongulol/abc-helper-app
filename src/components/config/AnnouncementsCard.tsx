@@ -1,8 +1,8 @@
 'use client';
 
-import { Badge } from '@/components/ui';
-import { ConfirmDangerModal } from '@/components/ui';
-import { useToast } from '@/components/ui';
+import { useRouter } from 'next/navigation';
+import { useId, useState, useTransition } from 'react';
+import { Badge, ConfirmDangerModal, useToast } from '@/components/ui';
 import type { AnnouncementRow } from '@/db/queries/config';
 import { fmtDate } from '@/lib/format';
 import {
@@ -10,8 +10,6 @@ import {
   postAnnouncement,
   setAnnouncementActive,
 } from '@/server/actions/config';
-import { useRouter } from 'next/navigation';
-import { useId, useState, useTransition } from 'react';
 
 interface AnnouncementsCardProps {
   announcements: AnnouncementRow[];
@@ -44,7 +42,10 @@ export const AnnouncementsCard = ({ announcements }: AnnouncementsCardProps) => 
     setPostBusy(true);
     startTransition(async () => {
       try {
-        const res = await postAnnouncement({ title: title.trim(), body: message.trim() });
+        const res = await postAnnouncement({
+          title: title.trim(),
+          body: message.trim(),
+        });
         if (res.ok) {
           toast.notify('Announcement posted.', { type: 'success' });
           setTitle('');

@@ -1,7 +1,7 @@
 'use client';
 
-import { peso } from '@/lib/format';
 import { useEffect, useRef } from 'react';
+import { peso } from '@/lib/format';
 
 export interface HomePay {
   period: { start: string; end: string; pay: string };
@@ -116,7 +116,11 @@ export const PortalPayActivity = ({ pay, activity }: Props) => {
             </div>
             <div
               className="sub"
-              style={{ margin: '2px 0 0', display: 'flex', justifyContent: 'space-between' }}
+              style={{
+                margin: '2px 0 0',
+                display: 'flex',
+                justifyContent: 'space-between',
+              }}
             >
               <span>{fmtMD(period.start)}</span>
               <span>{fmtMD(period.end)}</span>
@@ -151,7 +155,11 @@ export const PortalPayActivity = ({ pay, activity }: Props) => {
             </p>
             {avg != null && (
               <span
-                style={{ fontWeight: 700, whiteSpace: 'nowrap', color: 'var(--accent,#1F3A68)' }}
+                style={{
+                  fontWeight: 700,
+                  whiteSpace: 'nowrap',
+                  color: 'var(--accent,#1F3A68)',
+                }}
               >
                 avg {avg}%
               </span>

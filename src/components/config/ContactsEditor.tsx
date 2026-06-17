@@ -1,7 +1,7 @@
 'use client';
 
-import type { CompanyContact } from '@/db/queries/config';
 import { useId } from 'react';
+import type { CompanyContact } from '@/db/queries/config';
 
 interface ContactsEditorProps {
   contacts: CompanyContact[];

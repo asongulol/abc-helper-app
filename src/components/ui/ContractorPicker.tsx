@@ -70,7 +70,6 @@ export const ContractorPicker = ({
         <span aria-hidden="true">▾</span>
       </button>
       {open && (
-        // biome-ignore lint/a11y/useSemanticElements: lightweight inline popover, not a modal dialog
         <div className="cpick-menu" role="dialog" aria-label="Choose contractors">
           <input
             className="cpick-search"

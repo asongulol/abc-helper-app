@@ -129,6 +129,9 @@ export async function uploadOwnDocument(form: FormData): Promise<ActionResult> {
 
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Upload failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Upload failed.',
+    };
   }
 }

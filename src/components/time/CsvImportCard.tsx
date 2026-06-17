@@ -9,14 +9,14 @@
  * (cron); this screen handles manual/CSV imports only.
  */
 
+import { useRef, useState, useTransition } from 'react';
 import { Badge, useToast } from '@/components/ui';
-import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { RosterLink } from '@/lib/time/attribution';
-import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
+import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { HubstaffMember } from '@/lib/time/csv';
+import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
 import { addContractor } from '@/server/actions/contractors';
 import { importCsvBatch } from '@/server/actions/time';
-import { useRef, useState, useTransition } from 'react';
 import { OptionBPanel } from './OptionBPanel';
 
 interface CsvImportCardProps {
@@ -85,7 +85,11 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
           isInactive: hit?.isInactive ?? false,
         };
       });
-      setParsed({ dates: result.dates, members, skippedRows: result.skippedRows });
+      setParsed({
+        dates: result.dates,
+        members,
+        skippedRows: result.skippedRows,
+      });
     };
     reader.readAsText(f);
   };
@@ -179,7 +183,14 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
             Export the daily report from Hubstaff and drop the file here.
           </p>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              alignItems: 'flex-end',
+              flexWrap: 'wrap',
+            }}
+          >
             <input
               ref={fileRef}
               type="file"
@@ -189,7 +200,13 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
             />
             {parsed && (
               <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                <label
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--muted)',
+                    display: 'block',
+                  }}
+                >
                   Overlap handling
                   <select
                     value={mode}
@@ -253,7 +270,11 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                   .map((m) => (
                     <span
                       key={m.name}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
                     >
                       <span className="pill warn">{m.name}</span>
                       <button
@@ -308,7 +329,14 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
             </table>
           </div>
 
-          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div
+            style={{
+              marginTop: 12,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+            }}
+          >
             <button
               type="button"
               className="btn"

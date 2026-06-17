@@ -4,8 +4,8 @@
  */
 
 import 'server-only';
-import type { Database } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 

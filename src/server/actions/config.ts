@@ -11,6 +11,8 @@
  *   deleteClient       → requireOwner() + usage guard + typed-name confirm
  */
 
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
 import { companyUsageCounts, parseOnboardingConfig } from '@/db/queries/config';
 import type { Json } from '@/db/types';
@@ -18,8 +20,6 @@ import { EDITABLE_FIELD_KEYS } from '@/lib/config/fields';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import { fetchHubstaffProjects, getAccessToken } from '@/server/hubstaff/client';
-import { revalidatePath } from 'next/cache';
-import { z } from 'zod';
 
 export type ActionResult<T = undefined> = [T] extends [undefined]
   ? { ok: true; message?: string } | { ok: false; error: string }
@@ -390,7 +390,10 @@ export async function assignHubstaffProject(args: {
     const db = createServiceClient();
     const { error } = await db
       .from('hubstaff_projects')
-      .update({ company_id: args.companyId, updated_at: new Date().toISOString() })
+      .update({
+        company_id: args.companyId,
+        updated_at: new Date().toISOString(),
+      })
       .eq('hubstaff_project_id', args.hubstaffProjectId);
     if (error) return fail(error.message);
     await logEvent({
@@ -411,9 +414,7 @@ export async function assignHubstaffProject(args: {
  * Save onboarding configuration. READ-MERGE-WRITE: the parsed config is merged
  * back over the raw singleton so unknown keys and `profile_tabs` survive.
  */
-export async function saveOnboardingConfig(args: {
-  config: unknown;
-}): Promise<ActionResult> {
+export async function saveOnboardingConfig(args: { config: unknown }): Promise<ActionResult> {
   try {
     const admin = await requireAdmin();
     const db = createServiceClient();

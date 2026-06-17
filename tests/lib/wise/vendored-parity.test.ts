@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import { describe, expect, it } from 'vitest';
+import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 
 /**
  * The wise-payouts edge function vendors WISE_PAID_STATES / WISE_IN_FLIGHT_STATES

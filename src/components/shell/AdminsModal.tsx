@@ -1,10 +1,10 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
 import { EmailInput, Modal, useToast } from '@/components/ui';
 import type { AdminRow } from '@/db/queries/admins';
 import { addAdmin, removeAdmin, setAdminRole } from '@/server/actions/admin-manage';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
 
 export interface AdminsModalProps {
   /** All admin_users with company scope (server-fetched in the admin layout). */
@@ -69,7 +69,9 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
           toast.notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        toast.notify(e instanceof Error ? e.message : 'Something went wrong.', { type: 'error' });
+        toast.notify(e instanceof Error ? e.message : 'Something went wrong.', {
+          type: 'error',
+        });
       }
     });
 
@@ -98,7 +100,13 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
     run(() => setAdminRole({ email: admin.email, role: newRole }));
 
   const toggleCountersign = (admin: AdminRow, val: boolean) =>
-    run(() => setAdminRole({ email: admin.email, role: admin.role, canCountersign: val }));
+    run(() =>
+      setAdminRole({
+        email: admin.email,
+        role: admin.role,
+        canCountersign: val,
+      }),
+    );
 
   const remove = (admin: AdminRow) => {
     if (
@@ -119,7 +127,13 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
     const set = new Set(admin.companyIds);
     return (
       <div
-        style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginTop: 6 }}
+        style={{
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          marginTop: 6,
+        }}
       >
         <span className="muted" style={{ fontSize: 11 }}>
           Companies:
@@ -167,7 +181,13 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
       </p>
 
       <div
-        style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '8px 0' }}
+        style={{
+          display: 'flex',
+          gap: 6,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          margin: '8px 0',
+        }}
       >
         <EmailInput
           pin={['abckidsny.com', 'abbilabs.com']}
@@ -304,7 +324,14 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
                   flexWrap: 'wrap',
                 }}
               >
-                <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <label
+                  style={{
+                    fontSize: 11,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                >
                   <input
                     type="checkbox"
                     checked={a.canCountersign !== false}

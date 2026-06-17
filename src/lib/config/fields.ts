@@ -70,10 +70,19 @@ export interface MergeFieldDef {
 
 /** The 14 merge tokens accepted by `mergeAgreement`, for the reference chips. */
 export const MERGE_FIELDS: readonly MergeFieldDef[] = [
-  { token: 'employer_name', desc: 'The contracting employer (e.g. Aaron Anderson E.H.S. LLC)' },
-  { token: 'client_name', desc: 'The assigned client company (alias of {{company_name}})' },
+  {
+    token: 'employer_name',
+    desc: 'The contracting employer (e.g. Aaron Anderson E.H.S. LLC)',
+  },
+  {
+    token: 'client_name',
+    desc: 'The assigned client company (alias of {{company_name}})',
+  },
   { token: 'contractor_name', desc: "The contractor's full name" },
-  { token: 'countersigner_name', desc: 'Who signs for Aaron Anderson E.H.S. LLC' },
+  {
+    token: 'countersigner_name',
+    desc: 'Who signs for Aaron Anderson E.H.S. LLC',
+  },
   { token: 'position', desc: 'Position / role' },
   { token: 'rate', desc: 'Rate per period' },
   { token: 'monthly_rate', desc: 'Monthly rate (period × 2)' },
@@ -83,7 +92,10 @@ export const MERGE_FIELDS: readonly MergeFieldDef[] = [
   { token: 'hours_per_week', desc: 'Expected hours per week' },
   { token: 'schedule', desc: 'Shift schedule' },
   { token: 'today', desc: "Today's date" },
-  { token: 'addendum', desc: 'Scope-of-Work addendum (appended if not placed inline)' },
+  {
+    token: 'addendum',
+    desc: 'Scope-of-Work addendum (appended if not placed inline)',
+  },
 ] as const;
 
 /** The four agreement template kinds, verbatim tab labels (manifest 26). */

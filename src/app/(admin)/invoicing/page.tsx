@@ -1,11 +1,13 @@
+import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { InvoicingClient } from '@/components/invoicing/InvoicingClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchActiveClients, fetchInvoices } from '@/db/queries/invoicing';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = { title: 'Invoicing — Aaron Anderson E.H.S. LLC' };
+export const metadata: Metadata = {
+  title: 'Invoicing — Aaron Anderson E.H.S. LLC',
+};
 
 export default async function InvoicingPage() {
   const admin = await getCurrentAdmin();

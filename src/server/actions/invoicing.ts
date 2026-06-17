@@ -7,17 +7,18 @@
  * supplies which client / window / markup.
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import {
-  type NewInvoiceLine,
   allocateInvoiceNo,
   createInvoiceWithLines,
   fetchClientRoster,
   fetchEmployerCompanyId,
   fetchEmployerTrackedSeconds,
+  type NewInvoiceLine,
   updateInvoiceStatus,
 } from '@/db/queries/invoicing';
-import { type InvoiceComputation, computeInvoice } from '@/lib/invoicing/compute';
+import { computeInvoice, type InvoiceComputation } from '@/lib/invoicing/compute';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -26,7 +27,6 @@ import {
   PreviewInvoiceSchema,
   SetInvoiceStatusSchema,
 } from '@/types/schemas/invoicing';
-import { revalidatePath } from 'next/cache';
 
 export type InvoicePreviewLine = {
   workerId: string;
@@ -53,7 +53,10 @@ async function computeForClient(
   from: string,
   to: string,
   markupPct: number,
-): Promise<{ db: Awaited<ReturnType<typeof createServerSupabase>>; comp: InvoiceComputation }> {
+): Promise<{
+  db: Awaited<ReturnType<typeof createServerSupabase>>;
+  comp: InvoiceComputation;
+}> {
   const db = await createServerSupabase();
   const employerId = await fetchEmployerCompanyId(db);
   if (!employerId) throw new Error('No employer company is configured.');
@@ -93,7 +96,10 @@ export async function previewInvoice(args: unknown): Promise<ActionResult<Invoic
 
   const parsed = PreviewInvoiceSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { clientId, from, to, markupPct } = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(clientId))
@@ -104,7 +110,10 @@ export async function previewInvoice(args: unknown): Promise<ActionResult<Invoic
     const { comp } = await computeForClient(clientId, from, to, markupPct);
     return { ok: true, data: toPreviewResult(comp) };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Preview failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Preview failed.',
+    };
   }
 }
 
@@ -117,7 +126,10 @@ export async function generateInvoice(
 
   const parsed = GenerateInvoiceSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { clientId, from, to, markupPct } = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(clientId))
@@ -127,7 +139,10 @@ export async function generateInvoice(
   try {
     const { db, comp } = await computeForClient(clientId, from, to, markupPct);
     if (comp.lines.length === 0)
-      return { ok: false, error: 'No worked hours for this client in the window.' };
+      return {
+        ok: false,
+        error: 'No worked hours for this client in the window.',
+      };
 
     const invoiceNo = await allocateInvoiceNo(db, new Date().getFullYear());
     const lines: NewInvoiceLine[] = comp.lines.map((l) => ({
@@ -180,7 +195,10 @@ export async function generateInvoice(
     revalidatePath('/invoicing');
     return { ok: true, data: { invoiceNo: created.invoiceNo } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Generate failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Generate failed.',
+    };
   }
 }
 
@@ -191,7 +209,10 @@ export async function setInvoiceStatus(args: unknown): Promise<ActionResult> {
 
   const parsed = SetInvoiceStatusSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { invoiceId, status } = parsed.data;
 
   try {
@@ -205,6 +226,9 @@ export async function setInvoiceStatus(args: unknown): Promise<ActionResult> {
     revalidatePath('/invoicing');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Update failed.',
+    };
   }
 }

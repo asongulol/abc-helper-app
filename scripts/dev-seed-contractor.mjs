@@ -57,7 +57,11 @@ const main = async () => {
       await fetch(`${url}/auth/v1/admin/users`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ email: EMAIL, password: PASSWORD, email_confirm: true }),
+        body: JSON.stringify({
+          email: EMAIL,
+          password: PASSWORD,
+          email_confirm: true,
+        }),
       }),
     );
     if (!created?.id) throw new Error(`createUser: ${JSON.stringify(created)}`);

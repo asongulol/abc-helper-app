@@ -14,13 +14,13 @@
  * is modified.
  */
 
+import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { HUBSTAFF_API_BASE, getAccessToken, pageAll } from '@/server/hubstaff/client';
+import { getAccessToken, HUBSTAFF_API_BASE, pageAll } from '@/server/hubstaff/client';
 import { syncHubstaffForCompany } from '@/server/hubstaff/service';
-import { z } from 'zod';
 
 // ─── list orgs ─────────────────────────────────────────────────────────────────
 
@@ -96,7 +96,10 @@ export async function importHubstaffTime(
 ): Promise<ActionResult<ImportHubstaffTimeResult>> {
   const parsed = ImportHubstaffTimeSchema.safeParse(args);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   }
   const { companyId, orgId, start, stop }: ImportHubstaffTimeInput = parsed.data;
 
@@ -108,7 +111,10 @@ export async function importHubstaffTime(
 
   try {
     const db = createServiceClient();
-    const summary = await syncHubstaffForCompany(db, companyId, { start, stop });
+    const summary = await syncHubstaffForCompany(db, companyId, {
+      start,
+      stop,
+    });
 
     await logEvent({
       companyId,

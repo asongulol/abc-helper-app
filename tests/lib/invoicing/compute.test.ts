@@ -1,5 +1,5 @@
-import { type RosterEntry, type WorkerSeconds, computeInvoice } from '@/lib/invoicing/compute';
 import { describe, expect, it } from 'vitest';
+import { computeInvoice, type RosterEntry, type WorkerSeconds } from '@/lib/invoicing/compute';
 
 const roster = (...entries: Array<Partial<RosterEntry> & { workerId: string }>): RosterEntry[] =>
   entries.map((e) => ({
@@ -14,12 +14,21 @@ const time = (...entries: WorkerSeconds[]): WorkerSeconds[] => entries;
 describe('computeInvoice', () => {
   it('bills worked hours × bill rate (1h @ $50 = $50.00)', () => {
     const r = computeInvoice(
-      roster({ workerId: 'w1', workerName: 'Ann', position: 'Dev', billRateUsd: 50 }),
+      roster({
+        workerId: 'w1',
+        workerName: 'Ann',
+        position: 'Dev',
+        billRateUsd: 50,
+      }),
       time({ workerId: 'w1', trackedSeconds: 3600 }),
       0,
     );
     expect(r.lines).toHaveLength(1);
-    expect(r.lines[0]).toMatchObject({ workedHours: 1, billRateUsd: 50, amount: 5000 });
+    expect(r.lines[0]).toMatchObject({
+      workedHours: 1,
+      billRateUsd: 50,
+      amount: 5000,
+    });
     expect(r.subtotal).toBe(5000);
     expect(r.total).toBe(5000);
     expect(r.totalHours).toBe(1);
@@ -67,7 +76,11 @@ describe('computeInvoice', () => {
       0,
     );
     expect(r.lines).toHaveLength(1);
-    expect(r.lines[0]).toMatchObject({ workerId: 'w1', workedHours: 1, amount: 0 });
+    expect(r.lines[0]).toMatchObject({
+      workerId: 'w1',
+      workedHours: 1,
+      amount: 0,
+    });
     expect(r.subtotal).toBe(0);
   });
 

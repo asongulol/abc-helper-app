@@ -1,9 +1,9 @@
+import { redirect } from 'next/navigation';
 import { PortalDocs } from '@/components/portal/PortalDocs';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchOwnDocuments } from '@/db/queries/portal';
 import { fetchOutstandingDocSlots } from '@/server/actions/portal-docs';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 export default async function PortalDocsPage() {
   const worker = await getCurrentWorker();
