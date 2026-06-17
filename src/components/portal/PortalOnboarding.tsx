@@ -258,20 +258,20 @@ export const PortalOnboarding = ({
         >
           <div
             style={{
-              width: `${
-                progress
-                  ? Math.round(
-                      (((progress.stage1_complete ? 1 : 0) +
-                        (progress.stage2_complete ? 1 : 0) +
-                        (progress.stage3_complete ? 1 : 0)) /
-                        3) *
-                        100,
-                    )
-                  : 0
-              }%`,
+              width: '100%',
               height: '100%',
               background: 'var(--accent)',
-              transition: 'width .4s',
+              transformOrigin: 'left',
+              transform: `scaleX(${
+                progress
+                  ? (
+                      (progress.stage1_complete ? 1 : 0) +
+                        (progress.stage2_complete ? 1 : 0) +
+                        (progress.stage3_complete ? 1 : 0)
+                    ) / 3
+                  : 0
+              })`,
+              transition: 'transform .4s',
             }}
           />
         </div>

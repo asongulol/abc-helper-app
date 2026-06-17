@@ -15,7 +15,10 @@
       "coverage",
       "src/db/types.ts",
       "*.timestamp-*.mjs",
-      "supabase/functions"
+      "supabase/functions",
+      ".claude",
+      ".github/skills",
+      ".impeccable"
     ]
   },
   "formatter": {
