@@ -60,5 +60,5 @@ if (violations.length > 0) {
   for (const v of violations) console.error(`  ${v}\n`);
   process.exit(1);
 }
-// biome-ignore lint/suspicious/noConsoleLog: intentional CLI success output
+// biome-ignore lint/suspicious/noConsole: intentional CLI success output
 console.log(`✓ Guardrails clean (${files.length} files scanned).`);

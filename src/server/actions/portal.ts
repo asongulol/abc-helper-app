@@ -927,17 +927,23 @@ export async function getDocumentSignedUrl(args: {
 export async function getAdminDocumentUrl(args: {
   documentId: string;
 }): Promise<ActionResult<{ url: string; name: string; type: 'image' | 'pdf' | 'other' }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
   try {
     const svc = createServiceClient();
     const { data: doc, error } = await svc
       .from('documents')
-      .select('id, storage_path, title, mime_type')
+      .select('id, company_id, storage_path, title, mime_type')
       .eq('id', args.documentId)
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
     if (!doc || !doc.storage_path)
       return { ok: false, error: 'No file to preview for this document.' };
+    // Company scope: the service client bypasses RLS, so re-check ownership here.
+    // Non-owner admins may only preview documents for their assigned companies
+    // (mirrors the companyIds gate used across the admin actions and the
+    // worker-ownership re-check in getDocumentSignedUrl). Fail closed on null.
+    if (!admin.isOwner && (!doc.company_id || !admin.companyIds.includes(doc.company_id)))
+      return { ok: false, error: 'Document not found.' };
     const { data: signed, error: sErr } = await svc.storage
       .from('contractor-docs')
       .createSignedUrl(doc.storage_path, 300);
