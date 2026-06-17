@@ -260,11 +260,7 @@ export const OnboardingClient = ({
 
       {showTemplates && (
         <Modal title="Agreement templates" onClose={() => setShowTemplates(false)} maxWidth={820}>
-          <AgreementTemplatesCard
-            templates={templates}
-            employerName={employerName}
-            onClose={() => setShowTemplates(false)}
-          />
+          <AgreementTemplatesCard templates={templates} employerName={employerName} />
         </Modal>
       )}
     </div>

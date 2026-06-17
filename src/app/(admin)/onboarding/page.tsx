@@ -26,10 +26,13 @@ export default async function OnboardingPage() {
   }
 
   const supabase = await createServerSupabase();
+  // `progress` is the core data and gates the page; `templates`/`employer` only
+  // feed the optional "Agreement templates" modal, so keep them non-fatal — a
+  // transient error there must not take down the whole onboarding screen.
   const [progress, templates, employer] = await Promise.all([
     fetchOnboardingProgress(supabase, companyId),
-    listAgreementTemplates(supabase),
-    getEmployer(supabase),
+    listAgreementTemplates(supabase).catch(() => []),
+    getEmployer(supabase).catch(() => null),
   ]);
 
   return (

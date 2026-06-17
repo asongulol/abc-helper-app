@@ -157,7 +157,6 @@ export const ConfigClient = ({
             <AgreementTemplatesCard
               templates={templates}
               employerName={employer?.name ?? 'Aaron Anderson E.H.S. LLC'}
-              onClose={close}
             />
           )}
           {open === 'onboarding' && (

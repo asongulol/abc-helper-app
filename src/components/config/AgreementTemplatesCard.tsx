@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useId, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { AgreementTemplateRow } from '@/db/queries/config';
@@ -10,7 +11,6 @@ import { saveAgreementTemplate } from '@/server/actions/config';
 interface AgreementTemplatesCardProps {
   templates: AgreementTemplateRow[];
   employerName: string;
-  onClose: () => void;
 }
 
 /** A single kind's editable fields, kept in state so tab switches preserve edits. */
@@ -82,8 +82,12 @@ const KIND_LABEL: Record<AgreementKind, string> = Object.fromEntries(
  * contract reads. Tabs + a single "Save template" button (Close lives in the
  * Modal header) — no Cancel.
  */
-export const AgreementTemplatesCard = ({ templates }: AgreementTemplatesCardProps) => {
+export const AgreementTemplatesCard = ({
+  templates,
+  employerName,
+}: AgreementTemplatesCardProps) => {
   const toast = useToast();
+  const router = useRouter();
   const bodyId = useId();
   const [isPending, startTransition] = useTransition();
 
@@ -121,6 +125,9 @@ export const AgreementTemplatesCard = ({ templates }: AgreementTemplatesCardProp
         });
         if (res.ok) {
           toast.notify('Template saved.', { type: 'success' });
+          // Refetch server data so reopening the modal reflects the saved template
+          // (drafts are seeded once from the `templates` prop on mount).
+          router.refresh();
         } else {
           toast.notify(res.error, { type: 'error' });
         }
@@ -137,10 +144,10 @@ export const AgreementTemplatesCard = ({ templates }: AgreementTemplatesCardProp
       <p className="sub">
         Paste the standard agreement text. Merge fields (filled per contractor when prepared):
         <br />
-        <b>Parties:</b> <code>{'{{employer_name}}'}</code> = the contracting employer (Aaron
-        Anderson E.H.S. LLC) · <code>{'{{client_name}}'}</code> (a.k.a.{' '}
-        <code>{'{{company_name}}'}</code>) = the assigned client company ·{' '}
-        <code>{'{{contractor_name}}'}</code> · <code>{'{{countersigner_name}}'}</code>
+        <b>Parties:</b> <code>{'{{employer_name}}'}</code> = the contracting employer (
+        {employerName}) · <code>{'{{client_name}}'}</code> (a.k.a. <code>{'{{company_name}}'}</code>
+        ) = the assigned client company · <code>{'{{contractor_name}}'}</code> ·{' '}
+        <code>{'{{countersigner_name}}'}</code>
         <br />
         <b>Engagement:</b> <code>{'{{position}}'}</code> · <code>{'{{rate}}'}</code> (per period) ·{' '}
         <code>{'{{monthly_rate}}'}</code> · <code>{'{{start_date}}'}</code> ·{' '}
@@ -195,7 +202,7 @@ export const AgreementTemplatesCard = ({ templates }: AgreementTemplatesCardProp
         </div>
         <pre style={PREVIEW_STYLE}>
           {draft.body.trim()
-            ? mergeAgreement(draft.body, PREVIEW_VARS)
+            ? mergeAgreement(draft.body, { ...PREVIEW_VARS, employer_name: employerName })
             : 'Nothing to preview yet — paste the agreement text above.'}
         </pre>
       </div>
