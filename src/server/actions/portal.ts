@@ -918,6 +918,43 @@ export async function getDocumentSignedUrl(args: {
   }
 }
 
+/**
+ * ADMIN: mint a signed URL for ANY contractor's uploaded document (for the
+ * onboarding review preview). Returns a previewable `type` (image/pdf/other)
+ * derived from mime/extension so the UI can render it inline. Admin-gated, then
+ * service client (storage policies live out-of-band, mirroring the worker path).
+ */
+export async function getAdminDocumentUrl(args: {
+  documentId: string;
+}): Promise<ActionResult<{ url: string; name: string; type: 'image' | 'pdf' | 'other' }>> {
+  await requireAdmin();
+  try {
+    const svc = createServiceClient();
+    const { data: doc, error } = await svc
+      .from('documents')
+      .select('id, storage_path, title, mime_type')
+      .eq('id', args.documentId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    if (!doc || !doc.storage_path)
+      return { ok: false, error: 'No file to preview for this document.' };
+    const { data: signed, error: sErr } = await svc.storage
+      .from('contractor-docs')
+      .createSignedUrl(doc.storage_path, 300);
+    if (sErr || !signed?.signedUrl)
+      return { ok: false, error: sErr?.message ?? 'Could not sign URL.' };
+    const hint = `${doc.mime_type ?? ''} ${doc.title ?? ''} ${doc.storage_path}`.toLowerCase();
+    const type: 'image' | 'pdf' | 'other' = /image\/|\.(png|jpe?g|webp|gif)(\?|$)/.test(hint)
+      ? 'image'
+      : /application\/pdf|\.pdf(\?|$)/.test(hint)
+        ? 'pdf'
+        : 'other';
+    return { ok: true, data: { url: signed.signedUrl, name: doc.title ?? 'Document', type } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not open document.' };
+  }
+}
+
 /* ---------- portal Tools: one-time reveal (§10.6) ---------- */
 
 /** One-time reveal of the worker's provisioned tool credentials (get_my_tools

@@ -1,26 +1,29 @@
 'use client';
 
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState, useTransition } from 'react';
 import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import type { OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import type { DocSlotState, DocSlotStatus } from '@/lib/onboarding/documents';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import {
-  type OnbAgreementLite,
-  type OnbDocLite,
-  type OnbProfileLite,
-  type OnbSignatureLite,
   editAgreementDate,
   editAgreementPrefill,
   getOnboardingDetail,
   markOnboardingComplete,
+  type OnbAgreementLite,
+  type OnbDocLite,
+  type OnbProfileLite,
+  type OnbSignatureLite,
   resetOnboarding,
   setOnboardingStage,
 } from '@/server/actions/onboarding';
 import {
   clearMissingDocumentResolution,
   countersignAgreement,
-  getDocumentSignedUrl,
+  getAdminDocumentUrl,
   resolveMissingDocument,
   reviewDocument,
 } from '@/server/actions/portal';
@@ -30,9 +33,6 @@ import {
   resetPortalPassword,
   withdrawOffer,
 } from '@/server/actions/portal-admin';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useEffect, useState, useTransition } from 'react';
 
 interface Props {
   row: OnboardingProgressRow;
@@ -92,6 +92,12 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
   const [reason, setReason] = useState<{ documentId: string; text: string } | null>(null);
   // Pending waive awaiting confirmation (both uploaded + missing-doc paths).
   const [waiveConfirm, setWaiveConfirm] = useState<{ label: string; run: () => void } | null>(null);
+  // Inline document preview (signed URL + previewable type).
+  const [docPreview, setDocPreview] = useState<{
+    url: string;
+    name: string;
+    type: 'image' | 'pdf' | 'other';
+  } | null>(null);
 
   const runStage = (fn: () => Promise<{ ok: boolean; error?: string }>, msg: string) => {
     startTransition(async () => {
@@ -218,8 +224,8 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
 
   const handleViewDoc = (documentId: string) => {
     startTransition(async () => {
-      const res = await getDocumentSignedUrl({ documentId });
-      if (res.ok) window.open(res.data.url, '_blank', 'noopener');
+      const res = await getAdminDocumentUrl({ documentId });
+      if (res.ok) setDocPreview(res.data);
       else notify(res.error, { type: 'error' });
     });
   };
@@ -989,6 +995,51 @@ export const OnboardingDrilldown = ({ row, canCountersign, isOwner, onClose }: P
             </button>
             <button type="button" className="btn ghost" onClick={() => setCountersignModal(null)}>
               Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {docPreview && (
+        <Modal title={docPreview.name} onClose={() => setDocPreview(null)} maxWidth={920}>
+          {docPreview.type === 'image' ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={docPreview.url}
+              alt={docPreview.name}
+              style={{
+                display: 'block',
+                maxWidth: '100%',
+                maxHeight: '72vh',
+                margin: '0 auto',
+                objectFit: 'contain',
+              }}
+            />
+          ) : docPreview.type === 'pdf' ? (
+            <iframe
+              src={docPreview.url}
+              title={docPreview.name}
+              style={{
+                width: '100%',
+                height: '72vh',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+              }}
+            />
+          ) : (
+            <p className="sub">This file type can’t be previewed inline — open it in a new tab.</p>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <a
+              href={docPreview.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn ghost sm"
+            >
+              Open in new tab ↗
+            </a>
+            <button type="button" className="btn ghost sm" onClick={() => setDocPreview(null)}>
+              Close
             </button>
           </div>
         </Modal>

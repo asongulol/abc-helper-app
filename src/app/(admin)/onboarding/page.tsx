@@ -1,10 +1,11 @@
+import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { OnboardingClient } from '@/components/onboarding/OnboardingClient';
 import { createServerSupabase } from '@/db/clients/server';
+import { getEmployer, listAgreementTemplates } from '@/db/queries/config';
 import { fetchOnboardingProgress } from '@/db/queries/onboarding';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import type { Metadata } from 'next';
-import { redirect } from 'next/navigation';
 
 export const metadata: Metadata = { title: 'Onboarding — Aaron Anderson E.H.S. LLC' };
 
@@ -23,7 +24,11 @@ export default async function OnboardingPage() {
   }
 
   const supabase = await createServerSupabase();
-  const progress = await fetchOnboardingProgress(supabase, companyId);
+  const [progress, templates, employer] = await Promise.all([
+    fetchOnboardingProgress(supabase, companyId),
+    listAgreementTemplates(supabase),
+    getEmployer(supabase),
+  ]);
 
   return (
     <OnboardingClient
@@ -31,6 +36,8 @@ export default async function OnboardingPage() {
       companyId={companyId}
       canCountersign={admin.canCountersign}
       isOwner={admin.isOwner}
+      templates={templates}
+      employerName={employer?.name ?? 'Aaron Anderson E.H.S. LLC'}
     />
   );
 }

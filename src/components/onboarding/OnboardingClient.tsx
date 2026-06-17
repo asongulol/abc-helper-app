@@ -1,16 +1,18 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
+import { AgreementTemplatesCard } from '@/components/config/AgreementTemplatesCard';
 import {
   AddContractorWizard,
   type Countersigner,
 } from '@/components/contractors/AddContractorWizard';
-import { EmptyState, type SortableColumn, SortableTable, useToast } from '@/components/ui';
+import { EmptyState, Modal, type SortableColumn, SortableTable, useToast } from '@/components/ui';
+import type { AgreementTemplateRow } from '@/db/queries/config';
 import type { OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
-import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
 import { OnboardingDrilldown } from './OnboardingDrilldown';
 
 interface Props {
@@ -18,6 +20,9 @@ interface Props {
   companyId: string;
   canCountersign: boolean;
   isOwner: boolean;
+  /** Standard agreement templates (edited here or in Config). */
+  templates: AgreementTemplateRow[];
+  employerName: string;
   countersigners?: Countersigner[];
   consolidated?: boolean;
 }
@@ -27,6 +32,8 @@ export const OnboardingClient = ({
   companyId,
   canCountersign,
   isOwner,
+  templates,
+  employerName,
   countersigners = [],
   consolidated = false,
 }: Props) => {
@@ -36,6 +43,7 @@ export const OnboardingClient = ({
   const [drillWorker, setDrillWorker] = useState<OnboardingProgressRow | null>(null);
   const [showDone, setShowDone] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const handleResendInvite = (row: OnboardingProgressRow) => {
     startTransition(async () => {
@@ -183,6 +191,14 @@ export const OnboardingClient = ({
             />{' '}
             Show completed
           </label>
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => setShowTemplates(true)}
+            title="Edit the standard agreement / contract templates"
+          >
+            Agreement templates
+          </button>
           <button type="button" className="btn ghost sm" onClick={() => router.refresh()}>
             Refresh
           </button>
@@ -227,6 +243,16 @@ export const OnboardingClient = ({
           isOwner={isOwner}
           onClose={() => setDrillWorker(null)}
         />
+      )}
+
+      {showTemplates && (
+        <Modal title="Agreement templates" onClose={() => setShowTemplates(false)} maxWidth={820}>
+          <AgreementTemplatesCard
+            templates={templates}
+            employerName={employerName}
+            onClose={() => setShowTemplates(false)}
+          />
+        </Modal>
       )}
     </div>
   );
