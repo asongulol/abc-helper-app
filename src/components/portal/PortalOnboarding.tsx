@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { useRef, useState, useTransition } from 'react';
 import { Badge, type BadgeTone, Modal, useToast } from '@/components/ui';
 import type { Database } from '@/db/types';
 import {
@@ -8,8 +10,6 @@ import {
   finishOnboarding,
   signAgreement,
 } from '@/server/actions/portal';
-import { useRouter } from 'next/navigation';
-import { useRef, useState, useTransition } from 'react';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 type OnboardingStage = Database['public']['Enums']['onboarding_stage'];
@@ -202,7 +202,9 @@ export const PortalOnboarding = ({
     startTransition(async () => {
       const result = await completeOnboardingTab({ tab });
       if (result.ok) {
-        notify(result.message ?? `Tab "${tab}" marked complete.`, { type: 'success' });
+        notify(result.message ?? `Tab "${tab}" marked complete.`, {
+          type: 'success',
+        });
         setActiveTab(null);
         router.refresh();
       } else {
@@ -258,20 +260,20 @@ export const PortalOnboarding = ({
         >
           <div
             style={{
-              width: `${
-                progress
-                  ? Math.round(
-                      (((progress.stage1_complete ? 1 : 0) +
-                        (progress.stage2_complete ? 1 : 0) +
-                        (progress.stage3_complete ? 1 : 0)) /
-                        3) *
-                        100,
-                    )
-                  : 0
-              }%`,
+              width: '100%',
               height: '100%',
               background: 'var(--accent)',
-              transition: 'width .4s',
+              transformOrigin: 'left',
+              transform: `scaleX(${
+                progress
+                  ? (
+                      (progress.stage1_complete ? 1 : 0) +
+                        (progress.stage2_complete ? 1 : 0) +
+                        (progress.stage3_complete ? 1 : 0)
+                    ) / 3
+                  : 0
+              })`,
+              transition: 'transform .4s',
             }}
           />
         </div>
@@ -279,13 +281,26 @@ export const PortalOnboarding = ({
 
       {/* Stage 1 — Agreement signing */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <h3>Stage 1 — Sign Agreements</h3>
           {progress?.stage1_complete && <Badge tone="good">Done</Badge>}
         </div>
         <p className="sub">Sign each agreement in order.</p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
           {requiredKinds.map((kind, idx) => {
             const isSigned = signedKinds.has(kind);
             const prevSigned =
@@ -350,7 +365,13 @@ export const PortalOnboarding = ({
 
       {/* Stage 2 — Profile tabs */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <h3>Stage 2 — Complete Profile</h3>
           {progress?.stage2_complete && <Badge tone="good">Done</Badge>}
         </div>
@@ -358,7 +379,14 @@ export const PortalOnboarding = ({
         {progress?.stage1_complete && (
           <>
             <p className="sub">Fill in each section then mark it complete.</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                marginTop: 12,
+              }}
+            >
               {STAGE2_TABS.map(({ key, label }) => (
                 <div
                   key={key}
@@ -396,7 +424,13 @@ export const PortalOnboarding = ({
 
       {/* Stage 3 — Documents */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
           <h3>Stage 3 — Documents</h3>
           {progress?.stage3_complete && <Badge tone="good">Done</Badge>}
         </div>
@@ -436,10 +470,11 @@ export const PortalOnboarding = ({
           }}
           maxWidth={600}
         >
-          {/* Agreement body */}
+          {/* Agreement body — full column width preview of the contract */}
           {templateMap[selectedKind]?.body && (
             <div
               style={{
+                width: '100%',
                 maxHeight: 280,
                 overflowY: 'auto',
                 padding: '8px 12px',
@@ -504,7 +539,14 @@ export const PortalOnboarding = ({
             </>
           ) : null}
 
-          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 12 }}>
+          <label
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 4,
+              marginTop: 12,
+            }}
+          >
             <span className="sub" style={{ fontSize: 11 }}>
               Type your full legal name to confirm your signature
             </span>

@@ -5,8 +5,8 @@
  */
 
 import 'server-only';
-import type { Database } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
@@ -21,7 +21,8 @@ export type PortalPaymentRow = {
   t13Php: number;
   pddPhp: number;
   bonusPhp: number;
-  dedPhp: number;
+  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
+  shortfallPhp: number;
   netPhp: number;
   payoutMethod: string | null;
   status: Database['public']['Enums']['payment_status'];
@@ -54,7 +55,7 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, paid_at, pay_periods(period_start, period_end, pay_date)',
+      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, payout_method, status, paid_at, pay_periods(period_start, period_end, pay_date)',
     )
     .eq('worker_id', workerId)
     .order('pay_period_id', { ascending: false });
@@ -70,7 +71,7 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
     bonusPhp: Number(p.bonus_php ?? 0),
-    dedPhp: Number(p.deduction_php ?? 0),
+    shortfallPhp: Number(p.shortfall_php ?? 0),
     netPhp: Number(p.net_php ?? 0),
     payoutMethod: p.payout_method,
     status: p.status,
@@ -222,4 +223,49 @@ export const fetchAgreementTemplate = async (
     .maybeSingle();
   if (error) throw new Error(`agreement_templates: ${error.message}`);
   return data;
+};
+
+export type PortalTimeEntryRow = {
+  id: string;
+  workDate: string;
+  trackedSeconds: number;
+  ptoSeconds: number;
+  activityPct: number | null;
+  approval: Database['public']['Enums']['approval_status'];
+};
+
+/** Own time entries, newest-first (RLS: own rows AND is_onboarded()). */
+export const fetchOwnTimeEntries = async (
+  db: Db,
+  workerId: string,
+): Promise<PortalTimeEntryRow[]> => {
+  const { data, error } = await db
+    .from('time_entries')
+    .select('id, work_date, tracked_seconds, pto_seconds, activity_pct, approval')
+    .eq('worker_id', workerId)
+    .order('work_date', { ascending: false });
+  if (error) throw new Error(`own time entries: ${error.message}`);
+  return (data ?? []).map((t) => ({
+    id: t.id,
+    workDate: t.work_date,
+    trackedSeconds: Number(t.tracked_seconds ?? 0),
+    ptoSeconds: Number(t.pto_seconds ?? 0),
+    activityPct: t.activity_pct == null ? null : Number(t.activity_pct),
+    approval: t.approval,
+  }));
+};
+
+/** Insert the worker's own mood check-in (RLS mood_self_insert: worker_id = my_worker_id()). */
+export const insertMoodCheckin = async (
+  db: Db,
+  workerId: string,
+  input: { mood: number; note?: string | null; kind?: string | null },
+): Promise<void> => {
+  const { error } = await db.from('mood_checkins').insert({
+    worker_id: workerId,
+    mood: input.mood,
+    note: input.note ?? null,
+    kind: input.kind ?? null,
+  });
+  if (error) throw new Error(`mood check-in: ${error.message}`);
 };

@@ -2,7 +2,7 @@
 /**
  * Security guardrail gate (run in pre-push + CI).
  *
- * Fails the build if forbidden patterns appear under src/:
+ * Fails the build if forbidden patterns appear in scanned roots:
  *  - A Wise FUNDING call. Money movement is DRAFT-ONLY (ADR-0007): the app prepares
  *    quotes/recipients/transfers and the owner funds in the Wise UI. No funding endpoint may exist.
  *  - A secret exposed via a NEXT_PUBLIC_* env var (those are shipped to the browser).
@@ -10,10 +10,12 @@
  * Pure Node, no deps. Exits 1 (with file:line) on any violation.
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join } from 'node:path';
 
-const ROOT = 'src';
+// Scan the app source AND the cron edge functions — wise-payouts reconciles
+// payouts, so the DRAFT-ONLY (ADR-0007) rule must hold there too.
+const ROOTS = ['src', 'supabase/functions'];
 const EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs']);
 
 const RULES = [
@@ -37,7 +39,9 @@ const walk = (dir, out) => {
 };
 
 const files = [];
-walk(ROOT, files);
+for (const root of ROOTS) {
+  if (existsSync(root)) walk(root, files);
+}
 
 const violations = [];
 for (const file of files) {
@@ -56,5 +60,4 @@ if (violations.length > 0) {
   for (const v of violations) console.error(`  ${v}\n`);
   process.exit(1);
 }
-// biome-ignore lint/suspicious/noConsoleLog: intentional CLI success output
 console.log(`✓ Guardrails clean (${files.length} files scanned).`);

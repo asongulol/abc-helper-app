@@ -1,7 +1,7 @@
+import { describe, expect, it } from 'vitest';
 import { centavos } from '@/lib/money';
 import { calcContractorRow, miscTotal, usdReference } from '@/lib/pay/calc';
 import { resolveRate } from '@/lib/pay/rates';
-import { describe, expect, it } from 'vitest';
 
 /** Legacy float reference for gross: ratio>=1 ? rate : +(ratio*rate).toFixed(2). */
 const legacyGross = (ratePhp: number, ratio: number): number =>
@@ -19,7 +19,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.ratio).toBe(1);
     expect(r.gross).toBe(1_500_000);
-    expect(r.deduction).toBe(0);
+    expect(r.shortfall).toBe(0);
     expect(r.net).toBe(1_500_000);
   });
 
@@ -42,7 +42,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.ratio).toBeCloseTo(0.5, 10);
     expect(r.gross).toBe(750_000);
-    expect(r.deduction).toBe(750_000);
+    expect(r.shortfall).toBe(750_000);
     expect(r.net).toBe(750_000);
   });
 
@@ -75,7 +75,7 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     });
     expect(r.gross).toBeNull();
     expect(r.net).toBeNull();
-    expect(r.deduction).toBe(0);
+    expect(r.shortfall).toBe(0);
   });
 
   it('PTO seconds count as worked time (paid leave)', () => {
@@ -148,8 +148,18 @@ describe('resolveRate (legacy rateFor ~6160)', () => {
       effectiveStart: '2025-01-01',
       effectiveEnd: '2025-12-31',
     },
-    { workerId: 'w1', amountPhp: '15000.00', effectiveStart: '2026-01-01', effectiveEnd: null },
-    { workerId: 'w2', amountPhp: '9000.00', effectiveStart: '2026-07-01', effectiveEnd: null },
+    {
+      workerId: 'w1',
+      amountPhp: '15000.00',
+      effectiveStart: '2026-01-01',
+      effectiveEnd: null,
+    },
+    {
+      workerId: 'w2',
+      amountPhp: '9000.00',
+      effectiveStart: '2026-07-01',
+      effectiveEnd: null,
+    },
   ];
 
   it('picks the most recent rate overlapping the period', () => {

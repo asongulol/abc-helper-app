@@ -1,8 +1,8 @@
+import { redirect } from 'next/navigation';
 import { PortalStatements } from '@/components/portal/PortalStatements';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchOwnPayments } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 export default async function PortalStatementsPage() {
   const worker = await getCurrentWorker();

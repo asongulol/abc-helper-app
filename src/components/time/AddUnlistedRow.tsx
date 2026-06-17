@@ -8,10 +8,10 @@
  * Faithful to the legacy addManualRow / bottom-row state.
  */
 
+import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import { periodDates, periodFor } from '@/lib/dates/periods';
 import { addHoursDaily, addHoursTotal } from '@/server/actions/time';
-import { useState, useTransition } from 'react';
 
 interface ContractorOption {
   workerId: string;
@@ -84,7 +84,10 @@ export const AddUnlistedRow = ({
         }
       } else {
         const days = dates
-          .map((date) => ({ date, hours: Number.parseFloat(dailyMap[date] ?? '') || 0 }))
+          .map((date) => ({
+            date,
+            hours: Number.parseFloat(dailyMap[date] ?? '') || 0,
+          }))
           .filter((d) => d.hours > 0);
         if (days.length === 0) {
           notify('Enter hours for at least one day.', { type: 'warn' });
@@ -101,7 +104,9 @@ export const AddUnlistedRow = ({
           return;
         }
       }
-      notify(`Hours added for ${selectedOption.displayName}.`, { type: 'success' });
+      notify(`Hours added for ${selectedOption.displayName}.`, {
+        type: 'success',
+      });
       reset();
       onDone();
     });
@@ -110,7 +115,14 @@ export const AddUnlistedRow = ({
   return (
     <tr style={{ background: '#fafafa' }}>
       <td colSpan={9}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'flex-end',
+          }}
+        >
           <div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
               + Add a contractor not listed above
@@ -133,7 +145,13 @@ export const AddUnlistedRow = ({
           {selectedWorkerId && (
             <>
               <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                <label
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--muted)',
+                    display: 'block',
+                  }}
+                >
                   Pay period
                   <input
                     type="date"
@@ -146,7 +164,13 @@ export const AddUnlistedRow = ({
                 </label>
               </div>
               <div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                <label
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--muted)',
+                    display: 'block',
+                  }}
+                >
                   Entry
                   <select
                     value={mode}
@@ -161,7 +185,13 @@ export const AddUnlistedRow = ({
 
               {mode === 'total' ? (
                 <div>
-                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                  <label
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--muted)',
+                      display: 'block',
+                    }}
+                  >
                     Total hours for period
                     <input
                       type="number"
@@ -177,7 +207,11 @@ export const AddUnlistedRow = ({
               ) : (
                 <div
                   className="table-scroll"
-                  style={{ maxHeight: 200, overflow: 'auto', flex: '1 1 320px' }}
+                  style={{
+                    maxHeight: 200,
+                    overflow: 'auto',
+                    flex: '1 1 320px',
+                  }}
                 >
                   <table>
                     <thead>
@@ -197,7 +231,10 @@ export const AddUnlistedRow = ({
                               style={{ width: 90 }}
                               value={dailyMap[dt] ?? ''}
                               onChange={(e) =>
-                                setDailyMap((prev) => ({ ...prev, [dt]: e.target.value }))
+                                setDailyMap((prev) => ({
+                                  ...prev,
+                                  [dt]: e.target.value,
+                                }))
                               }
                               disabled={pending}
                             />

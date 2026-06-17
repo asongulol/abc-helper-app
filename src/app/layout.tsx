@@ -4,7 +4,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'HR & Payroll — PH Contractors',
-  description: 'ABC payroll — Hubstaff time → PHP payouts via Wise.',
+  description: 'Aaron Anderson E.H.S. LLC payroll — Hubstaff time → PHP payouts via Wise.',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

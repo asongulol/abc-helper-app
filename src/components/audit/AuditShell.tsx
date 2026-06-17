@@ -1,8 +1,8 @@
 'use client';
 
-import type { AuditLogRow } from '@/db/queries/audit';
 import { useRouter } from 'next/navigation';
 import { useCallback, useTransition } from 'react';
+import type { AuditLogRow } from '@/db/queries/audit';
 import { AuditTable } from './AuditTable';
 
 interface AuditShellProps {

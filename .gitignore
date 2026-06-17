@@ -12,6 +12,8 @@ out/
 # Next.js / TypeScript generated
 next-env.d.ts
 *.tsbuildinfo
+# Vitest writes ephemeral compiled-config artifacts next to vitest.config.ts
+*.timestamp-*.mjs
 
 # Env & secrets
 .env
@@ -51,3 +53,7 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# Editor/FUSE deleted-but-open artifacts
+.fuse_hidden*
+**/.fuse_hidden*

@@ -9,12 +9,12 @@
  * (supabase/functions/hubstaff-sync/); this action covers on-demand admin runs.
  */
 
+import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { syncHubstaffForCompany } from '@/server/hubstaff/service';
-import { z } from 'zod';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
@@ -53,7 +53,10 @@ export interface SyncHubstaffResult {
 export async function syncHubstaffNow(args: unknown): Promise<ActionResult<SyncHubstaffResult>> {
   const parsed = SyncHubstaffSchema.safeParse(args);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   }
   const { companyId, periodStart, periodEnd }: SyncHubstaffInput = parsed.data;
 

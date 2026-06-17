@@ -1,13 +1,13 @@
+import { describe, expect, it } from 'vitest';
 import {
-  type RosterRow,
-  type TimeEntryRow,
   attributeTimeEntries,
   buildStatements,
   centavosToPhp,
   phpToCentavos,
+  type RosterRow,
+  type TimeEntryRow,
   toPaymentDraft,
 } from '@/lib/payroll/mappers';
-import { describe, expect, it } from 'vitest';
 
 const roster = (over: Partial<RosterRow> & { workerId: string }): RosterRow => ({
   contract: 'FT',
@@ -40,7 +40,12 @@ describe('attributeTimeEntries (legacy widByName resolution)', () => {
     const res = attributeTimeEntries(
       [
         entry({ workerId: 'w1', trackedSeconds: 3600 }),
-        entry({ workerId: 'w1', workDate: '2026-06-02', trackedSeconds: 1800, ptoSeconds: 1800 }),
+        entry({
+          workerId: 'w1',
+          workDate: '2026-06-02',
+          trackedSeconds: 1800,
+          ptoSeconds: 1800,
+        }),
       ],
       [roster({ workerId: 'w1' })],
     );
@@ -54,7 +59,11 @@ describe('attributeTimeEntries (legacy widByName resolution)', () => {
       roster({ workerId: 'w1', hubstaffName: 'Ana R.' }),
       roster({
         workerId: 'w2',
-        worker: { ...roster({ workerId: 'w2' }).worker, firstName: 'José', lastName: 'Rizal' },
+        worker: {
+          ...roster({ workerId: 'w2' }).worker,
+          firstName: 'José',
+          lastName: 'Rizal',
+        },
       }),
     ];
     const res = attributeTimeEntries(
@@ -84,7 +93,12 @@ describe('attributeTimeEntries (legacy widByName resolution)', () => {
 
 describe('buildStatements + toPaymentDraft', () => {
   const rates = [
-    { workerId: 'w1', amountPhp: '15000.00', effectiveStart: '2026-01-01', effectiveEnd: null },
+    {
+      workerId: 'w1',
+      amountPhp: '15000.00',
+      effectiveStart: '2026-01-01',
+      effectiveEnd: null,
+    },
   ];
 
   it('builds an engine row and maps it to a payments draft (PHP major units)', () => {
@@ -100,7 +114,9 @@ describe('buildStatements + toPaymentDraft', () => {
       rates,
     });
     expect(rows).toHaveLength(1);
-    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, { fxRate: 58 });
+    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, {
+      fxRate: 58,
+    });
     expect(draft).toMatchObject({
       worker_id: 'w1',
       expected_hours: 88,
@@ -167,7 +183,9 @@ describe('buildStatements + toPaymentDraft', () => {
       roster: [roster({ workerId: 'w1' })],
       rates,
     });
-    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, { fxRate: undefined });
+    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, {
+      fxRate: undefined,
+    });
     expect(draft?.worked_hours).toBe(61.78);
     expect(draft?.performance_ratio).toBe(0.702);
     expect(draft?.gross_php).toBeCloseTo(10530.3, 2); // round(61.77778/88 × 15000)

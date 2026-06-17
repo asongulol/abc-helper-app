@@ -1,15 +1,11 @@
 'use client';
 
-import { Badge } from '@/components/ui';
-import { ConfirmDangerModal } from '@/components/ui';
-import { EmptyState } from '@/components/ui';
-import { SortableTable } from '@/components/ui';
-import { useToast } from '@/components/ui';
+import { useId, useState, useTransition } from 'react';
 import type { SortableColumn } from '@/components/ui';
+import { Badge, ConfirmDangerModal, EmptyState, SortableTable, useToast } from '@/components/ui';
 import type { AdminRow } from '@/db/queries/admins';
 import { fmtDate } from '@/lib/format';
 import { addAdmin, removeAdmin, setAdminRole } from '@/server/actions/admin-manage';
-import { useId, useState, useTransition } from 'react';
 
 interface AdminsCardProps {
   admins: AdminRow[];
@@ -40,7 +36,11 @@ export const AdminsCard = ({ admins, companyOptions, isOwner }: AdminsCardProps)
   const [removeTarget, setRemoveTarget] = useState<AdminRow | null>(null);
   const [removeBusy, setRemoveBusy] = useState(false);
 
-  const [addForm, setAddForm] = useState<AddFormState>({ email: '', name: '', role: 'admin' });
+  const [addForm, setAddForm] = useState<AddFormState>({
+    email: '',
+    name: '',
+    role: 'admin',
+  });
   const [addBusy, setAddBusy] = useState(false);
 
   const handleAdd = () => {
@@ -64,7 +64,9 @@ export const AdminsCard = ({ admins, companyOptions, isOwner }: AdminsCardProps)
           toast.notify(res.error, { type: 'error' });
         }
       } catch (e) {
-        toast.notify(e instanceof Error ? e.message : 'Failed to add admin.', { type: 'error' });
+        toast.notify(e instanceof Error ? e.message : 'Failed to add admin.', {
+          type: 'error',
+        });
       } finally {
         setAddBusy(false);
       }

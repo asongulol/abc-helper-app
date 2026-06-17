@@ -1,5 +1,5 @@
-import { defaultHolidays, holidaysInRange } from '@/lib/pay/holidays';
 import { describe, expect, it } from 'vitest';
+import { defaultHolidays, holidaysInRange } from '@/lib/pay/holidays';
 
 const datesByName = (year: number): Record<string, string> =>
   Object.fromEntries(defaultHolidays(year).map((h) => [h.name, h.date]));

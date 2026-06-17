@@ -33,9 +33,6 @@ import {
   UndoApprovalSchema,
 } from '@/types/schemas/time';
 
-export type { ApprovalUndoEntry };
-export { buildUndoPayload };
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const authGuard = async (companyId: string) => {
@@ -55,7 +52,10 @@ export async function setTimeApproval(
 ): Promise<ActionResult<{ count: number; undoEntries: ApprovalUndoEntry[] }>> {
   const parsed = SetApprovalSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, ids, status } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -75,7 +75,10 @@ export async function setTimeApproval(
     const undoEntries = buildUndoPayload(snapshot, status);
     return { ok: true, data: { count: ids.length, undoEntries } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Approval update failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Approval update failed.',
+    };
   }
 }
 
@@ -83,7 +86,10 @@ export async function setTimeApproval(
 export async function undoApproval(args: unknown): Promise<ActionResult<{ count: number }>> {
   const parsed = UndoApprovalSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, entries } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -100,7 +106,10 @@ export async function undoApproval(args: unknown): Promise<ActionResult<{ count:
     });
     return { ok: true, data: { count: entries.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Undo failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Undo failed.',
+    };
   }
 }
 
@@ -110,7 +119,10 @@ export async function undoApproval(args: unknown): Promise<ActionResult<{ count:
 export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batchId: string }>> {
   const parsed = AddHoursTotalSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, workerId, sourceName, periodStart, hours } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -145,7 +157,10 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
     });
     return { ok: true, data: { batchId } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not add hours.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not add hours.',
+    };
   }
 }
 
@@ -153,7 +168,10 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
 export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batchId: string }>> {
   const parsed = AddHoursDailySchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, workerId, sourceName, days } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -191,7 +209,10 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
     });
     return { ok: true, data: { batchId } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not add hours.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Could not add hours.',
+    };
   }
 }
 
@@ -199,7 +220,10 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
 export async function editContractorTotal(args: unknown): Promise<ActionResult> {
   const parsed = EditTotalSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, sourceName, ids, hours, periodStart, periodEnd } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -224,7 +248,10 @@ export async function editContractorTotal(args: unknown): Promise<ActionResult> 
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Edit failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Edit failed.',
+    };
   }
 }
 
@@ -236,7 +263,10 @@ export async function importCsvBatch(
 ): Promise<ActionResult<{ batchId: string; written: number; skipped: number }>> {
   const parsed = CsvImportSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, rows, mode } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -307,7 +337,10 @@ export async function importCsvBatch(
 
     return { ok: true, data: { batchId, written: toWrite.length, skipped } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Import failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Import failed.',
+    };
   }
 }
 
@@ -318,7 +351,10 @@ export async function importCsvBatch(
 export async function deleteImportBatch(args: unknown): Promise<ActionResult<{ deleted: number }>> {
   const parsed = DeleteBatchSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const { companyId, batchId } = parsed.data;
 
   const guard = await authGuard(companyId);
@@ -361,7 +397,11 @@ export async function deleteImportBatch(args: unknown): Promise<ActionResult<{ d
       companyId,
       action: 'delete_import',
       entity: `batch:${batchId}`,
-      detail: { batch: batchId, deleted, date_range: `${dateMin} → ${dateMax}` },
+      detail: {
+        batch: batchId,
+        deleted,
+        date_range: `${dateMin} → ${dateMax}`,
+      },
     });
 
     return { ok: true, data: { deleted } };

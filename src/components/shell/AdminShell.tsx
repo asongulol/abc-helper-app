@@ -1,13 +1,20 @@
 'use client';
 
-import { ToastProvider } from '@/components/ui';
-import { createBrowserSupabase } from '@/db/clients/browser';
-import { selectCompany } from '@/server/actions/company';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useState, useTransition } from 'react';
+import { Mark } from '@/components/brand/Mark';
+import { ToastProvider } from '@/components/ui';
+import { createBrowserSupabase } from '@/db/clients/browser';
+import type { AdminRow } from '@/db/queries/admins';
+import { selectCompany } from '@/server/actions/company';
+import { AdminsModal } from './AdminsModal';
+import { CommandPalette } from './CommandPalette';
+import { NAV_GROUPS } from './nav';
 
 export interface ShellAdmin {
+  /** Auth user id — marks "(you)" in the Admins modal. */
+  userId: string;
   email: string;
   name: string | null;
   isOwner: boolean;
@@ -22,61 +29,52 @@ interface AdminShellProps {
   admin: ShellAdmin;
   companies: ShellCompany[];
   selectedCompanyId: string | null;
+  contractors: ReadonlyArray<{ id: string; name: string }>;
+  periods: ReadonlyArray<{ id: string; label: string; start: string }>;
+  /** Admin roster for the owner-only Admins modal (empty for non-owners). */
+  admins: ReadonlyArray<AdminRow>;
   children: ReactNode;
 }
 
-interface NavItem {
-  href: string;
-  label: string;
-  icon: string;
-}
-
-/** Nav grouped by workflow stage, mirroring the legacy sidebar groups. */
-const NAV_GROUPS: ReadonlyArray<{ label: string; items: ReadonlyArray<NavItem> }> = [
-  { label: 'Home', items: [{ href: '/overview', label: 'Overview', icon: '🏠' }] },
-  {
-    label: 'Manage team',
-    items: [
-      { href: '/contractors', label: 'Contractors', icon: '👥' },
-      { href: '/onboarding', label: 'Onboarding', icon: '🧭' },
-      { href: '/documents', label: 'Documents', icon: '📄' },
-    ],
-  },
-  {
-    label: 'Run payroll',
-    items: [
-      { href: '/time', label: 'Time Import', icon: '⏱' },
-      { href: '/payroll', label: 'Payroll', icon: '🧮' },
-      { href: '/process', label: 'Process & Pay', icon: '💸' },
-    ],
-  },
-  {
-    label: 'Review',
-    items: [
-      { href: '/reports', label: 'Reports', icon: '📊' },
-      { href: '/audit', label: 'Audit Log', icon: '📝' },
-      { href: '/imports', label: 'Delete Imports', icon: '🗂' },
-    ],
-  },
-  {
-    label: 'Configuration',
-    items: [{ href: '/config', label: 'Configuration', icon: '⚙' }],
-  },
-];
-
 const COLLAPSE_KEY = 'abc_sidebar_collapsed';
+
+/** Centered footer build stamp; replaced at deploy time via NEXT_PUBLIC_BUILD. */
+const BUILD = process.env.NEXT_PUBLIC_BUILD ?? '2026-06-12 18:48 EDT · c4b475e';
 
 /**
  * Admin app shell — faithful port of the legacy topbar (navy bar, gold top
  * border, brand + company switcher + user menu) and the collapsible left
  * sidebar (212px expanded / 60px collapsed, persisted in localStorage).
  */
-export const AdminShell = ({ admin, companies, selectedCompanyId, children }: AdminShellProps) => {
+export const AdminShell = ({
+  admin,
+  companies,
+  selectedCompanyId,
+  contractors,
+  periods,
+  admins,
+  children,
+}: AdminShellProps) => {
   const pathname = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [switching, startSwitch] = useTransition();
   const [signingOut, setSigningOut] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showAdmins, setShowAdmins] = useState(false);
+  const sections = NAV_GROUPS.flatMap((g) => g.items);
+
+  // ⌘K / Ctrl-K toggles the quick-find palette.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Restore the persisted collapse state after mount (SSR renders expanded).
   useEffect(() => {
@@ -118,30 +116,80 @@ export const AdminShell = ({ admin, companies, selectedCompanyId, children }: Ad
 
   return (
     <ToastProvider>
+      {paletteOpen && (
+        <CommandPalette
+          sections={sections}
+          contractors={contractors}
+          periods={periods}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
+      {admin.isOwner && showAdmins && (
+        <AdminsModal
+          admins={admins}
+          companyOptions={companies}
+          meId={admin.userId}
+          onClose={() => setShowAdmins(false)}
+        />
+      )}
       <a href="#main" className="skip-link">
         Skip to content
       </a>
       <header className="topbar">
         <h1 className="brand">
-          ABC Kids — HR &amp; Payroll
-          <small>PH independent contractors</small>
+          <span
+            style={{
+              marginRight: 12,
+              verticalAlign: 'middle',
+              display: 'inline-flex',
+              alignItems: 'center',
+            }}
+          >
+            <Mark height={38} priority />
+          </span>
+          HR &amp; Payroll<small>PH independent contractors</small>
         </h1>
         <div className="topbar-actions">
+          <button
+            type="button"
+            className="btn ghost sm"
+            onClick={() => setPaletteOpen(true)}
+            title="Quick find (⌘K / Ctrl-K)"
+            aria-label="Quick find"
+          >
+            🔎 Find
+          </button>
           <div className="company-switcher">
-            <select
-              aria-label="Company"
-              value={selectedCompanyId ?? ''}
-              onChange={(e) => onCompanyChange(e.target.value)}
-              disabled={switching || companies.length === 0}
-              style={{ marginLeft: 'auto' }}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                marginLeft: 'auto',
+              }}
             >
-              {companies.length === 0 && <option value="">No companies</option>}
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              <span className="muted" style={{ fontSize: 12 }}>
+                Employer
+              </span>
+              <select
+                aria-label="Company"
+                value={selectedCompanyId ?? ''}
+                onChange={(e) => onCompanyChange(e.target.value)}
+                disabled={switching || companies.length <= 1}
+                title={
+                  companies.length <= 1
+                    ? 'The payroll home for every contractor'
+                    : 'Switch employer (tenant)'
+                }
+              >
+                {companies.length === 0 && <option value="">No companies</option>}
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
           <span
             className="sub"
@@ -150,6 +198,11 @@ export const AdminShell = ({ admin, companies, selectedCompanyId, children }: Ad
           >
             {admin.email}
           </span>
+          {admin.isOwner && (
+            <button type="button" className="btn ghost sm" onClick={() => setShowAdmins(true)}>
+              Admins
+            </button>
+          )}
           <button type="button" className="btn ghost sm" onClick={signOut} disabled={signingOut}>
             {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
@@ -197,6 +250,18 @@ export const AdminShell = ({ admin, companies, selectedCompanyId, children }: Ad
         </nav>
         <main className="wrap" id="main">
           {children}
+          <div
+            className="no-print"
+            style={{
+              textAlign: 'center',
+              color: 'var(--muted)',
+              fontSize: 11,
+              padding: '18px 0 32px',
+              letterSpacing: '.02em',
+            }}
+          >
+            Build {BUILD}
+          </div>
         </main>
       </div>
     </ToastProvider>

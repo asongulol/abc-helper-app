@@ -133,7 +133,13 @@ export const classifyHiringReview = (
   // Step 2+3: Bucket into pending / deferred per worker.
   const byWorker = new Map<
     string,
-    { worker: string; company: string; email: string; pending: string[]; deferred: string[] }
+    {
+      worker: string;
+      company: string;
+      email: string;
+      pending: string[];
+      deferred: string[];
+    }
   >();
 
   for (const d of latest.values()) {
@@ -165,5 +171,11 @@ export const classifyHiringReview = (
   const pendingDocs = pendingContractors.reduce((n, c) => n + c.pending.length, 0);
   const deferredDocs = deferredContractors.reduce((n, c) => n + c.deferred.length, 0);
 
-  return { pendingContractors, deferredContractors, pendingDocs, deferredDocs, contractors };
+  return {
+    pendingContractors,
+    deferredContractors,
+    pendingDocs,
+    deferredDocs,
+    contractors,
+  };
 };

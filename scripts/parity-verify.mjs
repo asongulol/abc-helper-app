@@ -113,7 +113,12 @@ const main = async () => {
     rowsChecked: 0,
     grossMatches: 0,
     grossMismatches: [],
-    excluded: { overridden: 0, noExpected: 0, wiseOverride: 0, specialPeriod: 0 },
+    excluded: {
+      overridden: 0,
+      noExpected: 0,
+      wiseOverride: 0,
+      specialPeriod: 0,
+    },
   };
 
   for (const p of periods) {

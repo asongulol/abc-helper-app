@@ -1,342 +1,237 @@
 'use client';
 
-import {
-  Badge,
-  type BadgeTone,
-  ConfirmDangerModal,
-  EmptyState,
-  Modal,
-  type SortableColumn,
-  SortableTable,
-  useToast,
-} from '@/components/ui';
-import type { DocumentRow } from '@/db/queries/documents';
-import { fmtDate } from '@/lib/format';
-import { reviewDocument } from '@/server/actions/portal';
 import { useId, useState, useTransition } from 'react';
+import { useToast } from '@/components/ui';
+import type { DocumentRow } from '@/db/queries/documents';
+import type { Database } from '@/db/types';
+import { addDocument } from '@/server/actions/documents-admin';
+
+type DocumentKind = Database['public']['Enums']['document_kind'];
+
+interface WorkerOption {
+  id: string;
+  name: string;
+}
 
 interface Props {
   documents: DocumentRow[];
-  expiringSoonCount: number;
-  overdueCount: number;
-  expiryWarnDays: number;
+  workerOptions: WorkerOption[];
   companyId: string;
-  canCountersign: boolean;
+  consolidated: boolean;
 }
 
-const KIND_LABEL: Record<string, string> = {
-  ic_agreement: 'IC Agreement',
-  w8ben: 'W-8BEN',
-  gov_id: 'Gov ID',
-  other: 'Other',
-  resume: 'Resume',
-  diploma: 'Diploma',
-  nbi_clearance: 'NBI Clearance',
+/** Type options shown in the add row — verbatim from legacy DOC_KINDS. */
+const DOC_KINDS: ReadonlyArray<readonly [DocumentKind, string]> = [
+  ['ic_agreement', 'IC Agreement'],
+  ['w8ben', 'W-8BEN'],
+  ['gov_id', 'Gov ID'],
+  ['other', 'Other'],
+];
+
+/** Whole days from today until `dateStr` (null when absent) — legacy daysUntil. */
+const daysUntil = (dateStr: string | null): number | null => {
+  if (!dateStr) return null;
+  const target = new Date(`${dateStr}T00:00:00`);
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00`);
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
 };
 
-const REVIEW_TONE: Record<string, BadgeTone> = {
-  pending: 'warn',
-  approved: 'good',
-  needs_replacement: 'bad',
-  waived: 'neutral',
-  deferred: 'neutral',
-};
-
-type KindFilter = 'all' | string;
-type StatusFilter = 'all' | string;
-
-export const DocumentsClient = ({
-  documents,
-  expiringSoonCount,
-  overdueCount,
-  expiryWarnDays,
-}: Props) => {
-  const idReviewNote = useId();
+export const DocumentsClient = ({ documents, workerOptions, companyId, consolidated }: Props) => {
   const { notify } = useToast();
   const [isPending, startTransition] = useTransition();
 
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [selectedDoc, setSelectedDoc] = useState<DocumentRow | null>(null);
-  const [reviewNote, setReviewNote] = useState('');
-  const [confirmReject, setConfirmReject] = useState(false);
+  const idContractor = useId();
+  const idType = useId();
+  const idTitle = useId();
+  const idSigned = useId();
+  const idExpires = useId();
 
-  const visible = documents.filter((d) => {
-    if (kindFilter !== 'all' && d.kind !== kindFilter) return false;
-    if (statusFilter !== 'all' && d.reviewStatus !== statusFilter) return false;
-    return true;
+  const [form, setForm] = useState({
+    worker_id: '',
+    kind: 'ic_agreement' as DocumentKind,
+    title: '',
+    signed_on: '',
+    expires_on: '',
   });
 
-  const handleReview = (
-    doc: DocumentRow,
-    decision: 'approve' | 'needs_replacement' | 'waive' | 'defer',
-  ) => {
-    if (decision === 'needs_replacement' && !reviewNote.trim()) {
-      notify('A reason is required for needs-replacement.', { type: 'error' });
+  const nameById = new Map(workerOptions.map((w) => [w.id, w.name]));
+
+  // Legacy orders by expires_on ascending, nulls last.
+  const list = [...documents].sort((a, b) => {
+    if (a.expiresOn === b.expiresOn) return 0;
+    if (!a.expiresOn) return 1;
+    if (!b.expiresOn) return -1;
+    return a.expiresOn < b.expiresOn ? -1 : 1;
+  });
+
+  const addDoc = () => {
+    if (!form.worker_id) {
+      notify('Pick a contractor.', { type: 'error' });
       return;
     }
     startTransition(async () => {
-      const result = await reviewDocument({
-        documentId: doc.id,
-        decision,
-        ...(reviewNote.trim() ? { note: reviewNote.trim() } : {}),
+      const result = await addDocument({
+        companyId,
+        workerId: form.worker_id,
+        kind: form.kind,
+        title: form.title,
+        signedOn: form.signed_on,
+        expiresOn: form.expires_on,
       });
       if (result.ok) {
-        notify(`Document marked as ${decision.replace('_', ' ')}.`, { type: 'success' });
-        setSelectedDoc(null);
-        setReviewNote('');
+        setForm({
+          worker_id: '',
+          kind: 'ic_agreement',
+          title: '',
+          signed_on: '',
+          expires_on: '',
+        });
       } else {
         notify(result.error, { type: 'error' });
       }
     });
   };
 
-  const columns: ReadonlyArray<SortableColumn<DocumentRow>> = [
-    {
-      key: 'workerName',
-      label: 'Contractor',
-      sortable: true,
-      cardTitle: true,
-    },
-    {
-      key: 'kind',
-      label: 'Kind',
-      sortable: true,
-      render: (d) => KIND_LABEL[d.kind] ?? d.kind,
-      accessor: (d) => d.kind,
-    },
-    {
-      key: 'title',
-      label: 'Title',
-      render: (d) => d.title ?? d.side ?? '—',
-    },
-    {
-      key: 'reviewStatus',
-      label: 'Review',
-      sortable: true,
-      render: (d) => (
-        <Badge tone={REVIEW_TONE[d.reviewStatus] ?? 'neutral'}>
-          {d.reviewStatus.replace('_', ' ')}
-        </Badge>
-      ),
-      accessor: (d) => d.reviewStatus,
-    },
-    {
-      key: 'expiresOn',
-      label: 'Expires',
-      sortable: true,
-      render: (d) => {
-        if (!d.expiresOn) return '—';
-        const exp = new Date(`${d.expiresOn}T00:00:00Z`);
-        const today = new Date();
-        const days = Math.round((exp.getTime() - today.getTime()) / 86_400_000);
-        const isOverdue = days < 0;
-        const isSoon = days >= 0 && days <= 30;
-        return (
-          <span style={{ color: isOverdue ? 'var(--bad)' : isSoon ? 'var(--warn)' : undefined }}>
-            {fmtDate(d.expiresOn)}
-          </span>
-        );
-      },
-      accessor: (d) => d.expiresOn,
-    },
-    {
-      key: 'createdAt',
-      label: 'Uploaded',
-      sortable: true,
-      render: (d) => fmtDate(d.createdAt),
-      accessor: (d) => d.createdAt,
-    },
-    {
-      key: 'actions',
-      label: '',
-      render: (d) => (
-        <button
-          type="button"
-          className="btn sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            setSelectedDoc(d);
-            setReviewNote('');
-          }}
-        >
-          Review
-        </button>
-      ),
-    },
-  ];
-
   return (
-    <>
-      <div className="card" style={{ marginBottom: 16 }}>
+    <div>
+      <div className="card">
         <h2>Documents</h2>
         <p className="sub">
-          All uploaded contractor documents — review, approve, or request replacement.
+          Track each contractor&apos;s IC agreement, W-8BEN, and IDs. Set an expiry to get a
+          reminder here when it&apos;s within 30 days (or overdue).
         </p>
-      </div>
-
-      {(overdueCount > 0 || expiringSoonCount > 0) && (
-        <div
-          className="card"
-          style={{
-            marginBottom: 16,
-            background: overdueCount > 0 ? 'var(--bad-bg, #fef2f2)' : 'var(--warn-bg, #fffbeb)',
-            borderLeft: `4px solid ${overdueCount > 0 ? 'var(--bad)' : 'var(--warn)'}`,
-          }}
-          role="alert"
-        >
-          <strong>
-            {overdueCount > 0 && `${overdueCount} document(s) overdue. `}
-            {expiringSoonCount > 0 &&
-              `${expiringSoonCount} document(s) expiring within ${expiryWarnDays} days.`}
-          </strong>{' '}
-          Review and request replacements below.
-        </div>
-      )}
-
-      <div className="card">
-        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="sub">Kind</span>
-            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}>
-              <option value="all">All kinds</option>
-              {Object.entries(KIND_LABEL).map(([k, label]) => (
-                <option key={k} value={k}>
-                  {label}
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div className="field">
+            <label htmlFor={idContractor}>Contractor</label>
+            <select
+              id={idContractor}
+              value={form.worker_id}
+              onChange={(e) => setForm({ ...form, worker_id: e.target.value })}
+            >
+              <option value="">Select…</option>
+              {workerOptions.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}
                 </option>
               ))}
             </select>
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span className="sub">Status</span>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="all">All statuses</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="needs_replacement">Needs replacement</option>
-              <option value="waived">Waived</option>
-              <option value="deferred">Deferred</option>
+          </div>
+          <div className="field">
+            <label htmlFor={idType}>Type</label>
+            <select
+              id={idType}
+              value={form.kind}
+              onChange={(e) => setForm({ ...form, kind: e.target.value as DocumentKind })}
+            >
+              {DOC_KINDS.map(([v, l]) => (
+                <option key={v} value={v}>
+                  {l}
+                </option>
+              ))}
             </select>
-          </label>
-        </div>
-
-        <SortableTable
-          columns={columns}
-          rows={visible}
-          rowKey={(d) => d.id}
-          filterPlaceholder="Filter by contractor, kind…"
-          emptyMessage={<EmptyState icon="📄" message="No documents match your filters." />}
-          onRowClick={(d) => {
-            setSelectedDoc(d);
-            setReviewNote('');
-          }}
-        />
-      </div>
-
-      {selectedDoc !== null && (
-        <Modal
-          title={`Review: ${KIND_LABEL[selectedDoc.kind] ?? selectedDoc.kind}${selectedDoc.title ? ` — ${selectedDoc.title}` : ''}`}
-          onClose={() => setSelectedDoc(null)}
-          maxWidth={520}
-        >
-          <dl style={{ marginBottom: 12 }}>
-            <dt className="sub">Contractor</dt>
-            <dd>{selectedDoc.workerName}</dd>
-            <dt className="sub">Uploaded</dt>
-            <dd>{fmtDate(selectedDoc.createdAt)}</dd>
-            {selectedDoc.expiresOn && (
-              <>
-                <dt className="sub">Expires</dt>
-                <dd>{fmtDate(selectedDoc.expiresOn)}</dd>
-              </>
-            )}
-            {selectedDoc.issuedOn && (
-              <>
-                <dt className="sub">Issued</dt>
-                <dd>{fmtDate(selectedDoc.issuedOn)}</dd>
-              </>
-            )}
-            <dt className="sub">Current status</dt>
-            <dd>
-              <Badge tone={REVIEW_TONE[selectedDoc.reviewStatus] ?? 'neutral'}>
-                {selectedDoc.reviewStatus.replace('_', ' ')}
-              </Badge>
-            </dd>
-            {selectedDoc.reviewReason && (
-              <>
-                <dt className="sub">Reason</dt>
-                <dd>{selectedDoc.reviewReason}</dd>
-              </>
-            )}
-          </dl>
-
-          {selectedDoc.storagePath && (
-            <p className="sub" style={{ marginBottom: 12 }}>
-              Storage path: <code>{selectedDoc.storagePath}</code>
-            </p>
-          )}
-
-          <label className="sub" htmlFor={idReviewNote}>
-            Note / reason (required for &ldquo;Needs replacement&rdquo;)
-          </label>
-          <textarea
-            id={idReviewNote}
-            value={reviewNote}
-            onChange={(e) => setReviewNote(e.target.value)}
-            rows={2}
-            style={{ width: '100%', marginBottom: 10 }}
-            placeholder="Reason for rejection or optional approval note…"
-          />
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn"
-              disabled={isPending}
-              onClick={() => handleReview(selectedDoc, 'approve')}
-            >
-              Approve
-            </button>
-            <button
-              type="button"
-              className="btn warn"
-              disabled={isPending}
-              onClick={() => setConfirmReject(true)}
-            >
-              Needs replacement
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={isPending}
-              onClick={() => handleReview(selectedDoc, 'waive')}
-            >
-              Waive
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={isPending}
-              onClick={() => handleReview(selectedDoc, 'defer')}
-            >
-              Defer
+          </div>
+          <div className="field">
+            <label htmlFor={idTitle}>Title (optional)</label>
+            <input
+              id={idTitle}
+              value={form.title}
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+              placeholder="e.g. 2026 IC Agreement"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={idSigned}>Signed</label>
+            <input
+              id={idSigned}
+              type="date"
+              value={form.signed_on}
+              onChange={(e) => setForm({ ...form, signed_on: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor={idExpires}>Expires</label>
+            <input
+              id={idExpires}
+              type="date"
+              value={form.expires_on}
+              onChange={(e) => setForm({ ...form, expires_on: e.target.value })}
+            />
+          </div>
+          <div className="field" style={{ flex: '0 0 auto' }}>
+            <button type="button" className="btn" disabled={isPending} onClick={addDoc}>
+              Add document
             </button>
           </div>
-        </Modal>
-      )}
+        </div>
+        <p className="muted" style={{ fontSize: 12 }}>
+          File upload to secure storage is a Phase-2 add-on (needs the Storage bucket from setup).
+          For now this tracks the record + dates.
+        </p>
+      </div>
 
-      {confirmReject && selectedDoc !== null && (
-        <ConfirmDangerModal
-          title="Request replacement"
-          message={`Request a replacement for this ${KIND_LABEL[selectedDoc.kind] ?? selectedDoc.kind} from ${selectedDoc.workerName}?${reviewNote.trim() ? ` Reason: "${reviewNote.trim()}"` : ' (Add a reason above.)'}`}
-          confirmLabel="Request replacement"
-          onConfirm={() => {
-            setConfirmReject(false);
-            handleReview(selectedDoc, 'needs_replacement');
-          }}
-          onCancel={() => setConfirmReject(false)}
-        />
-      )}
-    </>
+      <div className="card">
+        <h2>Tracked documents {consolidated ? '· all companies' : ''}</h2>
+        {list.length === 0 ? (
+          <div className="empty">No documents yet. Add one above.</div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Contractor</th>
+                  <th>Type</th>
+                  <th>Title</th>
+                  <th>Signed</th>
+                  <th>Expires</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((d) => {
+                  const n = daysUntil(d.expiresOn);
+                  const overdue = n != null && n < 0;
+                  const soon = n != null && n >= 0 && n <= 30;
+                  return (
+                    <tr
+                      key={d.id}
+                      style={
+                        overdue
+                          ? { background: '#fee2e2' }
+                          : soon
+                            ? { background: 'var(--warn-soft)' }
+                            : {}
+                      }
+                    >
+                      <td className="card-title">
+                        <b>{nameById.get(d.workerId) ?? '—'}</b>
+                      </td>
+                      <td data-label="Type">
+                        {DOC_KINDS.find((k) => k[0] === d.kind)?.[1] ?? d.kind}
+                      </td>
+                      <td data-label="Title">{d.title || '—'}</td>
+                      <td data-label="Signed">{d.signedOn || '—'}</td>
+                      <td data-label="Expires">
+                        {d.expiresOn || <span className="muted">no expiry</span>}
+                      </td>
+                      <td data-label="Status">
+                        {n == null ? (
+                          <span className="muted">—</span>
+                        ) : overdue ? (
+                          <span className="pill bad">overdue {Math.abs(n)}d</span>
+                        ) : soon ? (
+                          <span className="pill warn">in {n}d</span>
+                        ) : (
+                          <span className="pill active">ok</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 };

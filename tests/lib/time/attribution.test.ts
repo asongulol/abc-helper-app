@@ -2,9 +2,9 @@
  * Tests for name-attribution helpers (src/lib/time/attribution.ts).
  */
 
-import { attributionStatus, buildMatchIndex, matchName } from '@/lib/time/attribution';
-import type { RosterLink } from '@/lib/time/attribution';
 import { describe, expect, it } from 'vitest';
+import type { RosterLink } from '@/lib/time/attribution';
+import { attributionStatus, buildMatchIndex, matchName } from '@/lib/time/attribution';
 
 const roster: RosterLink[] = [
   {

@@ -9,14 +9,15 @@
  * (cron); this screen handles manual/CSV imports only.
  */
 
+import { useRef, useState, useTransition } from 'react';
 import { Badge, useToast } from '@/components/ui';
-import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { RosterLink } from '@/lib/time/attribution';
-import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
+import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { HubstaffMember } from '@/lib/time/csv';
+import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
 import { addContractor } from '@/server/actions/contractors';
 import { importCsvBatch } from '@/server/actions/time';
-import { useRef, useState, useTransition } from 'react';
+import { OptionBPanel } from './OptionBPanel';
 
 interface CsvImportCardProps {
   companyId: string;
@@ -84,7 +85,11 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
           isInactive: hit?.isInactive ?? false,
         };
       });
-      setParsed({ dates: result.dates, members, skippedRows: result.skippedRows });
+      setParsed({
+        dates: result.dates,
+        members,
+        skippedRows: result.skippedRows,
+      });
     };
     reader.readAsText(f);
   };
@@ -157,22 +162,35 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
 
   return (
     <div className="card">
-      <h3 style={{ marginBottom: 4 }}>CSV Import</h3>
-      <p className="sub" style={{ marginTop: 0, marginBottom: 12 }}>
-        Export the <strong>daily report</strong> from Hubstaff and upload it here. Rows match
-        contractors by their Hubstaff name; imported hours stage as <strong>pending</strong> until
-        approved.
-        <br />
-        <span className="muted" style={{ fontSize: 12 }}>
-          Note: the scheduled Hubstaff sync runs automatically via the hubstaff-sync edge function
-          (cron). This screen is for manual or catch-up CSV imports.
-        </span>
+      <h2>Hubstaff time import</h2>
+      <p className="sub">
+        Two ways to bring in time. Rows match contractors by their <b>Hubstaff name</b>; imported
+        hours stage as <b>pending</b> until approved below.
       </p>
 
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+      <div className="grid-2">
         <div>
-          <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
-            Hubstaff daily report (.csv)
+          <span
+            style={{
+              fontSize: 11,
+              color: 'var(--muted)',
+              textTransform: 'uppercase',
+              letterSpacing: '.03em',
+            }}
+          >
+            Option A — upload CSV
+          </span>
+          <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+            Export the daily report from Hubstaff and drop the file here.
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              gap: 12,
+              alignItems: 'flex-end',
+              flexWrap: 'wrap',
+            }}
+          >
             <input
               ref={fileRef}
               type="file"
@@ -180,23 +198,30 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
               onChange={onFile}
               disabled={pending}
             />
-          </label>
-        </div>
-        {parsed && (
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
-              Overlap handling
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as 'upsert' | 'skip')}
-                disabled={pending}
-              >
-                <option value="upsert">Overwrite existing</option>
-                <option value="skip">Skip already-imported rows</option>
-              </select>
-            </label>
+            {parsed && (
+              <div>
+                <label
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--muted)',
+                    display: 'block',
+                  }}
+                >
+                  Overlap handling
+                  <select
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value as 'upsert' | 'skip')}
+                    disabled={pending}
+                  >
+                    <option value="upsert">Overwrite existing</option>
+                    <option value="skip">Skip already-imported rows</option>
+                  </select>
+                </label>
+              </div>
+            )}
           </div>
-        )}
+        </div>
+        <OptionBPanel companyId={companyId} onImported={onImported} />
       </div>
 
       {parseErr && (
@@ -245,7 +270,11 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                   .map((m) => (
                     <span
                       key={m.name}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
                     >
                       <span className="pill warn">{m.name}</span>
                       <button
@@ -300,7 +329,14 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
             </table>
           </div>
 
-          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div
+            style={{
+              marginTop: 12,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'center',
+            }}
+          >
             <button
               type="button"
               className="btn"

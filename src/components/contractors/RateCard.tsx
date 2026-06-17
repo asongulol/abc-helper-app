@@ -1,10 +1,10 @@
 'use client';
 
+import { useEffect, useState, useTransition } from 'react';
 import { Spinner } from '@/components/ui';
 import type { RateHistoryRow } from '@/db/queries/rates';
 import { fmtDate, money } from '@/lib/format';
 import { getRateHistory, saveRate } from '@/server/actions/payroll';
-import { useEffect, useState, useTransition } from 'react';
 
 type Props = {
   workerId: string;
@@ -49,7 +49,12 @@ export function RateCard({ workerId, companyId }: Props) {
     setSaveSuccess('');
 
     startSave(async () => {
-      const result = await saveRate({ workerId, companyId, amountPhp, effectiveStart });
+      const result = await saveRate({
+        workerId,
+        companyId,
+        amountPhp,
+        effectiveStart,
+      });
       if (!result.ok) {
         setFormError(result.error);
         return;

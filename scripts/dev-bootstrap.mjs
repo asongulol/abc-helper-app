@@ -58,7 +58,9 @@ const main = async () => {
 
   // 1. Owner auth user (idempotent: look up, else create) via GoTrue admin REST.
   let userId;
-  const listRes = await fetch(`${url}/auth/v1/admin/users?per_page=200`, { headers: authHeaders });
+  const listRes = await fetch(`${url}/auth/v1/admin/users?per_page=200`, {
+    headers: authHeaders,
+  });
   const list = await j(listRes);
   const existing = (list?.users ?? []).find(
     (u) => u.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase(),

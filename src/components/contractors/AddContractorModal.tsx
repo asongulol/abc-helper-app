@@ -1,9 +1,9 @@
 'use client';
 
+import { type FormEvent, useState, useTransition } from 'react';
 import { Modal, Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
 import { addContractor } from '@/server/actions/contractors';
-import { type FormEvent, useState, useTransition } from 'react';
 
 type Props = {
   companyId: string;
@@ -59,12 +59,32 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         payoutMethod: null,
         healthAllowanceEligible: true,
         thirteenthMonthEligible: true,
+        workEmail: null,
+        workNumber: null,
+        workExtension: null,
+        shiftStart: null,
+        shiftEnd: null,
+        dateOfBirth: null,
+        emergencyName: null,
+        emergencyRelationship: null,
+        emergencyMobile: null,
+        maritalStatus: null,
+        educationLevel: null,
+        course: null,
+        yearGraduated: null,
+        school: null,
+        gcash: null,
+        paymaya: null,
+        paypal: null,
+        wiseTag: null,
+        photoUrl: null,
         linkId: '',
         companyId,
         contract,
         role: null,
         hubstaffName: null,
         weeklyHours: null,
+        billRateUsd: null,
         linkStatus: 'active',
       };
       onCreated(worker);

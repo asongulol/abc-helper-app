@@ -1,10 +1,10 @@
 'use client';
 
-import { useToast } from '@/components/ui';
-import type { PortalNotificationRow, PortalPaymentRow } from '@/db/queries/portal';
-import { fmtDate, money } from '@/lib/format';
-import Link from 'next/link';
-import { useState, useTransition } from 'react';
+import { useEffect, useState } from 'react';
+import { DocReminderOverlay } from './DocReminderOverlay';
+import { FromNewYork, nyHourNow, skyPhase } from './FromNewYork';
+import { type HomePay, PortalPayActivity } from './PortalPayActivity';
+import { ToolsPopup } from './ToolsPopup';
 
 interface Announcement {
   id: string;
@@ -15,185 +15,207 @@ interface Announcement {
 }
 
 interface Props {
-  workerName: string;
+  greetName: string;
   onboarded: boolean;
   announcements: Announcement[];
-  notifications: PortalNotificationRow[];
-  latestPayment: PortalPaymentRow | null;
-  checkedInToday: boolean;
-  workerId: string;
+  homePay: HomePay;
+  activity: { date: string; activity: number }[];
+  pendingDocs: string[];
+  toolsPending: boolean;
 }
 
-const MOOD_LABELS = ['😞 Very sad', '😕 Sad', '😐 Neutral', '🙂 Happy', '😄 Very happy'];
+const TOOLKIT = [
+  {
+    label: 'Hubstaff',
+    sub: 'Track your time',
+    icon: '⏱️',
+    domain: 'hubstaff.com',
+    href: 'https://app.hubstaff.com',
+  },
+  {
+    label: 'Gmail',
+    sub: 'Work email',
+    icon: '✉️',
+    domain: 'gmail.com',
+    href: 'https://mail.google.com',
+  },
+  {
+    label: 'Providersoft',
+    sub: 'Provider system',
+    icon: '🩺',
+    domain: 'web.providersoftllc.com',
+    href: 'https://web.providersoftllc.com/AbilityBuilders/security/login.aspx',
+  },
+  {
+    label: 'Wise',
+    sub: 'Get paid',
+    icon: '💸',
+    domain: 'wise.com',
+    href: 'https://wise.com/home',
+  },
+];
+
+/**
+ * Tool tile icon — shows the tool's real favicon (legacy `Favicon`): DuckDuckGo's
+ * icon service first, then Google's, falling back to the emoji if both fail.
+ */
+const ToolIcon = ({ domain, emoji }: { domain: string; emoji: string }) => {
+  const [stage, setStage] = useState(0);
+  const src = [
+    `https://icons.duckduckgo.com/ip3/${domain}.ico`,
+    `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
+  ][stage];
+  if (!src) {
+    return (
+      <span className="qico" aria-hidden="true">
+        {emoji}
+      </span>
+    );
+  }
+  return (
+    // biome-ignore lint/performance/noImgElement: remote third-party favicon service URL with an onError fallback chain, not a static asset next/image can optimize
+    <img
+      className="qico"
+      src={src}
+      alt=""
+      width={24}
+      height={24}
+      loading="lazy"
+      onError={() => setStage((s) => s + 1)}
+      style={{ objectFit: 'contain' }}
+    />
+  );
+};
 
 export const PortalDashboard = ({
-  workerName,
-  onboarded,
+  greetName,
   announcements,
-  notifications,
-  latestPayment,
-  checkedInToday,
+  homePay,
+  activity,
+  pendingDocs,
+  toolsPending,
 }: Props) => {
-  const { notify } = useToast();
-  const [mood, setMood] = useState<number | null>(null);
-  const [moodNote, setMoodNote] = useState('');
-  const [isPending, startTransition] = useTransition();
-  const [submitted, setSubmitted] = useState(checkedInToday);
+  const [mounted, setMounted] = useState(false);
+  const [, tick] = useState(0);
 
-  const handleMoodSubmit = () => {
-    if (mood === null) {
-      notify('Please select a mood.', { type: 'warn' });
-      return;
-    }
-    startTransition(async () => {
-      try {
-        // Mood checkin stored via service client — call a simple route
-        // (no server action for mood yet; this is best-effort)
-        setSubmitted(true);
-        notify('Thanks for checking in!', { type: 'success' });
-      } catch {
-        notify('Could not save mood check-in.', { type: 'error' });
-      }
-    });
-  };
+  useEffect(() => {
+    setMounted(true);
+    const id = setInterval(() => tick((t) => t + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
+
+  const phHour = mounted
+    ? Number(
+        new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Manila',
+          hour: 'numeric',
+          hour12: false,
+        }).format(new Date()),
+      )
+    : 9;
+  const clock = mounted
+    ? new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Manila',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(new Date())
+    : '';
+  const greetTL =
+    phHour < 12 ? 'Magandang umaga' : phHour < 18 ? 'Magandang hapon' : 'Magandang gabi';
+  const nyPh = skyPhase(mounted ? nyHourNow() : 9);
+  const greetEmoji = nyPh.night ? '🌙' : '☀️';
+  const initials =
+    (greetName || '?')
+      .trim()
+      .split(/\s+/)
+      .map((s) => s[0])
+      .slice(0, 2)
+      .join('')
+      .toUpperCase() || '?';
 
   return (
-    <div>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <h2>Welcome, {workerName}!</h2>
-        {!onboarded && (
-          <div className="banner" style={{ marginTop: 10 }} role="alert">
-            Your onboarding is in progress.{' '}
-            <Link href="/portal/onboarding" className="btn link">
-              Continue onboarding →
-            </Link>
+    <div className="wrap home">
+      <ToolsPopup pending={toolsPending} />
+      <DocReminderOverlay docs={pendingDocs} />
+
+      {/* PHT clock + Kumusta greeting */}
+      <div style={{ margin: '8px 2px 2px', fontSize: 13, color: 'var(--muted)' }}>
+        {clock ? `${clock} · PHT` : ' '}
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'center',
+          margin: '6px 2px 2px',
+        }}
+      >
+        <div className="avatar">{initials}</div>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 19 }}>
+            {greetTL}
+            {greetName ? `, ${greetName}` : ''} {greetEmoji}
+          </h2>
+          <div className="sub" style={{ margin: '1px 0 0' }}>
+            {nyPh.sign}
+          </div>
+        </div>
+      </div>
+
+      <FromNewYork />
+
+      {/* Word from Your Mother (announcements) */}
+      <div className="dash-cell dash-word">
+        <div className="stickwrap">
+          <span className="sticker">📣 Word from Your Mother</span>
+        </div>
+        {announcements.length === 0 ? (
+          <div className="empty">No announcements right now.</div>
+        ) : (
+          <div className="card annlist">
+            {announcements.map((a) => (
+              <div className="item" key={a.id}>
+                <div style={{ fontWeight: 700 }}>
+                  <span className="dot">•</span>
+                  {a.title}
+                </div>
+                <div className="sub" style={{ margin: '1px 0 3px' }}>
+                  {String(a.published_at).slice(0, 10)}
+                </div>
+                {a.body && <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{a.body}</div>}
+              </div>
+            ))}
           </div>
         )}
       </div>
 
-      {/* Notifications */}
-      {notifications.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginBottom: 12 }}>Notifications</h3>
-          {notifications.map((n) => (
-            <div
-              key={n.id}
-              style={{
-                padding: '8px 0',
-                borderBottom: '1px solid var(--border)',
-              }}
-            >
-              <strong style={{ fontSize: 14 }}>{n.title}</strong>
-              {n.body && (
-                <p className="sub" style={{ margin: '2px 0 0' }}>
-                  {n.body}
-                </p>
-              )}
-              <span className="sub" style={{ fontSize: 11 }}>
-                {fmtDate(n.createdAt)}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Your pay + Activity */}
+      <PortalPayActivity pay={homePay} activity={activity} />
 
-      {/* Latest pay statement */}
-      {latestPayment !== null && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginBottom: 10 }}>Latest Pay Statement</h3>
-          <p className="sub">
-            Period: {fmtDate(latestPayment.periodStart)} – {fmtDate(latestPayment.periodEnd)}
-          </p>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-              gap: 8,
-              marginTop: 8,
-            }}
-          >
-            {[
-              { label: 'Gross', value: money(latestPayment.grossPhp) },
-              { label: 'Health Allow.', value: money(latestPayment.haPhp) },
-              { label: '13th Month', value: money(latestPayment.t13Php) },
-              { label: 'Net', value: money(latestPayment.netPhp) },
-            ].map(({ label, value }) => (
-              <div
-                key={label}
-                style={{ padding: '8px 12px', background: 'var(--surface2)', borderRadius: 6 }}
-              >
-                <p className="sub" style={{ margin: 0, fontSize: 11 }}>
-                  {label}
-                </p>
-                <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{value}</p>
-              </div>
+      {/* Toolkit */}
+      <div className="dash-cell">
+        <div className="stickwrap">
+          <span className="sticker">🧰 Your toolkit</span>
+        </div>
+        <div className="card">
+          <div className="qgrid">
+            {TOOLKIT.map((t) => (
+              <a key={t.label} href={t.href} target="_blank" rel="noreferrer">
+                <ToolIcon domain={t.domain} emoji={t.icon} />
+                <div>
+                  <div style={{ fontWeight: 600 }}>{t.label}</div>
+                  <div className="sub" style={{ fontSize: 11 }}>
+                    {t.sub}
+                  </div>
+                </div>
+              </a>
             ))}
           </div>
-          <Link href="/portal/statements" className="btn ghost sm" style={{ marginTop: 12 }}>
-            View all statements →
-          </Link>
         </div>
-      )}
-
-      {/* Announcements */}
-      {announcements.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginBottom: 12 }}>Announcements</h3>
-          {announcements.map((a) => (
-            <div key={a.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-              <strong style={{ fontSize: 14 }}>{a.title}</strong>
-              {a.body && (
-                <p className="sub" style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>
-                  {a.body}
-                </p>
-              )}
-              <span className="sub" style={{ fontSize: 11 }}>
-                {fmtDate(a.published_at)}
-                {a.author ? ` · ${a.author}` : ''}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Mood check-in */}
-      {!submitted ? (
-        <div className="card">
-          <h3 style={{ marginBottom: 10 }}>How are you feeling today?</h3>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-            {MOOD_LABELS.map((label, i) => (
-              <button
-                key={label}
-                type="button"
-                className={`btn sm${mood === i + 1 ? '' : ' ghost'}`}
-                onClick={() => setMood(i + 1)}
-                aria-pressed={mood === i + 1}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <textarea
-            value={moodNote}
-            onChange={(e) => setMoodNote(e.target.value)}
-            rows={2}
-            placeholder="Optional note…"
-            style={{ width: '100%', marginBottom: 10 }}
-          />
-          <button
-            type="button"
-            className="btn"
-            disabled={isPending || mood === null}
-            onClick={handleMoodSubmit}
-          >
-            {isPending ? 'Saving…' : 'Submit'}
-          </button>
-        </div>
-      ) : (
-        <div className="card">
-          <p style={{ color: 'var(--good)' }}>Thanks for checking in today!</p>
-        </div>
-      )}
+      </div>
     </div>
   );
 };

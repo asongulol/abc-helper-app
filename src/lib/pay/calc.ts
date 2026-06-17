@@ -9,9 +9,9 @@
  */
 
 import {
+  addMinor,
   type Centavos,
   type Cents,
-  addMinor,
   centavos,
   majorToMinor,
   mulRatioMinor,
@@ -77,8 +77,13 @@ export type ContractorRowResult = {
   ratio: number;
   /** Capped at the rate — ratio ≥ 1 pays exactly the rate (no overtime premium). */
   gross: Centavos | null;
-  /** Informational shortfall (rate − gross); NOT part of net. */
-  deduction: Centavos;
+  /**
+   * Performance shortfall (rate − gross). INFORMATIONAL ONLY — it is NOT
+   * subtracted from net. Named `shortfall` (not "deduction") deliberately: the
+   * legacy `deduction_php` column/label misrepresented this as money withheld.
+   * Real, subtracted deductions are misc items with `kind: 'deduction'`.
+   */
+  shortfall: Centavos;
   healthAllowance: Centavos;
   thirteenth: Centavos;
   pddLunch: Centavos;
@@ -102,7 +107,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
 
   const rate = input.rate;
   const gross = rate === null ? null : ratio >= 1 ? rate : mulRatioMinor(rate, ratio);
-  const deduction = rate === null || gross === null ? zeroCentavos() : subMinor(rate, gross);
+  const shortfall = rate === null || gross === null ? zeroCentavos() : subMinor(rate, gross);
 
   const ha =
     (input.includeHealthAllowance ?? true) && input.healthAllowanceEligible
@@ -127,7 +132,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     expectedHours: expected,
     ratio,
     gross,
-    deduction,
+    shortfall,
     healthAllowance: ha,
     thirteenth: t13,
     pddLunch: pdd,

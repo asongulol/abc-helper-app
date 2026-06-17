@@ -8,6 +8,7 @@
  */
 
 import { createServerSupabase } from '@/db/clients/server';
+import type { PeriodSummaryRow, ProcessPayment, SavedPayment } from '@/db/queries/payroll';
 import {
   deleteAllStatements as dbDeleteAllStatements,
   deleteStatement as dbDeleteStatement,
@@ -23,9 +24,8 @@ import {
   stepPeriodToLocked,
   updatePaymentRow,
 } from '@/db/queries/payroll';
-import type { PeriodSummaryRow, ProcessPayment, SavedPayment } from '@/db/queries/payroll';
-import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
 import type { RateHistoryRow } from '@/db/queries/rates';
+import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
 import { centavos, sumMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { miscTotal } from '@/lib/pay/calc';
@@ -48,8 +48,6 @@ import {
   UpdatePaymentRowSchema,
 } from '@/types/schemas/payroll';
 
-export type { PeriodSummaryRow, ProcessPayment, SavedPayment };
-
 /**
  * Effective-dated rate save (legacy `saveRate`). Same-day saves replace;
  * earlier open rates are closed; the change is audit-logged from→to.
@@ -60,7 +58,10 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
 
   const parsed = RateSaveSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -87,7 +88,10 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
     });
     return { ok: true, data: { kind: result.kind } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Rate save failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Rate save failed.',
+    };
   }
 }
 
@@ -103,7 +107,10 @@ export async function getRateHistory(args: {
     const history = await fetchRateHistory(db, args.workerId, args.companyId);
     return { ok: true, data: { history } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Lookup failed.',
+    };
   }
 }
 
@@ -120,7 +127,10 @@ export async function calculatePeriodDraft(
 
   const parsed = CalculateDraftSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -131,15 +141,18 @@ export async function calculatePeriodDraft(
     const result = await calculateDraft(input);
     return { ok: true, data: result };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Calculate failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Calculate failed.',
+    };
   }
 }
 
 /* ---------- Period summaries (batch list) ---------- */
 
-export async function getPeriodSummaries(args: { companyId: string }): Promise<
-  ActionResult<{ periods: PeriodSummaryRow[] }>
-> {
+export async function getPeriodSummaries(args: {
+  companyId: string;
+}): Promise<ActionResult<{ periods: PeriodSummaryRow[] }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
@@ -150,15 +163,19 @@ export async function getPeriodSummaries(args: { companyId: string }): Promise<
     const periods = await fetchPeriodSummaries(db, args.companyId);
     return { ok: true, data: { periods } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Lookup failed.',
+    };
   }
 }
 
 /* ---------- Saved payments for the editable draft table ---------- */
 
-export async function getSavedPayments(args: { periodId: string; companyId: string }): Promise<
-  ActionResult<{ payments: SavedPayment[] }>
-> {
+export async function getSavedPayments(args: {
+  periodId: string;
+  companyId: string;
+}): Promise<ActionResult<{ payments: SavedPayment[] }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
@@ -169,7 +186,10 @@ export async function getSavedPayments(args: { periodId: string; companyId: stri
     const payments = await fetchSavedPayments(db, args.periodId);
     return { ok: true, data: { payments } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Lookup failed.',
+    };
   }
 }
 
@@ -188,7 +208,10 @@ export async function lockPeriod(
 
   const parsed = LockPeriodSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -223,7 +246,10 @@ export async function lockPeriod(
 
     return { ok: true, data: { lockedCount: validCount } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lock failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Lock failed.',
+    };
   }
 }
 
@@ -237,7 +263,10 @@ export async function unlockPeriod(
 
   const parsed = UnlockPeriodSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -251,7 +280,10 @@ export async function unlockPeriod(
     if (period.state === 'paid')
       return { ok: false, error: 'Period is paid — mark all unpaid first.' };
     if (period.state !== 'locked')
-      return { ok: false, error: `Period is not locked (state: ${period.state}).` };
+      return {
+        ok: false,
+        error: `Period is not locked (state: ${period.state}).`,
+      };
 
     await dbUnlockPeriod(db, period.id);
 
@@ -262,9 +294,15 @@ export async function unlockPeriod(
       detail: { reason: input.reason, previous_state: period.state },
     });
 
-    return { ok: true, data: { periodStart: input.periodStart, periodEnd: input.periodEnd } };
+    return {
+      ok: true,
+      data: { periodStart: input.periodStart, periodEnd: input.periodEnd },
+    };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Unlock failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Unlock failed.',
+    };
   }
 }
 
@@ -282,7 +320,10 @@ export async function updatePaymentRowAction(
 
   const parsed = UpdatePaymentRowSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -377,7 +418,10 @@ export async function updatePaymentRowAction(
 
     return { ok: true, data: { netPhp } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Update failed.',
+    };
   }
 }
 
@@ -389,7 +433,10 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
 
   const parsed = DeleteStatementSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -407,7 +454,10 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
     });
     return { ok: true, data: { deleted: 1 } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Delete failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Delete failed.',
+    };
   }
 }
 
@@ -419,7 +469,10 @@ export async function deleteAllStatements(
 
   const parsed = DeleteAllStatementsSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -442,15 +495,19 @@ export async function deleteAllStatements(
     });
     return { ok: true, data: { deleted } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Delete failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Delete failed.',
+    };
   }
 }
 
 /* ---------- Process screen: fetch payments ---------- */
 
-export async function getProcessPayments(args: { periodId: string; companyId: string }): Promise<
-  ActionResult<{ payments: ProcessPayment[] }>
-> {
+export async function getProcessPayments(args: {
+  periodId: string;
+  companyId: string;
+}): Promise<ActionResult<{ payments: ProcessPayment[] }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
@@ -461,7 +518,10 @@ export async function getProcessPayments(args: { periodId: string; companyId: st
     const payments = await fetchProcessPayments(db, args.periodId);
     return { ok: true, data: { payments } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Lookup failed.',
+    };
   }
 }
 
@@ -473,7 +533,10 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
 
   const parsed = MarkPaidSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -488,11 +551,18 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
       companyId: input.companyId,
       action: 'mark_paid',
       entity: input.companyId,
-      detail: { count: input.paymentIds.length, method: 'manual', paid_at: paidAt },
+      detail: {
+        count: input.paymentIds.length,
+        method: 'manual',
+        paid_at: paidAt,
+      },
     });
     return { ok: true, data: { markedCount: input.paymentIds.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Mark paid failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Mark paid failed.',
+    };
   }
 }
 
@@ -502,7 +572,10 @@ export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCo
 
   const parsed = MarkUnpaidSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -520,7 +593,10 @@ export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCo
     });
     return { ok: true, data: { markedCount: input.paymentIds.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Mark unpaid failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Mark unpaid failed.',
+    };
   }
 }
 
@@ -530,7 +606,10 @@ export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ marke
 
   const parsed = MarkAllUnpaidSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -556,7 +635,10 @@ export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ marke
     });
     return { ok: true, data: { markedCount: toReverse.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Mark all unpaid failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Mark all unpaid failed.',
+    };
   }
 }
 
@@ -570,7 +652,10 @@ export async function toggleWiseRowLock(
 
   const parsed = ToggleWiseRowLockSchema.safeParse(args);
   if (!parsed.success)
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   const input = parsed.data;
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
@@ -594,6 +679,9 @@ export async function toggleWiseRowLock(
     }
     return { ok: true, data: { lockedAt: input.lockedAt ?? null } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Toggle lock failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Toggle lock failed.',
+    };
   }
 }

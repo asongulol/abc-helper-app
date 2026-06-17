@@ -1,4 +1,5 @@
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   applyMatchPatch,
   fetchDraftPayments,
@@ -18,7 +19,6 @@ import {
 } from '@/lib/wise/matcher';
 import type { MatchDecision, MatchResult, WiseDates, WiseTransfer } from '@/lib/wise/types';
 import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { wiseRequest, wiseRequestNullable } from './client';
 
 type Db = SupabaseClient<Database>;
@@ -164,11 +164,19 @@ export async function serviceDraft(db: Db, paymentIds: string[]): Promise<Servic
     const amountPhp = Number(row.net_php ?? 0);
 
     if (!recipientId) {
-      results.push({ paymentId: row.id, status: 'skipped', error: 'no Wise recipient' });
+      results.push({
+        paymentId: row.id,
+        status: 'skipped',
+        error: 'no Wise recipient',
+      });
       continue;
     }
     if (amountPhp <= 0) {
-      results.push({ paymentId: row.id, status: 'skipped', error: 'no amount' });
+      results.push({
+        paymentId: row.id,
+        status: 'skipped',
+        error: 'no amount',
+      });
       continue;
     }
 
@@ -360,7 +368,11 @@ export async function servicePoll(
     const { p } = f;
     if (!f.ok) {
       unknown++;
-      results.push({ paymentId: p.id, transferId: p.wise_transfer_id, status: 'unknown' });
+      results.push({
+        paymentId: p.id,
+        transferId: p.wise_transfer_id,
+        status: 'unknown',
+      });
       continue;
     }
     const wiseRow = f.detail;
@@ -399,7 +411,11 @@ export async function servicePoll(
       });
     } else {
       // cancelled / funds_refunded / bounced_back / etc. — surface but don't change DB.
-      results.push({ paymentId: p.id, transferId: p.wise_transfer_id, status: st });
+      results.push({
+        paymentId: p.id,
+        transferId: p.wise_transfer_id,
+        status: st,
+      });
     }
   }
 
@@ -661,7 +677,10 @@ export async function serviceMatch(
     wise_transfer_id: p.wise_transfer_id,
     workers: p.workers,
     pay_periods: p.pay_periods
-      ? { pay_date: p.pay_periods.pay_date, period_end: p.pay_periods.period_end }
+      ? {
+          pay_date: p.pay_periods.pay_date,
+          period_end: p.pay_periods.period_end,
+        }
       : null,
   }));
   annotateOrphans(allResults, matcherPayments, liveTransfers, windowDays);
@@ -834,7 +853,11 @@ export interface ContactResult {
 export async function serviceSearchContacts(
   term: string,
   profileId?: number,
-): Promise<{ profileId: number; searchTerm: string; contacts: ContactResult[] }> {
+): Promise<{
+  profileId: number;
+  searchTerm: string;
+  contacts: ContactResult[];
+}> {
   const pid = profileId ?? (await getBusinessProfileId());
   const contacts = await wiseRequest<Record<string, unknown>[]>(
     `/v1/profiles/${pid}/contacts?searchTerm=${encodeURIComponent(term)}`,

@@ -33,7 +33,6 @@ const API = 'https://api.hubstaff.com/v2';
 
 const SB_URL = Deno.env.get('SUPABASE_URL')!;
 const SB_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-const EMPLOYER = Deno.env.get('EMPLOYER_COMPANY_ID') ?? '11111111-1111-1111-1111-111111111111';
 
 const tokHdr = {
   apikey: SB_KEY,
@@ -52,6 +51,28 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { ...cors, 'Content-Type': 'application/json' },
   });
+}
+
+// ── Employer resolution ───────────────────────────────────────────────────────
+// Contractors are attributed to the single employer company (companies.kind =
+// 'employer'); clients are billing tags. Derive it from the data, never a magic
+// UUID — env override (EMPLOYER_COMPANY_ID) wins only as an explicit escape hatch.
+
+async function getEmployerCompanyId(): Promise<string> {
+  const override = Deno.env.get('EMPLOYER_COMPANY_ID');
+  if (override) return override.trim();
+  const r = await fetch(
+    `${SB_URL}/rest/v1/companies?kind=eq.employer&select=id&order=created_at.asc&limit=1`,
+    { headers: tokHdr },
+  );
+  if (r.ok) {
+    const rows = await r.json();
+    const id = rows?.[0]?.id;
+    if (id) return String(id);
+  }
+  throw new Error(
+    "no employer company found (companies.kind='employer'); create one or set EMPLOYER_COMPANY_ID",
+  );
 }
 
 // ── Token management ──────────────────────────────────────────────────────────
@@ -152,8 +173,10 @@ const looseKey = (raw: string | null | undefined): string => {
 
 async function handleCronIngest(body: Record<string, unknown>): Promise<Response> {
   const orgId = Number(body.org_id);
-  const companyId = String(body.company_id ?? EMPLOYER).trim();
   if (!Number.isFinite(orgId) || orgId <= 0) return json({ error: 'need org_id' }, 400);
+  const companyId = body.company_id
+    ? String(body.company_id).trim()
+    : await getEmployerCompanyId();
 
   // Resolve window.
   const lookback = Math.max(0, Math.min(31, Number(body.lookback_days ?? 3)));

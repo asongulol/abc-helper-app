@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { centavos } from '@/lib/money';
 import {
   HA_ANNUAL,
@@ -5,7 +6,6 @@ import {
   monthsWorkedInYear,
   thirteenthAccrual,
 } from '@/lib/pay/allowances';
-import { describe, expect, it } from 'vitest';
 
 describe('healthAllowance (legacy ~5864)', () => {
   it('pays the full ₱20,000 in the period containing the hire anniversary', () => {

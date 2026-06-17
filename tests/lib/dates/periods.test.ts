@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import {
   isWeekday,
   lastDayOfMonth,
@@ -5,7 +6,6 @@ import {
   periodFor,
   weekdayCount,
 } from '@/lib/dates/periods';
-import { describe, expect, it } from 'vitest';
 
 describe('periodFor — semi-monthly arrears periods (legacy ~5901)', () => {
   it('first half: 1–15 paid end of SAME month', () => {

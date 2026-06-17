@@ -9,7 +9,7 @@
  * All computations are UTC-day based.
  */
 
-import { isWeekday, isoDate } from '@/lib/dates/periods';
+import { isoDate, isWeekday } from '@/lib/dates/periods';
 
 export type Holiday = { name: string; date: string };
 
@@ -56,14 +56,23 @@ export const defaultHolidays = (year: number): Holiday[] => {
   const thanksgiving = nthWeekday(year, 10, 4, 4);
   return [
     { name: "New Year's Day", date: isoDate(year, 1, 1) },
-    { name: 'Martin Luther King Jr. Day', date: isoOfUtc(nthWeekday(year, 0, 1, 3)) },
+    {
+      name: 'Martin Luther King Jr. Day',
+      date: isoOfUtc(nthWeekday(year, 0, 1, 3)),
+    },
     { name: 'Good Friday', date: isoOfUtc(goodFriday) },
     { name: 'Memorial Day', date: isoOfUtc(lastWeekday(year, 4, 1)) },
     { name: 'Independence Day', date: isoDate(year, 7, 4) },
     { name: 'Labor Day', date: isoOfUtc(nthWeekday(year, 8, 1, 1)) },
-    { name: "Indigenous Peoples' Day", date: isoOfUtc(nthWeekday(year, 9, 1, 2)) },
+    {
+      name: "Indigenous Peoples' Day",
+      date: isoOfUtc(nthWeekday(year, 9, 1, 2)),
+    },
     { name: 'Thanksgiving Day', date: isoOfUtc(thanksgiving) },
-    { name: 'Day after Thanksgiving', date: isoOfUtc(addDays(thanksgiving, 1)) },
+    {
+      name: 'Day after Thanksgiving',
+      date: isoOfUtc(addDays(thanksgiving, 1)),
+    },
     { name: 'Christmas Day', date: isoDate(year, 12, 25) },
   ];
 };

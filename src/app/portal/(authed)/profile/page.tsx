@@ -1,8 +1,8 @@
+import { redirect } from 'next/navigation';
 import { PortalProfile } from '@/components/portal/PortalProfile';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchOwnProfile, fetchPortalSettings } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { redirect } from 'next/navigation';
 
 export default async function PortalProfilePage() {
   const worker = await getCurrentWorker();

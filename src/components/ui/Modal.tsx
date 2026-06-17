@@ -91,6 +91,7 @@ export const Modal = ({ title, onClose, escClose = true, maxWidth, children }: M
 
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: backdrop click-to-close; Escape handled above.
+    // biome-ignore lint/a11y/noStaticElementInteractions: backdrop overlay; keyboard users close via Escape (handled above) or the dialog's controls.
     <div className="modal-bg" onClick={() => onCloseRef.current()}>
       {/* IMPROVED: native <dialog> (legacy used a div with role="dialog"); kept
           always-open + manual focus trap so the legacy .modal CSS applies as-is. */}

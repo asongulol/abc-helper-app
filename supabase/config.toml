@@ -385,6 +385,27 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# ---------------------------------------------------------------------------
+# Edge functions
+# ---------------------------------------------------------------------------
+# This app keeps exactly TWO edge functions, both CRON-only. All payroll/money
+# mutations otherwise live in JWT-verified Next.js server actions (re-verified at
+# the point of use, ADR-0004), NOT in publicly-invokable functions. These two are
+# cron ticks with no end-user, so a Supabase user JWT cannot apply; each is gated
+# in-code by a shared secret (`x-cron-secret` checked against
+# app_secrets.cron_secret), so verify_jwt is explicitly disabled — a deliberate,
+# documented choice, not the legacy "every function --no-verify-jwt" default.
+#   - hubstaff-sync : time ingest; only ever writes pending, un-approved time rows.
+#   - wise-payouts  : payout reconcile (poll); DRAFT-ONLY (ADR-0007) — it only GETs
+#                     transfer detail and flips payment status, never funds.
+[functions.hubstaff-sync]
+enabled = true
+verify_jwt = false
+
+[functions.wise-payouts]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

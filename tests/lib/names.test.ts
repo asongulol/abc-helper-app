@@ -1,5 +1,5 @@
-import { looseKey, nameKey, nameTokens } from '@/lib/names';
 import { describe, expect, it } from 'vitest';
+import { looseKey, nameKey, nameTokens } from '@/lib/names';
 
 describe('name keys (legacy nameTokens/nameKey/looseKey ~4313)', () => {
   it('strict key is order- and middle-name-insensitive', () => {

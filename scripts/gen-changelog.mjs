@@ -17,13 +17,15 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import Anthropic from '@anthropic-ai/sdk';
 
 const MAX_DIFF_CHARS = 12_000;
 const MODEL = 'claude-haiku-4-5-20251001';
 
 function sh(cmd) {
-  return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  return execSync(cmd, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
 }
 
 function quietExit(msg) {
@@ -68,6 +70,17 @@ const instructions =
   'do not apply). Short bullet points. Do not invent changes absent from the diff.';
 const prompt = `${instructions}\n\n${diff}`;
 
+// Lazy-load the SDK: it's an optional, best-effort dependency, so resolve it at
+// runtime (after the key check) rather than via a top-level import. A missing
+// package must exit 0 quietly — a static import would throw ERR_MODULE_NOT_FOUND
+// at load time, before any guard runs, and block the push.
+let Anthropic;
+try {
+  ({ default: Anthropic } = await import('@anthropic-ai/sdk'));
+} catch {
+  quietExit('@anthropic-ai/sdk not installed; skipping changelog (push continues).');
+}
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 let note;
@@ -98,7 +111,9 @@ writeFileSync('CHANGELOG.md', `## ${date} (${sha})\n\n${note}\n\n${existing}`);
 
 try {
   sh('git add CHANGELOG.md');
-  execSync(`git commit -m "docs: update changelog (${sha})"`, { stdio: 'ignore' });
+  execSync(`git commit -m "docs: update changelog (${sha})"`, {
+    stdio: 'ignore',
+  });
   execSync(
     `git tag "changelog-${new Date()
       .toISOString()

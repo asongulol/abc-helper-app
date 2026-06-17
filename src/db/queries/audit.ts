@@ -4,8 +4,8 @@
  */
 
 import 'server-only';
-import type { Database, Json } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database, Json } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
@@ -42,7 +42,9 @@ export const getAuditLogPage = async (
 
   let query = db
     .from('audit_log')
-    .select('id, created_at, actor, action, entity, company_id, detail', { count: 'exact' })
+    .select('id, created_at, actor, action, entity, company_id, detail', {
+      count: 'exact',
+    })
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
     .range(from, to);

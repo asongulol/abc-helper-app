@@ -41,8 +41,18 @@ export const resolveRate = (
 
 /** A planned write for an effective-dated rate change (executed by the data layer). */
 export type RateUpsertPlan =
-  | { kind: 'same-day-update'; rateId: string; amountPhp: number; effectiveStart: string }
-  | { kind: 'close-and-insert'; closeBefore: string; amountPhp: number; effectiveStart: string };
+  | {
+      kind: 'same-day-update';
+      rateId: string;
+      amountPhp: number;
+      effectiveStart: string;
+    }
+  | {
+      kind: 'close-and-insert';
+      closeBefore: string;
+      amountPhp: number;
+      effectiveStart: string;
+    };
 
 /**
  * Pure planning step for the legacy 3-step rate save:
@@ -53,11 +63,26 @@ export type RateUpsertPlan =
  *  3. insert the new rate (period_basis 'semi_monthly').
  */
 export const planRateUpsert = (
-  existing: readonly { id: string; effectiveStart: string; effectiveEnd: string | null }[],
+  existing: readonly {
+    id: string;
+    effectiveStart: string;
+    effectiveEnd: string | null;
+  }[],
   amountPhp: number,
   effectiveStart: string,
 ): RateUpsertPlan => {
   const sameDay = existing.find((r) => r.effectiveStart === effectiveStart);
-  if (sameDay) return { kind: 'same-day-update', rateId: sameDay.id, amountPhp, effectiveStart };
-  return { kind: 'close-and-insert', closeBefore: effectiveStart, amountPhp, effectiveStart };
+  if (sameDay)
+    return {
+      kind: 'same-day-update',
+      rateId: sameDay.id,
+      amountPhp,
+      effectiveStart,
+    };
+  return {
+    kind: 'close-and-insert',
+    closeBefore: effectiveStart,
+    amountPhp,
+    effectiveStart,
+  };
 };

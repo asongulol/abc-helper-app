@@ -6,8 +6,8 @@
  */
 
 import 'server-only';
-import type { Database } from '@/db/types';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
@@ -104,24 +104,61 @@ export const fetchDocument = async (db: Db, documentId: string): Promise<Documen
 };
 
 /**
- * Count docs expiring within `withinDays` for a company (overview tile).
- * Mirrors the documents-expiry-check edge fn threshold (default 30 days).
+ * Delete any fileless (no upload) placeholder rows for a worker's doc slot.
+ * Never touches real uploads (those have a storage_path).
  */
-export const countExpiringDocuments = async (
+export const clearFilelessDocumentSlot = async (
   db: Db,
-  companyId: string,
-  withinDays = 30,
-): Promise<number> => {
-  const today = new Date().toISOString().slice(0, 10);
-  const upper = new Date(Date.now() + withinDays * 86_400_000).toISOString().slice(0, 10);
-  const { count, error } = await db
+  workerId: string,
+  kind: Database['public']['Enums']['document_kind'],
+  side: string | null,
+): Promise<void> => {
+  let q = db
     .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-    .gte('expires_on', today)
-    .lte('expires_on', upper);
-  if (error) throw new Error(`expiring docs: ${error.message}`);
-  return count ?? 0;
+    .delete()
+    .eq('worker_id', workerId)
+    .eq('kind', kind)
+    .is('storage_path', null);
+  q = side === null ? q.is('side', null) : q.eq('side', side);
+  const { error } = await q;
+  if (error) throw new Error(`clear placeholder: ${error.message}`);
+};
+
+/**
+ * Record an admin waive/defer for a REQUIRED document the contractor hasn't
+ * uploaded yet, as a fileless documents row (storage_path null). A prior
+ * fileless placeholder for the same slot is replaced so they don't accumulate.
+ * `expiresOn` carries the defer-until date (null for a waiver). Service client.
+ */
+export const resolveMissingDocumentSlot = async (
+  db: Db,
+  args: {
+    workerId: string;
+    kind: Database['public']['Enums']['document_kind'];
+    side: string | null;
+    reviewStatus: 'waived' | 'deferred';
+    reviewedBy: string;
+    reviewReason: string | null;
+    expiresOn: string | null;
+    title: string;
+    /** Employer company the doc belongs to (so it shows on the Documents page). */
+    companyId: string | null;
+  },
+): Promise<void> => {
+  await clearFilelessDocumentSlot(db, args.workerId, args.kind, args.side);
+  const { error } = await db.from('documents').insert({
+    worker_id: args.workerId,
+    kind: args.kind,
+    side: args.side,
+    review_status: args.reviewStatus,
+    reviewed_by: args.reviewedBy,
+    reviewed_at: new Date().toISOString(),
+    review_reason: args.reviewReason,
+    expires_on: args.expiresOn,
+    title: args.title,
+    ...(args.companyId ? { company_id: args.companyId } : {}),
+  });
+  if (error) throw new Error(`resolve missing document: ${error.message}`);
 };
 
 /** Update review status/reason on a document. Uses service client (caller checks). */
@@ -176,6 +213,10 @@ export const fetchDocumentsForExpiryCheck = async (
       'id, kind, title, expires_on, worker_id, workers(first_name, middle_name, last_name, status), companies(name)',
     )
     .lte('expires_on', upper)
+    // Exclude fileless rows: a waived/deferred placeholder reuses expires_on as a
+    // "due date", but with no uploaded file there's nothing that can expire — it
+    // must not surface as an "overdue/expiring document" in the expiry digest.
+    .not('storage_path', 'is', null)
     .order('expires_on', { ascending: true });
 
   if (error) throw new Error(`fetchDocumentsForExpiryCheck: ${error.message}`);

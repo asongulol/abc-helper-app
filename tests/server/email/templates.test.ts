@@ -1,10 +1,10 @@
+import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_HIRE_EMAILS,
   escapeHtml,
   mergeTemplate,
   toolsBlock,
 } from '@/server/email/templates';
-import { describe, expect, it } from 'vitest';
 
 describe('escapeHtml', () => {
   it('escapes all five special HTML characters', () => {
@@ -56,7 +56,9 @@ describe('mergeTemplate', () => {
 
 describe('toolsBlock', () => {
   it('renders a single tool with labelled fields', () => {
-    const creds = { gmail: { email: 'test@abckidsny.com', password: 'secret123' } };
+    const creds = {
+      gmail: { email: 'test@abckidsny.com', password: 'secret123' },
+    };
     const html = toolsBlock(creds);
     expect(html).toContain('<b>Company Gmail</b>');
     expect(html).toContain('email: test@abckidsny.com');

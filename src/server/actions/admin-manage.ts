@@ -13,17 +13,10 @@ import { createServiceClient } from '@/db/clients/service';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { requireOwner } from '@/server/auth/admin';
+import { ALLOWED_ADMIN_DOMAINS, isAllowedAdminEmail } from '@/server/auth/allowed-domains';
 
-// Admins must use a work-domain email (mirrors the legacy Edge Function guard).
-const ALLOWED_DOMAINS = ['abckidsny.com', 'abbilabs.com'] as const;
-const ALLOWED_EXCEPTIONS: readonly string[] = [] as const;
-
-function emailOk(email: string): boolean {
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return false;
-  if ((ALLOWED_EXCEPTIONS as readonly string[]).includes(email)) return true;
-  const domain = email.split('@')[1] ?? '';
-  return (ALLOWED_DOMAINS as readonly string[]).includes(domain);
-}
+// Admins must use a work-domain email (same gate the OAuth callback enforces —
+// the allowed domains come from ADMIN_SSO_ALLOWED_DOMAIN, see allowed-domains.ts).
 
 /**
  * Add an admin. Uses the admin_lookup_auth_user RPC (service client,
@@ -48,10 +41,10 @@ export async function addAdmin(args: {
   const role = args.role === 'owner' ? 'owner' : 'admin';
 
   if (!email) return { ok: false, error: 'Email required.' };
-  if (!emailOk(email))
+  if (!isAllowedAdminEmail(email))
     return {
       ok: false,
-      error: `Email must be on an allowed work domain (${ALLOWED_DOMAINS.join(', ')}).`,
+      error: `Email must be on an allowed work domain (${ALLOWED_ADMIN_DOMAINS.join(', ')}).`,
     };
 
   // Service client — RLS bypassed; caller ownership already verified above.
@@ -169,7 +162,11 @@ export async function removeAdmin(args: { email: string }): Promise<ActionResult
     // Cancel a pending invite.
     const { error } = await svc.from('pending_admins').delete().eq('email', email);
     if (error) return { ok: false, error: `Couldn't remove invite: ${error.message}` };
-    await logEvent({ action: 'admin.invite_removed', entity: email, detail: { email } });
+    await logEvent({
+      action: 'admin.invite_removed',
+      entity: email,
+      detail: { email },
+    });
     return { ok: true };
   }
 

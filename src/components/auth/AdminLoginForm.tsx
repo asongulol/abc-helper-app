@@ -1,7 +1,7 @@
 'use client';
 
-import { createBrowserSupabase } from '@/db/clients/browser';
 import { type FormEvent, useId, useState } from 'react';
+import { createBrowserSupabase } from '@/db/clients/browser';
 
 type Busy = 'google' | 'password' | null;
 
@@ -17,6 +17,8 @@ export const AdminLoginForm = () => {
   const [password, setPassword] = useState('');
   const emailId = useId();
   const passwordId = useId();
+  // Google OAuth isn't wired on the local Supabase stack — steer dev sign-in to email.
+  const isLocalStack = /127\.0\.0\.1|localhost/.test(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '');
 
   const signInWithGoogle = async () => {
     setBusy('google');
@@ -55,13 +57,18 @@ export const AdminLoginForm = () => {
     <div>
       <button
         type="button"
-        className="btn"
+        className={isLocalStack ? 'btn ghost' : 'btn'}
         style={{ width: '100%' }}
         disabled={busy !== null}
         onClick={signInWithGoogle}
       >
         {busy === 'google' ? 'Redirecting…' : 'Sign in with Google'}
       </button>
+      {isLocalStack && (
+        <p className="sub" style={{ fontSize: 12, marginTop: 6 }}>
+          Google isn&apos;t enabled on the local stack — use email below.
+        </p>
+      )}
       <div
         className="muted"
         style={{
@@ -102,7 +109,7 @@ export const AdminLoginForm = () => {
         </div>
         <button
           type="submit"
-          className="btn ghost"
+          className={isLocalStack ? 'btn' : 'btn ghost'}
           style={{ width: '100%' }}
           disabled={busy !== null}
         >

@@ -31,10 +31,20 @@ const DATETIME_FMT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'UTC',
 });
 
-/** "PHP 12,345.67" / "$123.45" / "—" for null (legacy `money()`). */
+/** "PHP 12,345.67" / "$123.45" / "—" for null (legacy admin `money()`). */
 export const money = (n: number | null | undefined, cur: Currency = 'PHP'): string => {
   if (n == null) return '—';
   return (cur === 'USD' ? '$' : 'PHP ') + NUMBER_2DP.format(n);
+};
+
+/**
+ * "₱12,345.67" / "—" for null — the legacy contractor *portal* `peso()`
+ * (portal/index.html:525). The portal renders the peso sign, NOT the admin
+ * app's "PHP " prefix, so portal components must use this instead of `money()`.
+ */
+export const peso = (n: number | null | undefined): string => {
+  if (n == null || Number.isNaN(n)) return '—';
+  return `₱${NUMBER_2DP.format(n)}`;
 };
 
 /** "Jun 12, 2026" from an ISO date or timestamp; "—" for empty/invalid. */

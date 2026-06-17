@@ -1,9 +1,9 @@
 'use client';
 
+import { useEffect, useId, useReducer, useRef } from 'react';
 import { fmtDate } from '@/lib/format';
 import type { Holiday } from '@/lib/pay/holidays';
 import { defaultHolidays } from '@/lib/pay/holidays';
-import { useEffect, useId, useReducer, useRef } from 'react';
 
 /** localStorage key must match the legacy app's `holidays_<year>`. */
 const storageKey = (year: number) => `holidays_${year}`;
@@ -190,7 +190,11 @@ export const HolidaysCard = () => {
                     <input
                       value={h.name}
                       onChange={(e) =>
-                        dispatch({ type: 'update_name', date: h.date, name: e.target.value })
+                        dispatch({
+                          type: 'update_name',
+                          date: h.date,
+                          name: e.target.value,
+                        })
                       }
                       aria-label={`Holiday name for ${h.date}`}
                       style={{ width: '100%', minWidth: 180 }}

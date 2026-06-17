@@ -6,12 +6,12 @@
  * this action and builds the CSV in the browser.
  */
 
+import { z } from 'zod';
 import { createServerSupabase } from '@/db/clients/server';
-import { type ReportPaymentRow, fetchReportPayments } from '@/db/queries/reports';
+import { fetchReportPayments, type ReportPaymentRow } from '@/db/queries/reports';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { IsoDateSchema } from '@/types/schemas/payroll';
-import { z } from 'zod';
 
 const DetailExportSchema = z.object({
   companyId: z.string().uuid(),
@@ -28,7 +28,10 @@ export async function getReportDetail(
 
   const parsed = DetailExportSchema.safeParse(args);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
   }
   const { companyId, fromDate, toDate } = parsed.data;
   if (!admin.isOwner && !admin.companyIds.includes(companyId)) {
@@ -40,6 +43,9 @@ export async function getReportDetail(
     const rows = await fetchReportPayments(db, companyId, fromDate, toDate);
     return { ok: true, data: { rows } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Export failed.' };
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Export failed.',
+    };
   }
 }

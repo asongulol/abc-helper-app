@@ -1,11 +1,11 @@
 'use client';
 
-import { EmptyState, SortableTable } from '@/components/ui';
+import { useState } from 'react';
 import type { SortableColumn } from '@/components/ui';
+import { EmptyState, SortableTable } from '@/components/ui';
 import type { AuditLogRow } from '@/db/queries/audit';
 import type { Json } from '@/db/types';
 import { fmtDateTime } from '@/lib/format';
-import { useState } from 'react';
 
 interface AuditTableProps {
   rows: AuditLogRow[];
@@ -155,7 +155,12 @@ export const AuditTable = ({
       {totalPages > 1 && (
         <div
           className="actionbar"
-          style={{ justifyContent: 'center', marginTop: 12, borderTop: 'none', paddingTop: 0 }}
+          style={{
+            justifyContent: 'center',
+            marginTop: 12,
+            borderTop: 'none',
+            paddingTop: 0,
+          }}
         >
           <button
             type="button"

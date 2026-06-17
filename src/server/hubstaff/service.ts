@@ -32,6 +32,7 @@ import 'server-only';
  * The 'Sync now' button in the UI calls syncHubstaffForCompany here.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   fetchAllWorkerLinks,
   fetchCanonicalSourceNames,
@@ -51,8 +52,7 @@ import {
   transformActivities,
 } from '@/lib/hubstaff/transform';
 import type { HubstaffDailyActivity, HubstaffTimeOffRequest } from '@/lib/hubstaff/types';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { HUBSTAFF_API_BASE, fetchMemberNames, getAccessToken, pageAll } from './client';
+import { fetchMemberNames, getAccessToken, HUBSTAFF_API_BASE, pageAll } from './client';
 
 type Db = SupabaseClient<Database>;
 

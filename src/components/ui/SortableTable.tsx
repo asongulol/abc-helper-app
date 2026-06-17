@@ -155,7 +155,6 @@ export const SortableTable = <T,>({
             </thead>
             <tbody>
               {visible.map((row) => (
-                // biome-ignore lint/a11y/useKeyWithClickEvents: row click is a convenience; primary actions live in cells.
                 <tr
                   key={rowKey(row)}
                   className={onRowClick ? 'clickable' : undefined}

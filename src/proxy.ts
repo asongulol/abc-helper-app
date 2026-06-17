@@ -1,6 +1,6 @@
-import type { Database } from '@/db/types';
 import { createServerClient } from '@supabase/ssr';
 import { type NextRequest, NextResponse } from 'next/server';
+import type { Database } from '@/db/types';
 
 /**
  * Auth gate (Next.js proxy convention, formerly middleware).

@@ -1,11 +1,11 @@
+import { redirect } from 'next/navigation';
 import { AuditShell } from '@/components/audit/AuditShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { getAuditLogPage } from '@/db/queries/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
-import { redirect } from 'next/navigation';
 
-export const metadata = { title: 'Audit Log — ABC Kids HR' };
+export const metadata = { title: 'Audit Log — Aaron Anderson E.H.S. LLC' };
 
 const PAGE_SIZE = 50;
 
@@ -14,11 +14,7 @@ interface SearchParams {
   q?: string;
 }
 
-export default async function AuditPage({
-  searchParams,
-}: {
-  searchParams: Promise<SearchParams>;
-}) {
+export default async function AuditPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 

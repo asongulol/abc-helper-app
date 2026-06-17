@@ -1,5 +1,5 @@
-import { expectedHours } from '@/lib/pay/expected-hours';
 import { describe, expect, it } from 'vitest';
+import { expectedHours } from '@/lib/pay/expected-hours';
 
 describe('expectedHours (legacy ~5852)', () => {
   it('FT: weekdays × 8, no holidays', () => {

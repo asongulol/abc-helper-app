@@ -1,9 +1,9 @@
+import { describe, expect, it } from 'vitest';
 import {
   canAdvanceFromStage1,
   deriveStageInfo,
   nextUnsignedAgreement,
 } from '@/lib/onboarding/progress';
-import { describe, expect, it } from 'vitest';
 
 describe('deriveStageInfo', () => {
   it('returns Complete when fully onboarded', () => {

@@ -99,7 +99,11 @@ export interface TransformResult {
    * Workers whose hubstaff_user_id was null but matched by name this run —
    * callers should persist the id so future runs use the stable numeric id.
    */
-  idsToPersist: Array<{ workerId: string; companyId: string; hubstaffUserId: number }>;
+  idsToPersist: Array<{
+    workerId: string;
+    companyId: string;
+    hubstaffUserId: number;
+  }>;
 }
 
 // ─── Decided rows (for skip-decided logic) ────────────────────────────────────

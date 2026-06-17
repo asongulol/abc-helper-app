@@ -4,7 +4,7 @@
  */
 export default function AuditLoading() {
   return (
-    <div aria-busy="true" aria-label="Loading audit log">
+    <div role="status" aria-busy="true" aria-label="Loading audit log">
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="skel">
           <div className="skel-bar" style={{ width: '28%' }} />

@@ -3,8 +3,8 @@
  * Mirrors the legacy verified parser behaviour.
  */
 
-import { hmsToSeconds, isParseError, parseHubstaffCsv, parseRawCsv } from '@/lib/time/csv';
 import { describe, expect, it } from 'vitest';
+import { hmsToSeconds, isParseError, parseHubstaffCsv, parseRawCsv } from '@/lib/time/csv';
 
 // ─── hmsToSeconds ─────────────────────────────────────────────────────────────
 

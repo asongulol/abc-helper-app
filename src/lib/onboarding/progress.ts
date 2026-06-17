@@ -49,7 +49,13 @@ export const deriveStageInfo = (state: OnboardingState): StageInfo => {
   const isFullyOnboarded = !!completedAt && currentStage === 'complete';
 
   if (isFullyOnboarded) {
-    return { label: 'Complete', tone: 'good', pct: 100, complete: true, isFullyOnboarded: true };
+    return {
+      label: 'Complete',
+      tone: 'good',
+      pct: 100,
+      complete: true,
+      isFullyOnboarded: true,
+    };
   }
 
   if (stalled) {

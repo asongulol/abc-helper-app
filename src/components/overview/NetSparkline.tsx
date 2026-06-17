@@ -4,6 +4,11 @@ import { toPixelPoints, toPolylinePoints, toSparkPoints } from '@/lib/overview/s
 
 interface NetSparklineProps {
   periods: RecentPeriodNet[];
+  /**
+   * Percent change of the latest period vs the prior one, computed by the page
+   * from this same series. `null` when there is no prior period to compare.
+   */
+  deltaPct?: number | null;
 }
 
 const W = 220;
@@ -14,7 +19,7 @@ const PAD = 6;
  * Recent-periods net-pay sparkline — pure SVG, no chart library.
  * Renders inline in a Server Component (CSP-safe, zero JS).
  */
-export const NetSparkline = ({ periods }: NetSparklineProps) => {
+export const NetSparkline = ({ periods, deltaPct = null }: NetSparklineProps) => {
   if (periods.length === 0) {
     return (
       <div className="ov-spark-wrap">
@@ -39,14 +44,25 @@ export const NetSparkline = ({ periods }: NetSparklineProps) => {
   // integer centavos for display
   const lastNetDisplay = money(centavosToPhp(Math.round(lastNet * 100)));
 
+  // Delta arrow + tone — mirrors the legacy ▲/▼/▬ thresholds (±0.5%).
+  const deltaTone =
+    deltaPct == null ? 'flat' : deltaPct > 0.5 ? 'up' : deltaPct < -0.5 ? 'down' : 'flat';
+  const deltaArrow = deltaPct == null ? '—' : deltaPct > 0.5 ? '▲' : deltaPct < -0.5 ? '▼' : '▬';
+
   return (
     <div className="ov-spark-wrap">
-      <div>
-        <div className="ov-tile-label">Recent net pay</div>
-        <div className="ov-tile-num" style={{ fontSize: 18 }}>
+      <div className="ov-spark-meta">
+        <div className="ov-tile-label">
+          <span aria-hidden="true">📈</span>NET PAY · last {periods.length} periods
+        </div>
+        <div className="ov-tile-num" style={{ fontSize: 22, margin: '2px 0' }}>
           {lastNetDisplay}
         </div>
-        <div className="ov-tile-sub">last period · {periods.length} shown</div>
+        <span className={`ov-delta ${deltaTone}`}>
+          {deltaPct == null
+            ? '— vs prior period'
+            : `${deltaArrow} ${Math.abs(deltaPct).toFixed(1)}% vs prior period`}
+        </span>
       </div>
       <svg
         className="ov-spark"

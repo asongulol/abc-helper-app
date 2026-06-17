@@ -5,8 +5,8 @@
  * The active period is passed from the parent; this component just fires callbacks.
  */
 
-import { isoToUtcMs, periodFor, utcMsToIso } from '@/lib/dates/periods';
 import type { PayPeriod } from '@/lib/dates/periods';
+import { isoToUtcMs, periodFor, utcMsToIso } from '@/lib/dates/periods';
 
 interface PeriodPickerProps {
   period: PayPeriod;

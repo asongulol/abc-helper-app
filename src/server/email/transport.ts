@@ -13,8 +13,8 @@ import 'server-only';
  *  - If GMAIL_USER / GMAIL_APP_PASSWORD are unset, logs once and no-ops.
  */
 
-import { env } from '@/server/env';
 import nodemailer from 'nodemailer';
+import { env } from '@/server/env';
 
 // ---------------------------------------------------------------------------
 // Internal logger (no console.log per Biome rules)
@@ -54,11 +54,14 @@ export const sendEmail = async ({ to, subject, html }: SendEmailArgs): Promise<S
   const pass = env.GMAIL_APP_PASSWORD;
 
   if (!user || !pass) {
-    log('warn', 'Gmail SMTP credentials not set — email skipped', { to, subject });
+    log('warn', 'Gmail SMTP credentials not set — email skipped', {
+      to,
+      subject,
+    });
     return { ok: false, error: 'email not configured' };
   }
 
-  const from = env.HIRING_REVIEW_EMAIL_FROM ?? `ABC Kids NY <${user}>`;
+  const from = env.HIRING_REVIEW_EMAIL_FROM ?? `Aaron Anderson E.H.S. LLC <${user}>`;
 
   // Fresh transporter per message (matches legacy denomailer pattern: connection
   // is opened, message sent, then closed — no connection pooling).

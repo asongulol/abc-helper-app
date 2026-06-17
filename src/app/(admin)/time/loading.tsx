@@ -3,7 +3,7 @@
  */
 export default function TimeLoading() {
   return (
-    <div aria-busy="true" aria-label="Loading time import">
+    <div role="status" aria-busy="true" aria-label="Loading time import">
       <div className="card">
         <div className="skel" aria-hidden="true">
           <div className="skel-bar" style={{ width: '38%' }} />

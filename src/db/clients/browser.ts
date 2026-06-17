@@ -1,7 +1,7 @@
 'use client';
 
-import type { Database } from '@/db/types';
 import { createBrowserClient } from '@supabase/ssr';
+import type { Database } from '@/db/types';
 
 /**
  * Browser Supabase client (RLS applies). Client components only — e.g. starting

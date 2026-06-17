@@ -12,8 +12,8 @@
 import { majorToMinor } from '@/lib/money';
 import type {
   MatchDecision,
-  MatchResult,
   MatcherPayment,
+  MatchResult,
   OrphanCandidate,
   PaymentPatch,
   WiseDates,

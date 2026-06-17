@@ -5,10 +5,10 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import type { RosterLink } from '@/lib/time/attribution';
 import type { TimeEntryRaw } from '@/lib/time/grouping';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 type Db = SupabaseClient<Database>;
 
