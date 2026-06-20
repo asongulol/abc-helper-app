@@ -3,7 +3,7 @@
 import { useEffect, useId, useReducer, useRef } from 'react';
 import { fmtDate } from '@/lib/format';
 import type { Holiday } from '@/lib/pay/holidays';
-import { defaultHolidays } from '@/lib/pay/holidays';
+import { defaultHolidays, observedDate } from '@/lib/pay/holidays';
 
 /** localStorage key must match the legacy app's `holidays_<year>`. */
 const storageKey = (year: number) => `holidays_${year}`;
@@ -73,10 +73,13 @@ const reducer = (state: State, action: Action): State => {
 // ---------------------------------------------------------------------------
 
 /**
- * Observed-holidays editor.
+ * Observed-holidays editor — the "Observed Holidays" row of the Configuration
+ * launcher (rendered inside that panel's Modal, so it owns no heading of its own).
  *
  * Persists to localStorage key `holidays_<year>` exactly like the legacy app.
- * Defaults come from `defaultHolidays(year)`.  Client-only — no server round-trip.
+ * Defaults come from `defaultHolidays(year)`, already shifted to the observed
+ * working day; a custom holiday that lands on a weekend shows its observed day
+ * inline. Client-only — no server round-trip.
  */
 export const HolidaysCard = () => {
   const currentYear = new Date().getFullYear();
@@ -130,11 +133,11 @@ export const HolidaysCard = () => {
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 1 + i);
 
   return (
-    <div className="card">
-      <h3>Observed holidays</h3>
+    <div>
       <p className="sub">
-        Holidays reduce expected working hours by one day per occurrence (8h FT / 4h PT). Stored in
-        your browser — changes are local to this device.
+        Holidays reduce expected working hours by one day per occurrence (8h FT / 4h PT). A holiday
+        landing on a weekend is observed on the closest working day — Saturday → the Friday before,
+        Sunday → the Monday after. Stored in your browser — changes are local to this device.
       </p>
 
       <div className="row" style={{ alignItems: 'center', marginBottom: 12 }}>
@@ -185,6 +188,15 @@ export const HolidaysCard = () => {
                     <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>
                       {fmtDate(h.date)}
                     </span>
+                    {observedDate(h.date) !== h.date && (
+                      <span
+                        className="muted"
+                        style={{ fontSize: 11, marginLeft: 6, fontStyle: 'italic' }}
+                        title="Falls on a weekend — counted on the closest working day"
+                      >
+                        → observed {fmtDate(observedDate(h.date))}
+                      </span>
+                    )}
                   </td>
                   <td data-label="Name">
                     <input

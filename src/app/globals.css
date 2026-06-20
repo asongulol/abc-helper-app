@@ -1339,14 +1339,83 @@ a.btn:hover {
 
 /* ===== Login / connect card =============================================== */
 .connect {
-  max-width: 440px;
-  margin: 80px auto;
+  max-width: 520px;
+  margin: 72px auto;
   text-align: center;
   padding: 0 16px;
 }
 .connect input {
   width: 100%;
   margin-bottom: 10px;
+}
+/* Sign-in card — generous padding, soft corners, prominent lockup. */
+.connect .card {
+  padding: 40px 40px 32px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  margin-bottom: 0;
+}
+.connect .card h2 {
+  font-size: 25px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.connect .card .sub {
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+/* Stacked, full-width, comfortably tall sign-in actions. */
+.login-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-actions .btn {
+  width: 100%;
+  padding: 13px 16px;
+  font-size: 15px;
+  border-radius: var(--radius);
+}
+.login-actions form {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.login-divider {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 2px 0;
+}
+/* "Classic view" — pinned to the viewport corner, like the reference. */
+.classic-toggle {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+.classic-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.classic-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
 }
 /* ===== Modal / overlay ==================================================== */
 .modal-bg {
