@@ -23,10 +23,14 @@ export const getCurrentWorker = async (): Promise<CurrentWorker | null> => {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
+  // `status='active'` mirrors the RLS helper my_worker_id() exactly: a revoked/
+  // deactivated login must resolve to no worker, so every portal path (including
+  // service-role writes that bypass RLS) denies it.
   const { data: login } = await supabase
     .from('contractor_logins')
     .select('worker_id')
     .eq('auth_user_id', user.id)
+    .eq('status', 'active')
     .maybeSingle();
   if (!login) return null;
 

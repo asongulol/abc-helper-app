@@ -73,7 +73,17 @@ export async function createSession(args: unknown): Promise<ActionResult> {
   const parsed = CreateSessionSchema.safeParse(args);
   if (!parsed.success)
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
-  const { clientId, workerId, sessionDate, sessionType, units, caseRef, notes } = parsed.data;
+  const {
+    clientId,
+    workerId,
+    sessionDate,
+    sessionType,
+    units,
+    childInitials,
+    eiid,
+    caseRef,
+    notes,
+  } = parsed.data;
 
   const guard = await authGuard(clientId);
   if (!guard.ok) return guard;
@@ -86,6 +96,8 @@ export async function createSession(args: unknown): Promise<ActionResult> {
       sessionDate,
       sessionType: sessionType ?? null,
       units,
+      childInitials: childInitials ?? null,
+      eiid: eiid ?? null,
       caseRef: caseRef ?? null,
       notes: notes ?? null,
     });
