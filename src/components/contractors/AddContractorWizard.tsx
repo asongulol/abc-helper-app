@@ -1,8 +1,8 @@
 'use client';
 
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { ConfirmDangerModal, Modal, useToast } from '@/components/ui';
-import { hireContractor } from '@/server/actions/contractors';
+import { hireContractor, listInvoiceClients } from '@/server/actions/contractors';
 import { draftClear, draftLoad, type HireDraft, useAutoDraft } from './hire-draft';
 
 export interface Countersigner {
@@ -23,6 +23,10 @@ interface FormState {
   weeklyHours: string;
   role: string;
   ratePhp: string;
+  invoiceClientId: string;
+  billRateUsd: string;
+  perSession: boolean;
+  sessionRateUsd: string;
   contractDate: string;
   hireDate: string;
   healthAllowanceEligible: boolean;
@@ -53,6 +57,10 @@ const EMPTY: FormState = {
   weeklyHours: '40',
   role: '',
   ratePhp: '',
+  invoiceClientId: '',
+  billRateUsd: '',
+  perSession: false,
+  sessionRateUsd: '',
   contractDate: '',
   hireDate: '',
   healthAllowanceEligible: true,
@@ -117,6 +125,14 @@ export function AddContractorWizard({
   const [dupConfirm, setDupConfirm] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
+
+  // Active clients for the optional "client to invoice" picker (admin-scoped).
+  useEffect(() => {
+    listInvoiceClients().then((res) => {
+      if (res.ok) setClients(res.data);
+    });
+  }, []);
 
   const hasContent =
     form.firstName.trim() !== '' || form.lastName.trim() !== '' || form.role.trim() !== '';
@@ -145,6 +161,10 @@ export function AddContractorWizard({
     weeklyHours: form.weeklyHours ? Number(form.weeklyHours) : null,
     role: form.role.trim(),
     ratePhp: form.ratePhp ? Number(form.ratePhp) : 0,
+    invoiceClientId: form.invoiceClientId || null,
+    billRateUsd: form.billRateUsd ? Number(form.billRateUsd) : null,
+    perSession: form.perSession,
+    sessionRateUsd: form.perSession && form.sessionRateUsd ? Number(form.sessionRateUsd) : null,
     contractDate: form.contractDate || null,
     hireDate: form.hireDate,
     healthAllowanceEligible: form.healthAllowanceEligible,
@@ -380,6 +400,66 @@ export function AddContractorWizard({
               onChange={(e) => set('ratePhp', e.target.value)}
             />
           </Field>
+
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 8,
+              borderTop: '1px solid var(--border)',
+            }}
+          >
+            <strong style={{ fontSize: 12 }}>Client invoicing (optional)</strong>
+            <p className="muted" style={{ fontSize: 11, margin: '2px 0 0' }}>
+              Assign this provider to a client and set the USD rate you bill that client. The PHP
+              rate above is what you pay them.
+            </p>
+            <Field label="Client to invoice">
+              <select
+                value={form.invoiceClientId}
+                onChange={(e) => set('invoiceClientId', e.target.value)}
+              >
+                <option value="">— None —</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {form.invoiceClientId && (
+              <>
+                <Field label="Bill rate (USD/hr)">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.billRateUsd}
+                    onChange={(e) => set('billRateUsd', e.target.value)}
+                  />
+                </Field>
+                <label style={{ ...checkRow, marginTop: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={form.perSession}
+                    onChange={(e) => set('perSession', e.target.checked)}
+                  />
+                  Bill per session
+                </label>
+                {form.perSession && (
+                  <Field label="Session rate (USD/visit)">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.sessionRateUsd}
+                      onChange={(e) => set('sessionRateUsd', e.target.value)}
+                    />
+                  </Field>
+                )}
+              </>
+            )}
+          </div>
+
           <Field label="Hire date *">
             <input
               type="date"

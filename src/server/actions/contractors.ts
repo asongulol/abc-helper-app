@@ -9,6 +9,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
   insertWorkerWithLink,
   setWorkerLinkStatus,
@@ -231,6 +232,20 @@ const uniqueDocs = (
  *
  * Returns the new worker id and (when invited) the temp portal password.
  */
+/** Active client companies (admin-scoped) for the hire wizard's invoice picker. */
+export async function listInvoiceClients(): Promise<ActionResult<ClientOption[]>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  try {
+    const db = await createServerSupabase();
+    const clients = await fetchActiveClients(db);
+    const scoped = admin.isOwner ? clients : clients.filter((c) => admin.companyIds.includes(c.id));
+    return { ok: true, data: scoped };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Failed to load clients.' };
+  }
+}
+
 export async function hireContractor(
   args: unknown,
 ): Promise<ActionResult<{ workerId: string; tempPassword?: string }>> {
@@ -247,6 +262,13 @@ export async function hireContractor(
 
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
+  }
+  if (
+    input.invoiceClientId &&
+    !admin.isOwner &&
+    !admin.companyIds.includes(input.invoiceClientId)
+  ) {
+    return { ok: false, error: 'No access to the selected invoicing client.' };
   }
   if (input.invite && !input.email) {
     return {
@@ -375,6 +397,34 @@ export async function hireContractor(
         effectiveStart: input.contractDate ?? input.hireDate,
       });
       if (!rateRes.ok) throw new Error(rateRes.error);
+    }
+
+    // 4b) Optional client-invoicing link: assign the provider to a CLIENT and
+    // carry the USD bill rate (+ a session rate when per-session is on) on that
+    // client's worker_companies link. Upsert so picking the already-linked
+    // company just sets the rates. Bill/session rates are client-side, separate
+    // from the (employer) PHP pay rate above.
+    if (input.invoiceClientId) {
+      const { data: client } = await db
+        .from('companies')
+        .select('kind')
+        .eq('id', input.invoiceClientId)
+        .maybeSingle();
+      if (client?.kind !== 'client')
+        throw new Error('The invoicing target must be a client company.');
+      const { error: linkErr } = await db.from('worker_companies').upsert(
+        {
+          worker_id: workerId,
+          company_id: input.invoiceClientId,
+          contract: input.contract,
+          role: input.role,
+          status: 'active',
+          bill_rate_usd: input.billRateUsd,
+          session_rate_usd: input.perSession ? input.sessionRateUsd : null,
+        },
+        { onConflict: 'worker_id,company_id' },
+      );
+      if (linkErr) throw new Error(`client invoicing link: ${linkErr.message}`);
     }
 
     // 5) Portal login (only if invite). The edge create_login is the

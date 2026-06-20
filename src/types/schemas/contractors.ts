@@ -140,6 +140,13 @@ export const HireContractorSchema = z.object({
   icAddendumType: IcAddendumTypeSchema.default(''),
   icAddendumText: z.string().max(5000).nullable().default(null),
   extraDocs: z.array(z.string().max(120)).max(20).default([]),
+  // Step 2 — client invoicing (optional): assign the provider to a client and
+  // set that client's USD bill rate (+ a per-session rate when enabled). These
+  // attach to the client's worker_companies link, not the (employer) pay link.
+  invoiceClientId: z.string().uuid().nullable().default(null),
+  billRateUsd: z.number().min(0).max(100000).nullable().default(null),
+  perSession: z.boolean().default(false),
+  sessionRateUsd: z.number().min(0).max(100000).nullable().default(null),
   // Step 3 — Portal & onboarding
   invite: z.boolean().default(true),
   tools: HireToolsSchema.default({
