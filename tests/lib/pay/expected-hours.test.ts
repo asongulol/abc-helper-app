@@ -32,6 +32,11 @@ describe('expectedHours (legacy ~5852)', () => {
     expect(expectedHours('FT', '2027-12-16', '2027-12-31')).toBe(80);
   });
 
+  it('PH / PS contracts have no expected hours', () => {
+    expect(expectedHours('PH', '2026-06-01', '2026-06-15')).toBe(0);
+    expect(expectedHours('PS', '2026-06-01', '2026-06-15')).toBe(0);
+  });
+
   it('custom holiday list overrides the default', () => {
     expect(
       expectedHours('FT', '2026-06-01', '2026-06-15', [

@@ -83,6 +83,36 @@ export const fetchRates = async (db: Db, companyId: string): Promise<RateRow[]> 
   }));
 };
 
+/**
+ * Σ approved session units in [start, end] per worker — for PS (per-session)
+ * pay. Sessions are recorded against CLIENT companies, so this is scoped by
+ * worker_id + date (not the payroll company) and summed across the worker's
+ * clients. Only approved sessions are paid (mirrors billing).
+ */
+export const fetchSessionUnitsByWorker = async (
+  db: Db,
+  workerIds: string[],
+  from: string,
+  to: string,
+): Promise<Map<string, number>> => {
+  const out = new Map<string, number>();
+  if (workerIds.length === 0) return out;
+  const { data, error } = await db
+    .from('service_sessions')
+    .select('worker_id, units')
+    .in('worker_id', workerIds)
+    .eq('approval', 'approved')
+    .gte('session_date', from)
+    .lte('session_date', to)
+    .limit(100000);
+  if (error) throw new Error(`session units: ${error.message}`);
+  for (const r of data ?? []) {
+    if (!r.worker_id) continue;
+    out.set(r.worker_id, (out.get(r.worker_id) ?? 0) + (Number(r.units) || 0));
+  }
+  return out;
+};
+
 /** Most recent prior payout method per worker (legacy step 3 fallback). */
 export const fetchLastPayoutMethods = async (
   db: Db,

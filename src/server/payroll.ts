@@ -8,11 +8,13 @@
 
 import 'server-only';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import {
   fetchApprovedTime,
   fetchLastPayoutMethods,
   fetchRates,
   fetchRoster,
+  fetchSessionUnitsByWorker,
   findPeriod,
   upsertDraftPayments,
   upsertOpenPeriod,
@@ -58,6 +60,19 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     fetchLastPayoutMethods(db, input.companyId),
   ]);
 
+  // Per-session (PS) providers are paid by approved session count, not time.
+  // service_sessions belong to CLIENT companies, so they're invisible under the
+  // RLS user client to an admin scoped only to the employer. Payroll is
+  // employer-side and must see ALL of a worker's approved client sessions
+  // regardless of which admin runs it — read via the service role behind the
+  // caller's already-verified admin identity (ADR-0004; see src/server/company.ts).
+  const sessionsByWorker = await fetchSessionUnitsByWorker(
+    createServiceClient(),
+    roster.map((r) => r.workerId),
+    input.periodStart,
+    input.periodEnd,
+  );
+
   const attribution = attributeTimeEntries(entries, roster);
   const rows = buildStatements({
     periodStart: input.periodStart,
@@ -68,6 +83,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     lastPayoutMethod: lastMethod,
     includeHealthAllowance: input.includeHealthAllowance,
     includeThirteenth: input.includeThirteenth,
+    sessionsByWorker,
   });
 
   const period = await upsertOpenPeriod(

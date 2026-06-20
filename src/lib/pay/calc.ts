@@ -51,6 +51,8 @@ export const miscTotal = (items: readonly MiscItem[] | null | undefined): Centav
 export type ContractorRowInput = {
   /** Σ (tracked_seconds + pto_seconds) over approved entries in the period. */
   workedSeconds: number;
+  /** Σ approved session units in the period — used only for PS (per-session) pay. */
+  sessionUnits?: number;
   contract: Contract;
   periodStart: string;
   periodEnd: string;
@@ -73,8 +75,10 @@ export type ContractorRowInput = {
 export type ContractorRowResult = {
   workedHours: number;
   expectedHours: number;
-  /** worked / expected, capped at RATIO_CAP. 0 when nothing worked. */
+  /** worked / expected, capped at RATIO_CAP. 0 when nothing worked (and for PH/PS). */
   ratio: number;
+  /** The resolved rate used: per-period (FT/PT) or per-unit (PH/PS). */
+  rate: Centavos | null;
   /** Capped at the rate — ratio ≥ 1 pays exactly the rate (no overtime premium). */
   gross: Centavos | null;
   /**
@@ -95,26 +99,41 @@ export type ContractorRowResult = {
 /** One contractor's pay statement for a period. */
 export const calcContractorRow = (input: ContractorRowInput): ContractorRowResult => {
   const worked = input.workedSeconds / 3600;
-  const expected = expectedHours(
-    input.contract,
-    input.periodStart,
-    input.periodEnd,
-    input.holidays,
-  );
-  // Legacy: Math.min(worked/expected, 5). Guard expected=0: positive work ⇒
-  // capped ratio (legacy Infinity→cap); no work ⇒ 0 (legacy NaN — degenerate).
-  const ratio = expected > 0 ? Math.min(worked / expected, RATIO_CAP) : worked > 0 ? RATIO_CAP : 0;
-
   const rate = input.rate;
-  const gross = rate === null ? null : ratio >= 1 ? rate : mulRatioMinor(rate, ratio);
-  const shortfall = rate === null || gross === null ? zeroCentavos() : subMinor(rate, gross);
+
+  // PH (per hour) / PS (per session): no expected hours, no performance ratio.
+  // Gross is the per-unit rate × the number of units worked in the period —
+  // hours for PH, approved session units for PS. FT/PT keep the ratio model
+  // below, byte-for-byte (parity).
+  const perUnit = input.contract === 'PH' || input.contract === 'PS';
+
+  let expected: number;
+  let ratio: number;
+  let gross: Centavos | null;
+  let shortfall: Centavos;
+  if (perUnit) {
+    expected = 0;
+    ratio = 0;
+    const units = input.contract === 'PH' ? worked : (input.sessionUnits ?? 0);
+    gross = rate === null ? null : mulRatioMinor(rate, units);
+    shortfall = zeroCentavos();
+  } else {
+    expected = expectedHours(input.contract, input.periodStart, input.periodEnd, input.holidays);
+    // Legacy: Math.min(worked/expected, 5). Guard expected=0: positive work ⇒
+    // capped ratio (legacy Infinity→cap); no work ⇒ 0 (legacy NaN — degenerate).
+    ratio = expected > 0 ? Math.min(worked / expected, RATIO_CAP) : worked > 0 ? RATIO_CAP : 0;
+    gross = rate === null ? null : ratio >= 1 ? rate : mulRatioMinor(rate, ratio);
+    shortfall = rate === null || gross === null ? zeroCentavos() : subMinor(rate, gross);
+  }
 
   const ha =
     (input.includeHealthAllowance ?? true) && input.healthAllowanceEligible
       ? healthAllowance(input.hireDate, input.periodStart, input.periodEnd)
       : zeroCentavos();
+  // 13th-month is a salaried accrual on the period rate — skip for PH/PS, whose
+  // rate is per-unit (accruing on it would be meaningless).
   const t13 =
-    (input.includeThirteenth ?? true) && input.thirteenthMonthEligible && rate !== null
+    (input.includeThirteenth ?? true) && input.thirteenthMonthEligible && rate !== null && !perUnit
       ? thirteenthAccrual(rate, input.hireDate, input.periodEnd)
       : zeroCentavos();
 
@@ -131,6 +150,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     workedHours: worked,
     expectedHours: expected,
     ratio,
+    rate,
     gross,
     shortfall,
     healthAllowance: ha,

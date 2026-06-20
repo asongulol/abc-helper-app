@@ -8,7 +8,22 @@ import { z } from 'zod';
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
 export const PayoutMethodSchema = z.enum(['wise', 'bpi', 'gcash', 'paymaya', 'paypal']);
-export const ContractTypeSchema = z.enum(['FT', 'PT']);
+/**
+ * Contract types. FT/PT are salaried (expected-hours performance ratio). PH (per
+ * hour) and PS (per session) have no expected hours and are paid per unit —
+ * worked hours × per-hour rate, or approved sessions × per-session rate.
+ */
+export const ContractTypeSchema = z.enum(['FT', 'PT', 'PH', 'PS']);
+export type ContractType = z.infer<typeof ContractTypeSchema>;
+/** Dropdown options (value + label), shared across the contractor UIs. */
+export const CONTRACT_OPTIONS = [
+  { value: 'FT', label: 'Full-time' },
+  { value: 'PT', label: 'Part-time' },
+  { value: 'PH', label: 'Per hour' },
+  { value: 'PS', label: 'Per session' },
+] as const satisfies ReadonlyArray<{ value: ContractType; label: string }>;
+/** True for the per-unit (no-expected-hours) contract types. */
+export const isPerUnitContract = (c: string): boolean => c === 'PH' || c === 'PS';
 export const WorkerStatusSchema = z.enum(['active', 'inactive', 'ended']);
 
 /** Create a minimal contractor (quick-add) and link to a company. */
