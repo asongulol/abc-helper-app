@@ -28,6 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/portal', label: 'Home', icon: '🏠', exact: true },
   { href: '/portal/statements', label: 'Pay slips', icon: '₱' },
   { href: '/portal/time', label: 'Time', icon: '⏱' },
+  { href: '/portal/sessions', label: 'Sessions', icon: '🗓' },
   { href: '/portal/docs', label: 'Docs', icon: '📄' },
   { href: '/portal/profile', label: 'Profile', icon: '👤' },
 ];

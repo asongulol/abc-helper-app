@@ -282,7 +282,9 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                   <tr>
                     <th>Date</th>
                     <th>Contractor</th>
-                    <th>Type</th>
+                    <th>Item</th>
+                    <th>Child</th>
+                    <th>EIID</th>
                     <th style={rightAlign}>Units</th>
                     <th>Case</th>
                     <th>Status</th>
@@ -295,6 +297,8 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                       <td>{fmtDate(s.sessionDate)}</td>
                       <td>{s.workerName || '—'}</td>
                       <td>{s.sessionType ?? '—'}</td>
+                      <td>{s.childInitials ?? '—'}</td>
+                      <td>{s.eiid ?? '—'}</td>
                       <td style={rightAlign}>{s.units}</td>
                       <td>{s.caseRef ?? '—'}</td>
                       <td>

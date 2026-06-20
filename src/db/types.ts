@@ -1110,9 +1110,11 @@ export type Database = {
           approved_at: string | null
           approved_by: string | null
           case_ref: string | null
+          child_initials: string | null
           company_id: string
           created_at: string
           created_by: string | null
+          eiid: string | null
           external_ref: string | null
           id: string
           import_batch_id: string | null
@@ -1127,9 +1129,11 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           case_ref?: string | null
+          child_initials?: string | null
           company_id: string
           created_at?: string
           created_by?: string | null
+          eiid?: string | null
           external_ref?: string | null
           id?: string
           import_batch_id?: string | null
@@ -1144,9 +1148,11 @@ export type Database = {
           approved_at?: string | null
           approved_by?: string | null
           case_ref?: string | null
+          child_initials?: string | null
           company_id?: string
           created_at?: string
           created_by?: string | null
+          eiid?: string | null
           external_ref?: string | null
           id?: string
           import_batch_id?: string | null
