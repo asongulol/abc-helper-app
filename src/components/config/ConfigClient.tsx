@@ -11,12 +11,20 @@ import type {
 import { AgreementTemplatesCard } from './AgreementTemplatesCard';
 import { ClientsCard } from './ClientsCard';
 import { EmployerCard } from './EmployerCard';
+import { HolidaysCard } from './HolidaysCard';
 import { HubstaffProjectsCard } from './HubstaffProjectsCard';
 import { OnboardingConfigCard } from './OnboardingConfigCard';
 import { PortalFieldsCard } from './PortalFieldsCard';
 import { WiseReconCard } from './WiseReconCard';
 
-type PanelKey = 'employer' | 'clients' | 'hubstaff' | 'portalFields' | 'agreements' | 'onboarding';
+type PanelKey =
+  | 'employer'
+  | 'clients'
+  | 'hubstaff'
+  | 'portalFields'
+  | 'agreements'
+  | 'onboarding'
+  | 'holidays';
 
 interface ConfigClientProps {
   isOwner: boolean;
@@ -65,6 +73,11 @@ const ROWS: readonly PanelRow[] = [
     label: 'Onboarding Configuration',
     sub: 'Turn onboarding on/off and set the required documents and agreements.',
   },
+  {
+    key: 'holidays',
+    label: 'Observed Holidays',
+    sub: 'Maintain the per-year holiday calendar that reduces expected working hours. Holidays landing on a weekend are observed on the closest working day (Sat → Fri, Sun → Mon).',
+  },
 ];
 
 const PANEL_TITLE: Record<PanelKey, string> = {
@@ -74,6 +87,7 @@ const PANEL_TITLE: Record<PanelKey, string> = {
   portalFields: 'Portal — editable fields',
   agreements: 'Agreement templates',
   onboarding: 'Onboarding setup',
+  holidays: 'Observed holidays',
 };
 
 const PANEL_WIDTH: Record<PanelKey, number> = {
@@ -83,13 +97,14 @@ const PANEL_WIDTH: Record<PanelKey, number> = {
   portalFields: 640,
   agreements: 820,
   onboarding: 860,
+  holidays: 720,
 };
 
 /**
- * Configuration launcher (manifest 14): the six-row "Configuration" launcher
+ * Configuration launcher (manifest 14): the "Configuration" launcher
  * (Employer, Clients, Hubstaff projects, Portal fields, Agreement templates,
- * Onboarding) whose rows each open a panel in a shared Modal, plus the
- * Wise-reconciliation card below — matching the legacy `Configuration()`.
+ * Onboarding, Observed holidays) whose rows each open a panel in a shared Modal,
+ * plus the Wise-reconciliation card below — matching the legacy `Configuration()`.
  * Announcements and Admins are topbar modals, NOT config rows. Server data is
  * fetched in the page and passed down; mutations revalidate `/config` so
  * re-opening a panel shows fresh data.
@@ -162,6 +177,7 @@ export const ConfigClient = ({
           {open === 'onboarding' && (
             <OnboardingConfigCard config={onboardingConfig} onClose={close} />
           )}
+          {open === 'holidays' && <HolidaysCard />}
         </Modal>
       )}
 

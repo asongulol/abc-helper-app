@@ -21,15 +21,15 @@ export default async function LoginPage({
   return (
     <div className="connect">
       <div className="card">
-        <div style={{ textAlign: 'center', marginBottom: 14 }}>
-          <Logo height={52} priority />
+        <div style={{ textAlign: 'center', marginBottom: 18 }}>
+          <Logo height={150} priority />
         </div>
         <h2>Sign in</h2>
         <p className="sub">Sign in with your Google account to access the payroll app.</p>
         {message && (
           <div
             className="banner error"
-            style={{ marginBottom: 12, textAlign: 'left' }}
+            style={{ marginBottom: 16, textAlign: 'left' }}
             role="alert"
           >
             {message}
