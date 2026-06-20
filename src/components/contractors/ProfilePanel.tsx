@@ -14,6 +14,7 @@ import {
   type WorkerEngagement,
 } from '@/server/actions/contractors';
 import { createPortalLogin } from '@/server/actions/portal-admin';
+import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
 import { RateCard } from './RateCard';
 
 type Props = {
@@ -46,7 +47,7 @@ type FormState = {
   payoutMethod: string;
   healthAllowanceEligible: boolean;
   thirteenthMonthEligible: boolean;
-  contract: 'FT' | 'PT';
+  contract: ContractType;
   role: string;
   hubstaffName: string;
   weeklyHours: string;
@@ -248,7 +249,7 @@ export function ProfilePanel({
         role: e.role,
         billRateUsd: e.billRateUsd,
         sessionRateUsd: e.sessionRateUsd,
-        contract: e.contract === 'PT' ? 'PT' : 'FT',
+        contract: e.contract as ContractType,
         status: e.status === 'inactive' ? 'inactive' : e.status === 'ended' ? 'ended' : 'active',
       });
       notify(res.ok ? 'Engagement saved.' : res.error, {
@@ -572,11 +573,14 @@ export function ProfilePanel({
               <select
                 id="pp-contract"
                 value={form.contract}
-                onChange={(e) => set('contract', e.target.value as 'FT' | 'PT')}
+                onChange={(e) => set('contract', e.target.value as ContractType)}
                 disabled={isPending}
               >
-                <option value="FT">Full-time</option>
-                <option value="PT">Part-time</option>
+                {CONTRACT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </select>
             </Field>
             <Field id="pp-role" label="Role">

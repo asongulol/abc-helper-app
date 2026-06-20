@@ -12,11 +12,16 @@ import { defaultHolidaysForRange, type Holiday, holidaysInRange } from '@/lib/pa
 export const FT_DAY_HOURS = 8;
 export const PT_DAY_HOURS = 4;
 
-/** Contract type. Legacy rule: anything that isn't exactly "PT" counts as FT. */
-export type Contract = 'FT' | 'PT' | (string & {});
+/**
+ * Contract type. FT/PT are salaried (expected day-hours drive the performance
+ * ratio). PH (per hour) / PS (per session) have NO expected hours — they are
+ * paid per unit (see calc.ts) and resolve to 0 day-hours here. Legacy rule:
+ * anything that isn't PT/PH/PS counts as FT.
+ */
+export type Contract = 'FT' | 'PT' | 'PH' | 'PS' | (string & {});
 
 export const dayHoursFor = (contract: Contract): number =>
-  contract === 'PT' ? PT_DAY_HOURS : FT_DAY_HOURS;
+  contract === 'PT' ? PT_DAY_HOURS : contract === 'PH' || contract === 'PS' ? 0 : FT_DAY_HOURS;
 
 /**
  * Expected working hours in [start, end] for the contract type.

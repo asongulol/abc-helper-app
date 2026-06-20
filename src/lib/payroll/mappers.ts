@@ -143,19 +143,23 @@ export type BuildStatementsArgs = {
   includeHealthAllowance?: boolean;
   includeThirteenth?: boolean;
   holidays?: readonly Holiday[];
+  /** Σ approved session units in the period per worker (PS pay). */
+  sessionsByWorker?: ReadonlyMap<string, number>;
 };
 
 /** One engine pass per attributed worker — the heart of legacy `calculate()`. */
 export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
   const byId = new Map(args.roster.map((r) => [r.workerId, r]));
   const out: StatementRow[] = [];
+  const processed = new Set<string>();
 
-  for (const [workerId, workedSeconds] of args.attribution.secondsByWorker) {
+  const build = (workerId: string, workedSeconds: number) => {
     const link = byId.get(workerId);
-    if (!link) continue; // already surfaced as unlinked by attribution
+    if (!link) return; // already surfaced as unlinked by attribution
     const w = link.worker;
     const result = calcContractorRow({
       workedSeconds,
+      sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
       contract: link.contract,
       periodStart: args.periodStart,
       periodEnd: args.periodEnd,
@@ -178,6 +182,21 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       inactive,
       result,
     });
+    processed.add(workerId);
+  };
+
+  // Time-driven workers (FT/PT/PH, and any PS who also tracked time) — unchanged.
+  for (const [workerId, workedSeconds] of args.attribution.secondsByWorker) {
+    build(workerId, workedSeconds);
+  }
+  // PS (per-session) workers are paid from sessions even with no tracked time,
+  // so pull them in by their session activity. Only PS — never alters FT/PT/PH.
+  if (args.sessionsByWorker) {
+    for (const [workerId, units] of args.sessionsByWorker) {
+      if (processed.has(workerId) || units <= 0) continue;
+      if (byId.get(workerId)?.contract !== 'PS') continue;
+      build(workerId, 0);
+    }
   }
 
   out.sort((a, b) => a.name.localeCompare(b.name));
@@ -219,8 +238,10 @@ export const toPaymentDraft = (
 ): PaymentDraft | null => {
   const r = row.result;
   if (r.net === null || r.gross === null) return null;
-  // A non-null gross implies a resolved rate; reconstruct it (rate = gross + shortfall).
-  const ratePhp = centavosToPhp((r.gross + r.shortfall) as Centavos);
+  // The resolved rate is carried on the result: per-period (FT/PT) or per-unit
+  // (PH/PS). For FT/PT it equals gross + shortfall, so stored rate_php is
+  // unchanged (parity); for PH/PS it's the per-hour / per-session rate.
+  const ratePhp = r.rate === null ? null : centavosToPhp(r.rate);
   return {
     worker_id: row.workerId,
     expected_hours: r.expectedHours,

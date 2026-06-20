@@ -3,6 +3,11 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import { hireContractor, listInvoiceClients } from '@/server/actions/contractors';
+import {
+  CONTRACT_OPTIONS,
+  type ContractType,
+  isPerUnitContract,
+} from '@/types/schemas/contractors';
 import { draftClear, draftLoad, type HireDraft, useAutoDraft } from './hire-draft';
 
 export interface Countersigner {
@@ -19,7 +24,7 @@ interface FormState {
   permanentAddress: string;
   sameAsCurrent: boolean;
   dateOfBirth: string;
-  contract: 'FT' | 'PT';
+  contract: ContractType;
   weeklyHours: string;
   role: string;
   ratePhp: string;
@@ -367,31 +372,45 @@ export function AddContractorWizard({
             <select
               value={form.contract}
               onChange={(e) => {
-                const c = e.target.value as 'FT' | 'PT';
+                const c = e.target.value as ContractType;
                 setForm((f) => ({
                   ...f,
                   contract: c,
-                  weeklyHours: c === 'FT' ? '40' : '20',
+                  // PH/PS have no expected hours.
+                  weeklyHours: c === 'FT' ? '40' : c === 'PT' ? '20' : '',
                 }));
               }}
             >
-              <option value="FT">Full-time</option>
-              <option value="PT">Part-time</option>
+              {CONTRACT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </Field>
-          <Field label="Expected hours / week">
-            <input
-              type="number"
-              min="0"
-              max="168"
-              value={form.weeklyHours}
-              onChange={(e) => set('weeklyHours', e.target.value)}
-            />
-          </Field>
+          {!isPerUnitContract(form.contract) && (
+            <Field label="Expected hours / week">
+              <input
+                type="number"
+                min="0"
+                max="168"
+                value={form.weeklyHours}
+                onChange={(e) => set('weeklyHours', e.target.value)}
+              />
+            </Field>
+          )}
           <Field label="Role / position *">
             <input value={form.role} onChange={(e) => set('role', e.target.value)} />
           </Field>
-          <Field label="Rate (PHP per period)">
+          <Field
+            label={
+              form.contract === 'PH'
+                ? 'Rate (PHP / hour)'
+                : form.contract === 'PS'
+                  ? 'Rate (PHP / session)'
+                  : 'Rate (PHP per period)'
+            }
+          >
             <input
               type="number"
               min="0"

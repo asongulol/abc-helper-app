@@ -23,6 +23,7 @@ import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   AddContractorSchema,
+  type ContractType,
   HireContractorSchema,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
@@ -680,7 +681,7 @@ export async function saveWorkerCompanyLink(args: {
   role: string | null;
   billRateUsd: number | null;
   sessionRateUsd: number | null;
-  contract: 'FT' | 'PT';
+  contract: ContractType;
   status: 'active' | 'inactive' | 'ended';
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();

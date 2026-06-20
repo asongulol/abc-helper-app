@@ -125,6 +125,79 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
   });
 });
 
+describe('calcContractorRow — PH (per hour) / PS (per session)', () => {
+  it('PH pays worked hours × the per-hour rate; no expected hours or ratio', () => {
+    const r = calcContractorRow({
+      workedSeconds: 10 * 3600,
+      contract: 'PH',
+      rate: centavos(50_000), // ₱500 / hour
+      ...PERIOD,
+    });
+    expect(r.expectedHours).toBe(0);
+    expect(r.ratio).toBe(0);
+    expect(r.workedHours).toBe(10);
+    expect(r.gross).toBe(500_000); // 10 × ₱500
+    expect(r.shortfall).toBe(0);
+    expect(r.rate).toBe(50_000);
+    expect(r.net).toBe(500_000);
+  });
+
+  it('PH is cent-accurate on fractional hours (1.5h × ₱33.33 = ₱49.995 → ₱50.00)', () => {
+    const r = calcContractorRow({
+      workedSeconds: Math.round(1.5 * 3600),
+      contract: 'PH',
+      rate: centavos(3_333), // ₱33.33 / hour
+      ...PERIOD,
+    });
+    expect(r.gross).toBe(5_000);
+  });
+
+  it('PS pays approved sessions × the per-session rate (duration ignored)', () => {
+    const r = calcContractorRow({
+      workedSeconds: 0,
+      sessionUnits: 12,
+      contract: 'PS',
+      rate: centavos(40_000), // ₱400 / session
+      ...PERIOD,
+    });
+    expect(r.expectedHours).toBe(0);
+    expect(r.gross).toBe(480_000); // 12 × ₱400
+    expect(r.rate).toBe(40_000);
+    expect(r.net).toBe(480_000);
+  });
+
+  it('PS with no sessions ⇒ zero gross', () => {
+    const r = calcContractorRow({
+      workedSeconds: 0,
+      sessionUnits: 0,
+      contract: 'PS',
+      rate: centavos(40_000),
+      ...PERIOD,
+    });
+    expect(r.gross).toBe(0);
+    expect(r.net).toBe(0);
+  });
+
+  it('per-unit contracts get no 13th-month accrual even if flagged eligible', () => {
+    const r = calcContractorRow({
+      workedSeconds: 8 * 3600,
+      contract: 'PH',
+      rate: centavos(50_000),
+      hireDate: '2024-01-01',
+      thirteenthMonthEligible: true,
+      includeThirteenth: true,
+      ...PERIOD,
+    });
+    expect(r.thirteenth).toBe(0);
+  });
+
+  it('null rate ⇒ null gross for PH/PS too', () => {
+    const r = calcContractorRow({ workedSeconds: 5 * 3600, contract: 'PH', rate: null, ...PERIOD });
+    expect(r.gross).toBeNull();
+    expect(r.net).toBeNull();
+  });
+});
+
 describe('miscTotal (legacy ~6369)', () => {
   it('deduction kind subtracts; others add; junk counts 0', () => {
     expect(

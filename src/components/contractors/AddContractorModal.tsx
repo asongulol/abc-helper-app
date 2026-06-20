@@ -4,6 +4,7 @@ import { type FormEvent, useState, useTransition } from 'react';
 import { Modal, Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
 import { addContractor } from '@/server/actions/contractors';
+import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
 
 type Props = {
   companyId: string;
@@ -14,7 +15,7 @@ type Props = {
 export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [contract, setContract] = useState<'FT' | 'PT'>('FT');
+  const [contract, setContract] = useState<ContractType>('FT');
   const [error, setError] = useState('');
   const [isPending, startTransition] = useTransition();
 
@@ -129,11 +130,14 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
           <select
             id="ac-contract"
             value={contract}
-            onChange={(e) => setContract(e.target.value as 'FT' | 'PT')}
+            onChange={(e) => setContract(e.target.value as ContractType)}
             disabled={isPending}
           >
-            <option value="FT">Full-time (FT)</option>
-            <option value="PT">Part-time (PT)</option>
+            {CONTRACT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label} ({o.value})
+              </option>
+            ))}
           </select>
         </div>
         {error && (
