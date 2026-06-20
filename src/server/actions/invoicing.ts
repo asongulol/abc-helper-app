@@ -13,6 +13,7 @@ import {
   allocateInvoiceNo,
   createInvoiceWithLines,
   fetchClientRoster,
+  fetchClientSessions,
   fetchEmployerCompanyId,
   fetchEmployerTrackedSeconds,
   type NewInvoiceLine,
@@ -32,8 +33,11 @@ export type InvoicePreviewLine = {
   workerId: string;
   workerName: string;
   position: string | null;
+  kind: 'hourly' | 'session';
   workedHours: number;
   billRateUsd: number;
+  sessionsCount: number;
+  sessionRateUsd: number;
   amountUsd: number;
 };
 
@@ -42,9 +46,12 @@ export type InvoicePreviewResult = {
   subtotalUsd: number;
   totalUsd: number;
   totalHours: number;
+  totalSessions: number;
   markupPct: number;
-  /** Names of assigned contractors with no USD bill rate (their lines bill $0). */
+  /** Names of assigned contractors with no USD bill rate (their hourly lines bill $0). */
   zeroRateNames: string[];
+  /** Names of contractors with sessions but no USD session rate (their session lines bill $0). */
+  zeroSessionRateNames: string[];
 };
 
 /** Recompute a client's invoice for a window from source data (roster × employer time). */
@@ -68,7 +75,10 @@ async function computeForClient(
     from,
     to,
   );
-  return { db, comp: computeInvoice(roster, seconds, markupPct) };
+  // Sessions are client-scoped (service_sessions.company_id = clientId), unlike
+  // time_entries which are employer-scoped and re-attributed via the roster.
+  const sessions = await fetchClientSessions(db, clientId, from, to);
+  return { db, comp: computeInvoice(roster, seconds, sessions, markupPct) };
 }
 
 function toPreviewResult(comp: InvoiceComputation): InvoicePreviewResult {
@@ -77,15 +87,24 @@ function toPreviewResult(comp: InvoiceComputation): InvoicePreviewResult {
       workerId: l.workerId,
       workerName: l.workerName,
       position: l.position,
+      kind: l.kind,
       workedHours: l.workedHours,
       billRateUsd: l.billRateUsd,
+      sessionsCount: l.sessionsCount,
+      sessionRateUsd: l.sessionRateUsd,
       amountUsd: l.amount / 100,
     })),
     subtotalUsd: comp.subtotal / 100,
     totalUsd: comp.total / 100,
     totalHours: comp.totalHours,
+    totalSessions: comp.totalSessions,
     markupPct: comp.markupPct,
-    zeroRateNames: comp.lines.filter((l) => l.billRateUsd === 0).map((l) => l.workerName),
+    zeroRateNames: comp.lines
+      .filter((l) => l.kind === 'hourly' && l.billRateUsd === 0)
+      .map((l) => l.workerName),
+    zeroSessionRateNames: comp.lines
+      .filter((l) => l.kind === 'session' && l.sessionRateUsd === 0)
+      .map((l) => l.workerName),
   };
 }
 
@@ -141,7 +160,7 @@ export async function generateInvoice(
     if (comp.lines.length === 0)
       return {
         ok: false,
-        error: 'No worked hours for this client in the window.',
+        error: 'No billable hours or sessions for this client in the window.',
       };
 
     const invoiceNo = await allocateInvoiceNo(db, new Date().getFullYear());
@@ -149,8 +168,11 @@ export async function generateInvoice(
       workerId: l.workerId,
       workerName: l.workerName,
       position: l.position,
+      kind: l.kind,
       workedHours: l.workedHours,
       billRateUsd: l.billRateUsd,
+      sessionsCount: l.kind === 'session' ? l.sessionsCount : null,
+      sessionRateUsd: l.kind === 'session' ? l.sessionRateUsd : null,
       amountUsd: l.amount / 100,
     }));
 

@@ -53,6 +53,7 @@ export type RosterWorker = {
   hubstaffName: string | null;
   weeklyHours: number | null;
   billRateUsd: number | null;
+  sessionRateUsd: number | null;
   linkStatus: Database['public']['Enums']['worker_status'];
 };
 
@@ -62,7 +63,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -119,6 +120,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         hubstaffName: l.hubstaff_name,
         weeklyHours: l.weekly_hours,
         billRateUsd: l.bill_rate_usd,
+        sessionRateUsd: l.session_rate_usd,
         linkStatus: l.status,
       };
     });
@@ -131,7 +133,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -184,6 +186,7 @@ export const fetchWorkerLink = async (
     hubstaffName: data.hubstaff_name,
     weeklyHours: data.weekly_hours,
     billRateUsd: data.bill_rate_usd,
+    sessionRateUsd: data.session_rate_usd,
     linkStatus: data.status,
   };
 };
@@ -305,6 +308,7 @@ export const updateWorkerLink = async (
     hubstaff_name: string | null;
     weekly_hours: number | null;
     bill_rate_usd?: number | null;
+    session_rate_usd?: number | null;
     status: Database['public']['Enums']['worker_status'];
   },
 ): Promise<void> => {

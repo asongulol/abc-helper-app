@@ -73,13 +73,22 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       }
       setPreview(res.data);
       if (res.data.lines.length === 0) {
-        notify('No worked hours for this client in the window.', {
+        notify('No billable hours or sessions for this client in the window.', {
           type: 'warn',
         });
-      } else if (res.data.zeroRateNames.length > 0) {
-        notify(`No USD bill rate for ${res.data.zeroRateNames.join(', ')} — their lines bill $0.`, {
-          type: 'warn',
-        });
+        return;
+      }
+      if (res.data.zeroRateNames.length > 0) {
+        notify(
+          `No USD bill rate for ${res.data.zeroRateNames.join(', ')} — their hourly lines bill $0.`,
+          { type: 'warn' },
+        );
+      }
+      if (res.data.zeroSessionRateNames.length > 0) {
+        notify(
+          `No USD session rate for ${res.data.zeroSessionRateNames.join(', ')} — their session lines bill $0.`,
+          { type: 'warn' },
+        );
       }
     });
   };
@@ -129,14 +138,23 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
   const exportPreviewCsv = () => {
     if (!preview) return;
     const content = [
-      ['Contractor', 'Position', 'Hours', 'Rate USD', 'Amount USD'].map(csvEscape).join(','),
+      ['Contractor', 'Position', 'Type', 'Qty', 'Unit rate USD', 'Amount USD']
+        .map(csvEscape)
+        .join(','),
       ...preview.lines.map((l) =>
-        [l.workerName, l.position ?? '', l.workedHours, l.billRateUsd, l.amountUsd]
+        [
+          l.workerName,
+          l.position ?? '',
+          l.kind === 'session' ? 'Sessions' : 'Hours',
+          l.kind === 'session' ? l.sessionsCount : l.workedHours,
+          l.kind === 'session' ? l.sessionRateUsd : l.billRateUsd,
+          l.amountUsd,
+        ]
           .map(csvEscape)
           .join(','),
       ),
-      ['', '', '', 'Subtotal', preview.subtotalUsd].map(csvEscape).join(','),
-      ['', '', '', `Total (+${preview.markupPct}%)`, preview.totalUsd].map(csvEscape).join(','),
+      ['', '', '', '', 'Subtotal', preview.subtotalUsd].map(csvEscape).join(','),
+      ['', '', '', '', `Total (+${preview.markupPct}%)`, preview.totalUsd].map(csvEscape).join(','),
     ].join('\n');
     downloadCsv(`invoice_${clientName || 'client'}_${from}_${to}.csv`, content);
   };
@@ -146,8 +164,9 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       <div className="card" style={{ marginBottom: 16 }}>
         <h2 style={{ marginTop: 0 }}>Invoicing</h2>
         <p className="sub">
-          Invoice a client for worked hours × each contractor&apos;s USD bill rate. Paid time off is
-          not billed (it&apos;s the employer&apos;s cost).
+          Invoice a client for worked hours × each contractor&apos;s USD bill rate, plus any
+          flat-fee sessions (approved visits × the session rate). Paid time off is not billed
+          (it&apos;s the employer&apos;s cost).
         </p>
       </div>
 
@@ -223,32 +242,40 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
                   <tr>
                     <th>Contractor</th>
                     <th>Position</th>
-                    <th style={rightAlign}>Hours</th>
-                    <th style={rightAlign}>Rate (USD/hr)</th>
+                    <th>Type</th>
+                    <th style={rightAlign}>Qty</th>
+                    <th style={rightAlign}>Unit rate</th>
                     <th style={rightAlign}>Amount</th>
                   </tr>
                 </thead>
                 <tbody>
                   {preview.lines.map((l) => (
-                    <tr key={l.workerId}>
+                    <tr key={`${l.workerId}-${l.kind}`}>
                       <td>{l.workerName}</td>
                       <td>{l.position ?? '—'}</td>
-                      <td style={rightAlign}>{l.workedHours.toFixed(2)}</td>
-                      <td style={rightAlign}>{money(l.billRateUsd, 'USD')}</td>
+                      <td>{l.kind === 'session' ? 'Sessions' : 'Hours'}</td>
+                      <td style={rightAlign}>
+                        {l.kind === 'session' ? l.sessionsCount : l.workedHours.toFixed(2)}
+                      </td>
+                      <td style={rightAlign}>
+                        {l.kind === 'session'
+                          ? `${money(l.sessionRateUsd, 'USD')}/visit`
+                          : `${money(l.billRateUsd, 'USD')}/hr`}
+                      </td>
                       <td style={rightAlign}>{money(l.amountUsd, 'USD')}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={4} style={{ textAlign: 'right', fontWeight: 600 }}>
+                    <td colSpan={5} style={{ textAlign: 'right', fontWeight: 600 }}>
                       Subtotal
                     </td>
                     <td style={rightAlign}>{money(preview.subtotalUsd, 'USD')}</td>
                   </tr>
                   {preview.markupPct > 0 && (
                     <tr>
-                      <td colSpan={4} style={rightAlign}>
+                      <td colSpan={5} style={rightAlign}>
                         Markup {preview.markupPct}%
                       </td>
                       <td style={rightAlign}>
@@ -257,7 +284,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
                     </tr>
                   )}
                   <tr>
-                    <td colSpan={4} style={{ textAlign: 'right', fontWeight: 700 }}>
+                    <td colSpan={5} style={{ textAlign: 'right', fontWeight: 700 }}>
                       Total (USD)
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>

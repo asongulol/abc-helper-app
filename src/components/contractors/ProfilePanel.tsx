@@ -51,6 +51,7 @@ type FormState = {
   hubstaffName: string;
   weeklyHours: string;
   billRateUsd: string;
+  sessionRateUsd: string;
   linkStatus: 'active' | 'inactive' | 'ended';
   shiftStart: string;
   shiftEnd: string;
@@ -120,6 +121,7 @@ function toForm(w: RosterWorker): FormState {
     hubstaffName: w.hubstaffName ?? '',
     weeklyHours: w.weeklyHours != null ? String(w.weeklyHours) : '',
     billRateUsd: w.billRateUsd != null ? String(w.billRateUsd) : '',
+    sessionRateUsd: w.sessionRateUsd != null ? String(w.sessionRateUsd) : '',
     linkStatus:
       w.linkStatus === 'ended' ? 'ended' : w.linkStatus === 'inactive' ? 'inactive' : 'active',
     shiftStart: w.shiftStart ?? '',
@@ -245,6 +247,7 @@ export function ProfilePanel({
         companyId: e.companyId,
         role: e.role,
         billRateUsd: e.billRateUsd,
+        sessionRateUsd: e.sessionRateUsd,
         contract: e.contract === 'PT' ? 'PT' : 'FT',
         status: e.status === 'inactive' ? 'inactive' : e.status === 'ended' ? 'ended' : 'active',
       });
@@ -297,11 +300,13 @@ export function ProfilePanel({
       errs.weeklyHours = 'Must be a number.';
     if (form.billRateUsd !== '' && Number.isNaN(Number(form.billRateUsd)))
       errs.billRateUsd = 'Must be a number.';
+    if (form.sessionRateUsd !== '' && Number.isNaN(Number(form.sessionRateUsd)))
+      errs.sessionRateUsd = 'Must be a number.';
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       // Surface the first error's tab so the user sees what's wrong.
       if (errs.firstName || errs.lastName || errs.email) setActiveTab('profile');
-      else if (errs.billRateUsd) setActiveTab('pay');
+      else if (errs.billRateUsd || errs.sessionRateUsd) setActiveTab('pay');
       else setActiveTab('personal');
       return false;
     }
@@ -331,6 +336,7 @@ export function ProfilePanel({
 
     const weeklyHours = form.weeklyHours !== '' ? Number(form.weeklyHours) : null;
     const billRateUsd = form.billRateUsd !== '' ? Number(form.billRateUsd) : null;
+    const sessionRateUsd = form.sessionRateUsd !== '' ? Number(form.sessionRateUsd) : null;
     const str = (v: string) => (v.trim() === '' ? null : v.trim());
 
     startTransition(async () => {
@@ -373,6 +379,7 @@ export function ProfilePanel({
         hubstaffName: str(form.hubstaffName),
         weeklyHours,
         billRateUsd,
+        sessionRateUsd,
         linkStatus,
       });
       if (!result.ok) {
@@ -417,6 +424,7 @@ export function ProfilePanel({
         hubstaffName: str(form.hubstaffName),
         weeklyHours,
         billRateUsd,
+        sessionRateUsd,
         linkStatus,
         workerStatus: linkStatus === 'active' ? 'active' : linkStatus,
       };
@@ -692,6 +700,18 @@ export function ProfilePanel({
                   disabled={isPending}
                 />
               </Field>
+              <Field id="pp-session" label="Session rate (USD/visit)" error={errors.sessionRateUsd}>
+                <input
+                  id="pp-session"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.sessionRateUsd}
+                  onChange={(e) => set('sessionRateUsd', e.target.value)}
+                  placeholder="—"
+                  disabled={isPending}
+                />
+              </Field>
               <Field id="pp-link-status" label="Assignment status">
                 <select
                   id="pp-link-status"
@@ -759,6 +779,21 @@ export function ProfilePanel({
                       onChange={(ev) =>
                         updateEng(i, {
                           billRateUsd: ev.target.value === '' ? null : Number(ev.target.value),
+                        })
+                      }
+                      disabled={isPending}
+                    />
+                  </Field>
+                  <Field id={`eng-srate-${e.companyId}`} label="Session rate (USD/visit)">
+                    <input
+                      id={`eng-srate-${e.companyId}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={e.sessionRateUsd ?? ''}
+                      onChange={(ev) =>
+                        updateEng(i, {
+                          sessionRateUsd: ev.target.value === '' ? null : Number(ev.target.value),
                         })
                       }
                       disabled={isPending}

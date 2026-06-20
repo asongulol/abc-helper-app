@@ -76,6 +76,7 @@ export const SaveWorkerProfileSchema = z.object({
   hubstaffName: z.string().max(100).nullable(),
   weeklyHours: z.number().min(0).max(168).nullable(),
   billRateUsd: z.number().min(0).max(100000).nullable().optional(),
+  sessionRateUsd: z.number().min(0).max(100000).nullable().optional(),
   linkStatus: WorkerStatusSchema,
 });
 export type SaveWorkerProfileInput = z.infer<typeof SaveWorkerProfileSchema>;

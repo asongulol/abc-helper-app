@@ -60,18 +60,26 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
           <tr>
             <th style={cell}>Contractor</th>
             <th style={cell}>Position</th>
-            <th style={cellRight}>Hours</th>
-            <th style={cellRight}>Rate (USD/hr)</th>
+            <th style={cell}>Type</th>
+            <th style={cellRight}>Qty</th>
+            <th style={cellRight}>Unit rate</th>
             <th style={cellRight}>Amount</th>
           </tr>
         </thead>
         <tbody>
           {invoice.lines.map((l) => (
-            <tr key={`${l.workerName ?? 'line'}-${l.position ?? ''}-${l.amountUsd}`}>
+            <tr key={`${l.workerName ?? 'line'}-${l.kind}-${l.position ?? ''}-${l.amountUsd}`}>
               <td style={cell}>{l.workerName ?? '—'}</td>
               <td style={cell}>{l.position ?? '—'}</td>
-              <td style={cellRight}>{l.workedHours.toFixed(2)}</td>
-              <td style={cellRight}>{money(l.billRateUsd, 'USD')}</td>
+              <td style={cell}>{l.kind === 'session' ? 'Sessions' : 'Hours'}</td>
+              <td style={cellRight}>
+                {l.kind === 'session' ? (l.sessionsCount ?? 0) : l.workedHours.toFixed(2)}
+              </td>
+              <td style={cellRight}>
+                {l.kind === 'session'
+                  ? `${money(l.sessionRateUsd ?? 0, 'USD')}/visit`
+                  : `${money(l.billRateUsd, 'USD')}/hr`}
+              </td>
               <td style={cellRight}>{money(l.amountUsd, 'USD')}</td>
             </tr>
           ))}
@@ -80,13 +88,13 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
           {invoice.markupPct > 0 && (
             <>
               <tr>
-                <td colSpan={4} style={cellRight}>
+                <td colSpan={5} style={cellRight}>
                   Subtotal
                 </td>
                 <td style={cellRight}>{money(invoice.subtotalUsd, 'USD')}</td>
               </tr>
               <tr>
-                <td colSpan={4} style={cellRight}>
+                <td colSpan={5} style={cellRight}>
                   Markup {invoice.markupPct}%
                 </td>
                 <td style={cellRight}>{money(markupAmount, 'USD')}</td>
@@ -95,7 +103,7 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
           )}
           <tr>
             <td
-              colSpan={4}
+              colSpan={5}
               style={{
                 ...cellRight,
                 fontWeight: 700,
@@ -118,7 +126,7 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
       </table>
 
       <p style={{ marginTop: 24, color: '#677083', fontSize: 11 }}>
-        Billed for worked hours; paid time off is not billed.
+        Billed for worked hours and per-session services; paid time off is not billed.
       </p>
     </div>
   );

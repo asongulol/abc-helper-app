@@ -85,6 +85,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         hubstaffName: null,
         weeklyHours: null,
         billRateUsd: null,
+        sessionRateUsd: null,
         linkStatus: 'active',
       };
       onCreated(worker);

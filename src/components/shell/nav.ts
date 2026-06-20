@@ -47,6 +47,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     items: [
       { href: '/batches', label: 'Review & Recon Batches', icon: '📦' },
       { href: '/reports', label: 'Reports', icon: '📊' },
+      { href: '/sessions', label: 'Sessions', icon: '🗓' },
       { href: '/invoicing', label: 'Invoicing', icon: '🧾' },
       { href: '/imports', label: 'Imports', icon: '🗂' },
       { href: '/audit', label: 'Audit Log', icon: '📝' },
