@@ -7,7 +7,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
-import type { RosterEntry, WorkerSeconds } from '@/lib/invoicing/compute';
+import type { LineKind, RosterEntry, WorkerSeconds, WorkerSessions } from '@/lib/invoicing/compute';
 
 type Db = SupabaseClient<Database>;
 
@@ -30,8 +30,11 @@ export type InvoiceListRow = {
 export type InvoiceLineRow = {
   workerName: string | null;
   position: string | null;
+  kind: LineKind;
   workedHours: number;
   billRateUsd: number;
+  sessionsCount: number | null;
+  sessionRateUsd: number | null;
   amountUsd: number;
 };
 
@@ -52,8 +55,11 @@ export type NewInvoiceLine = {
   workerId: string;
   workerName: string;
   position: string | null;
+  kind: LineKind;
   workedHours: number;
   billRateUsd: number;
+  sessionsCount: number | null;
+  sessionRateUsd: number | null;
   amountUsd: number;
 };
 
@@ -110,6 +116,72 @@ export const fetchClientRoster = async (db: Db, clientId: string): Promise<Roste
       position: r.role,
       billRateUsd: r.bill_rate_usd === null ? null : Number(r.bill_rate_usd),
     }));
+};
+
+/**
+ * Approved sessions for a client in [from, to], aggregated per worker into a
+ * self-contained billing input. Sessions are recorded against the CLIENT
+ * directly (`service_sessions.company_id` = clientId) and bill independently of
+ * the active roster: the per-worker session rate is resolved from the
+ * `worker_companies` link REGARDLESS of its status, so an approved session still
+ * bills after the link is deactivated/ended. A worker with no link at all bills
+ * at $0 (surfaced to the caller as a missing session rate). Only approved rows
+ * bill.
+ */
+export const fetchClientSessions = async (
+  db: Db,
+  clientId: string,
+  from: string,
+  to: string,
+): Promise<WorkerSessions[]> => {
+  const { data, error } = await db
+    .from('service_sessions')
+    .select('worker_id, units, workers(first_name, middle_name, last_name)')
+    .eq('company_id', clientId)
+    .eq('approval', 'approved')
+    .gte('session_date', from)
+    .lte('session_date', to)
+    .limit(100000);
+  if (error) throw new Error(`sessions: ${error.message}`);
+
+  // Aggregate approved units + name per worker.
+  const byWorker = new Map<string, { workerName: string; count: number }>();
+  for (const r of data ?? []) {
+    if (!r.worker_id) continue;
+    const units = Number(r.units) || 0;
+    const cur = byWorker.get(r.worker_id);
+    if (cur) cur.count += units;
+    else byWorker.set(r.worker_id, { workerName: joinName(r.workers), count: units });
+  }
+  if (byWorker.size === 0) return [];
+
+  // Resolve session rate + role from the link (ANY status) so deactivated/ended
+  // links still bill. A worker with no link → no entry here → null rate/role.
+  const { data: links, error: le } = await db
+    .from('worker_companies')
+    .select('worker_id, role, session_rate_usd')
+    .eq('company_id', clientId)
+    .in('worker_id', [...byWorker.keys()]);
+  if (le) throw new Error(`session rates: ${le.message}`);
+  const linkByWorker = new Map<string, { role: string | null; sessionRateUsd: number | null }>();
+  for (const l of links ?? []) {
+    if (!l.worker_id) continue;
+    linkByWorker.set(l.worker_id, {
+      role: l.role,
+      sessionRateUsd: l.session_rate_usd === null ? null : Number(l.session_rate_usd),
+    });
+  }
+
+  return [...byWorker.entries()].map(([workerId, v]) => {
+    const link = linkByWorker.get(workerId);
+    return {
+      workerId,
+      workerName: v.workerName,
+      position: link?.role ?? null,
+      sessionsCount: v.count,
+      sessionRateUsd: link?.sessionRateUsd ?? null,
+    };
+  });
 };
 
 /** Employer tracked time (PTO excluded) for the given workers in [from, to]. */
@@ -177,7 +249,9 @@ export const fetchInvoiceDetail = async (db: Db, id: string): Promise<InvoiceDet
   if (!inv) return null;
   const { data: lines, error: le } = await db
     .from('invoice_lines')
-    .select('worker_name, position, worked_hours, bill_rate_usd, amount_usd')
+    .select(
+      'worker_name, position, kind, worked_hours, bill_rate_usd, sessions_count, session_rate_usd, amount_usd',
+    )
     .eq('invoice_id', id)
     .order('worker_name');
   if (le) throw new Error(`invoice lines: ${le.message}`);
@@ -194,8 +268,11 @@ export const fetchInvoiceDetail = async (db: Db, id: string): Promise<InvoiceDet
     lines: (lines ?? []).map((l) => ({
       workerName: l.worker_name,
       position: l.position,
+      kind: (l.kind === 'session' ? 'session' : 'hourly') as LineKind,
       workedHours: Number(l.worked_hours ?? 0),
       billRateUsd: Number(l.bill_rate_usd ?? 0),
+      sessionsCount: l.sessions_count === null ? null : Number(l.sessions_count),
+      sessionRateUsd: l.session_rate_usd === null ? null : Number(l.session_rate_usd),
       amountUsd: Number(l.amount_usd ?? 0),
     })),
   };
@@ -251,8 +328,11 @@ export const createInvoiceWithLines = async (
         worker_id: l.workerId,
         worker_name: l.workerName,
         position: l.position,
+        kind: l.kind,
         worked_hours: l.workedHours,
         bill_rate_usd: l.billRateUsd,
+        sessions_count: l.sessionsCount,
+        session_rate_usd: l.sessionRateUsd,
         amount_usd: l.amountUsd,
       })),
     );

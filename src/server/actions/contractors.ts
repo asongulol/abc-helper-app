@@ -137,6 +137,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       hubstaff_name: input.hubstaffName,
       weekly_hours: input.weeklyHours,
       bill_rate_usd: input.billRateUsd ?? null,
+      session_rate_usd: input.sessionRateUsd ?? null,
       status: input.linkStatus,
     });
     await logEvent({
@@ -584,6 +585,7 @@ export interface WorkerEngagement {
   contract: string;
   role: string | null;
   billRateUsd: number | null;
+  sessionRateUsd: number | null;
   status: string;
 }
 
@@ -597,7 +599,9 @@ export async function getWorkerCompanies(args: {
     const svc = createServiceClient();
     const { data, error } = await svc
       .from('worker_companies')
-      .select('company_id, contract, role, bill_rate_usd, status, companies(name, kind)')
+      .select(
+        'company_id, contract, role, bill_rate_usd, session_rate_usd, status, companies(name, kind)',
+      )
       .eq('worker_id', args.workerId);
     if (error) return { ok: false, error: error.message };
     const engagements: WorkerEngagement[] = (data ?? []).map((r) => ({
@@ -607,6 +611,7 @@ export async function getWorkerCompanies(args: {
       contract: r.contract,
       role: r.role,
       billRateUsd: r.bill_rate_usd,
+      sessionRateUsd: r.session_rate_usd,
       status: r.status,
     }));
     return { ok: true, data: { engagements } };
@@ -624,6 +629,7 @@ export async function saveWorkerCompanyLink(args: {
   companyId: string;
   role: string | null;
   billRateUsd: number | null;
+  sessionRateUsd: number | null;
   contract: 'FT' | 'PT';
   status: 'active' | 'inactive' | 'ended';
 }): Promise<ActionResult> {
@@ -636,6 +642,7 @@ export async function saveWorkerCompanyLink(args: {
       .update({
         role: args.role,
         bill_rate_usd: args.billRateUsd,
+        session_rate_usd: args.sessionRateUsd,
         contract: args.contract,
         status: args.status,
       })
