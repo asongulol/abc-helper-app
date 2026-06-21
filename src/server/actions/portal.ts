@@ -391,6 +391,8 @@ export async function signAgreement(args: {
   agreementKey: string;
   signatureDataUrl: string;
   typedName: string;
+  /** Did the signer scroll through the whole agreement? Recorded as evidence. */
+  scrolledToEnd?: boolean;
 }): Promise<ActionResult> {
   const worker = await requireWorker();
 
@@ -451,7 +453,9 @@ export async function signAgreement(args: {
         signed_legal_name: args.typedName.trim(),
         signature_method: signatureData?.startsWith('data:') ? 'drawn' : 'typed',
         signature_data: signatureData,
-        scrolled_to_end: true,
+        // Record the real value (the portal gates signing on it); default to
+        // true only when an older caller omits it, to preserve prior behavior.
+        scrolled_to_end: args.scrolledToEnd ?? true,
         signed_date: todayManila,
         status: 'signed',
       },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { Badge, type BadgeTone, Modal, useToast } from '@/components/ui';
 import type { Database } from '@/db/types';
 import {
@@ -90,6 +90,20 @@ export const PortalOnboarding = ({
   const [typedName, setTypedName] = useState('');
   const [drawMode, setDrawMode] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const agreementRef = useRef<HTMLElement | null>(null);
+  // E-sign evidence: the signer must scroll through the full agreement before the
+  // Sign button enables. If the body fits without scrolling there's nothing to
+  // gate on, so it counts as read.
+  const [scrolledEnd, setScrolledEnd] = useState(false);
+  useEffect(() => {
+    if (selectedKind === null) return;
+    const el = agreementRef.current;
+    setScrolledEnd(!el || el.scrollHeight <= el.clientHeight + 4);
+  }, [selectedKind]);
+  const onAgreementScroll = (e: React.UIEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 8) setScrolledEnd(true);
+  };
   const [drawing, setDrawing] = useState(false);
 
   // Stage 2 state
@@ -101,6 +115,11 @@ export const PortalOnboarding = ({
 
   const currentStage = progress?.current_stage ?? 'stage1_sign';
   const isComplete = !!progress?.completed_at && currentStage === 'complete';
+  const stagesDone = progress
+    ? (progress.stage1_complete ? 1 : 0) +
+      (progress.stage2_complete ? 1 : 0) +
+      (progress.stage3_complete ? 1 : 0)
+    : 0;
 
   // --- canvas drawing helpers ---
   const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -173,6 +192,7 @@ export const PortalOnboarding = ({
         agreementKey: kind,
         signatureDataUrl: sigDataUrl,
         typedName: typedName.trim(),
+        scrolledToEnd: scrolledEnd,
       });
       if (result.ok) {
         notify(`${KIND_LABEL[kind] ?? kind} signed!`, { type: 'success' });
@@ -250,6 +270,12 @@ export const PortalOnboarding = ({
         </p>
         {/* Progress bar */}
         <div
+          role="progressbar"
+          aria-label="Onboarding progress"
+          aria-valuemin={0}
+          aria-valuemax={3}
+          aria-valuenow={stagesDone}
+          aria-valuetext={`${stagesDone} of 3 stages complete`}
           style={{
             height: 6,
             borderRadius: 3,
@@ -264,15 +290,7 @@ export const PortalOnboarding = ({
               height: '100%',
               background: 'var(--accent)',
               transformOrigin: 'left',
-              transform: `scaleX(${
-                progress
-                  ? (
-                      (progress.stage1_complete ? 1 : 0) +
-                        (progress.stage2_complete ? 1 : 0) +
-                        (progress.stage3_complete ? 1 : 0)
-                    ) / 3
-                  : 0
-              })`,
+              transform: `scaleX(${stagesDone / 3})`,
               transition: 'transform .4s',
             }}
           />
@@ -470,9 +488,16 @@ export const PortalOnboarding = ({
           }}
           maxWidth={600}
         >
-          {/* Agreement body — full column width preview of the contract */}
+          {/* Agreement body — full column width preview of the contract.
+              Scrollable region kept keyboard-focusable so non-mouse users can
+              scroll it (WCAG 2.1.1); a labelled <section> is a region landmark. */}
           {templateMap[selectedKind]?.body && (
-            <div
+            <section
+              ref={agreementRef}
+              onScroll={onAgreementScroll}
+              // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable scroll region (WCAG 2.1.1).
+              tabIndex={0}
+              aria-label="Agreement text — scroll to the end to enable signing"
               style={{
                 width: '100%',
                 maxHeight: 280,
@@ -486,7 +511,7 @@ export const PortalOnboarding = ({
               }}
             >
               {templateMap[selectedKind]?.body}
-            </div>
+            </section>
           )}
 
           {/* Signature method toggle */}
@@ -513,6 +538,8 @@ export const PortalOnboarding = ({
                 ref={canvasRef}
                 width={540}
                 height={120}
+                role="img"
+                aria-label="Signature drawing area — draw your signature with mouse or finger"
                 style={{
                   border: '1px solid var(--border)',
                   borderRadius: 4,
@@ -558,11 +585,19 @@ export const PortalOnboarding = ({
             />
           </label>
 
+          {!scrolledEnd && (
+            <p
+              className="sub"
+              style={{ fontSize: 11, marginTop: 12, color: 'var(--warn, #b45309)' }}
+            >
+              Scroll through the full agreement to enable signing.
+            </p>
+          )}
           <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
             <button
               type="button"
               className="btn"
-              disabled={isPending || !typedName.trim()}
+              disabled={isPending || !typedName.trim() || !scrolledEnd}
               onClick={() => handleSign(selectedKind)}
             >
               {isPending ? 'Signing…' : 'Sign Agreement'}

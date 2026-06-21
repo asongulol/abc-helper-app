@@ -19,6 +19,8 @@ export const SignAgreementSchema = z.object({
   agreementKey: AgreementKindSchema,
   signatureDataUrl: z.string().min(1),
   typedName: z.string().min(1),
+  /** Whether the signer scrolled through the whole agreement (e-sign evidence). */
+  scrolledToEnd: z.boolean().optional(),
 });
 
 export const MoodCheckinSchema = z.object({
