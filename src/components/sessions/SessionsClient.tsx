@@ -38,6 +38,7 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
   const [isLoading, startLoad] = useTransition();
   const [isSaving, startSave] = useTransition();
   const [isUpdating, startUpdate] = useTransition();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Add-session form.
   const [addWorkerId, setAddWorkerId] = useState('');
@@ -64,6 +65,7 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
       }
       setRoster(res.data.roster);
       setSessions(res.data.sessions);
+      setSelected(new Set());
     });
   };
 
@@ -113,6 +115,33 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
     });
   };
 
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleAll = (ids: string[], checked: boolean) =>
+    setSelected(checked ? new Set(ids) : new Set());
+
+  const bulkApprove = (status: 'approved' | 'rejected') => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    startUpdate(async () => {
+      const res = await setSessionApproval({ clientId, ids, status });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`${res.data.count} session${res.data.count === 1 ? '' : 's'} ${status}.`, {
+        type: 'success',
+      });
+      reload();
+    });
+  };
+
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const doDelete = () => {
     const id = pendingDelete;
@@ -130,6 +159,8 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
   };
 
   const approvedCount = sessions?.filter((s) => s.approval === 'approved').length ?? 0;
+  const allSelected =
+    !!sessions && sessions.length > 0 && sessions.every((s) => selected.has(s.id));
 
   return (
     <>
@@ -154,6 +185,7 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                 setClientId(e.target.value);
                 setRoster(null);
                 setSessions(null);
+                setSelected(new Set());
               }}
               style={{ width: '100%' }}
             >
@@ -276,6 +308,43 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
               ({approvedCount} approved / {sessions.length} total)
             </span>
           </h3>
+          {selected.size > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                marginBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <span className="sub">{selected.size} selected</span>
+              <button
+                type="button"
+                className="btn sm"
+                disabled={isUpdating}
+                onClick={() => bulkApprove('approved')}
+              >
+                Approve {selected.size}
+              </button>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={isUpdating}
+                onClick={() => bulkApprove('rejected')}
+              >
+                Reject {selected.size}
+              </button>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={isUpdating}
+                onClick={() => setSelected(new Set())}
+              >
+                Clear
+              </button>
+            </div>
+          )}
           {sessions.length === 0 ? (
             <p className="sub">No sessions in this window.</p>
           ) : (
@@ -283,6 +352,22 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Select all sessions"
+                        checked={allSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = selected.size > 0 && !allSelected;
+                        }}
+                        onChange={(e) =>
+                          toggleAll(
+                            sessions.map((s) => s.id),
+                            e.target.checked,
+                          )
+                        }
+                      />
+                    </th>
                     <th>Date</th>
                     <th>Contractor</th>
                     <th>Item</th>
@@ -297,6 +382,14 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                 <tbody>
                   {sessions.map((s) => (
                     <tr key={s.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${s.workerName || 'session'} ${fmtDate(s.sessionDate)}`}
+                          checked={selected.has(s.id)}
+                          onChange={() => toggle(s.id)}
+                        />
+                      </td>
                       <td>{fmtDate(s.sessionDate)}</td>
                       <td>{s.workerName || '—'}</td>
                       <td>{s.sessionType ?? '—'}</td>
