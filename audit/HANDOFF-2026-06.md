@@ -6,6 +6,39 @@ Companion detail lives in the audit (`audit/00-summary.md` … `05-gaps.md`) and
 
 ---
 
+## Update — 2026-06-21 (continuation): modal-decomposition roadmap **complete**
+
+Picked up the two pending modal items and the findings they surfaced. All four units below are merged
+(`--no-ff`) + gate-green (typecheck · biome · guardrails · 389 tests · build) and **runtime-verified with
+Playwright** (not just typecheck). The `audit/proposals/modal-decomposition.md` roadmap (A/B/C) is now done.
+
+- **ProfilePanel Phase A — smoke-tested (PASS).** Clicked through all four tabs in the running app
+  (edit→Save, photo upload, engagement save, portal-login). Prop threading intact.
+- **Phase B — ProfilePanel → intercepting route** (`2319613`/`accdf05`). Modal on soft-nav, full page on
+  deep-link/refresh (Next parallel + `(.)` intercept). Extracted `useContractorProfile` hook + `ProfileTabs`;
+  `ProfilePanel` is now a thin modal shell. `contractors/[workerId]` (page) + `@modal/(.)[workerId]` (modal)
+  + `loadContractor` (reuses `fetchWorkerLink`). ContractorsClient row/name/Edit → `Link`/`router.push`.
+  Fixed a dirty-state regression: form now reads clean immediately on save (saved-snapshot baseline).
+- **Phase C — OnboardingDrilldown → intercepting route** (`c1ff6f0`/`9fa3037`). Same pattern; since it isn't
+  tab-based, split the outer `<Modal>` chrome from `OnboardingDetailBody`. `onboarding/[workerId]` +
+  `@modal/(.)[workerId]` + `loadOnboarding` (reuses `fetchOnboardingProgressByWorker`).
+- **Modal top-layer fix** (`845343f`/`b73a732`). The shared `Modal` now uses `dialog.showModal()` (native top
+  layer) instead of `<dialog open>` + `.modal-bg` + manual inert/Tab-trap. **Fixes the nested-modal stacking
+  bug** (unsaved-guard / confirm sub-modals rendered *behind* their parent); now they render in front and dim
+  the parent. Backdrop click + Escape (via `cancel`, so parents can still intercept) preserved.
+- **Pay-tab nested-`<form>` fix** (`5a8e798`/`42d2eb9`). PayTab's `<form>` no longer wraps `RateCard`'s own
+  `<form>` (invalid HTML / hydration warning); profile form scoped to the engagement + SaveBar, rest siblings.
+
+**Deploy/ops:** all frontend-only (no migrations, no env). `main` ahead of `origin/main` by these 8 commits
+**+ pushed**. Gotcha worth knowing: the dev seed's placeholder UUIDs (`a0000000-…`, `c0000000-…`) fail Zod v4
+`.uuid()`, so saving a *seeded* contractor errors "Invalid UUID" — not a bug; test the save path with a real
+`gen_random_uuid()` worker under the employer (`b7ad6ae9-…`, itself a valid v4).
+
+**Still optional:** the now-dead `.modal-bg` CSS rules (desktop + tablet `z-index`) can be removed; PHI payout
+columns / real KMS / signature backfill (unchanged from below); `usePagination` on more tables.
+
+---
+
 ## TL;DR
 
 The read-only audit's entire act-on roadmap is **done**, plus the two big features the user chose
@@ -96,12 +129,9 @@ strict-only, so a loosely-matched worker could fall to `unattributed` (= not pai
 
 ## Pending / next steps
 
-- **ProfilePanel smoke-test (recommended):** the decompose was verbatim-JSX, verified by typecheck/biome/
-  build only — there are **no component tests** and the running app wasn't clicked through. Manually verify
-  each tab: edit a field → Save; photo upload; create portal login; edit an engagement.
-- **Modal Phase B (route migration):** ProfilePanel → `/contractors/[workerId]`. **Gated on a UX decision**
-  (full-page nav vs. keeping the modal feel) — see `audit/proposals/modal-decomposition.md`.
-- **Modal Phase C:** OnboardingDrilldown (1293 lines) — same decompose-then-route pattern.
+- ~~**ProfilePanel smoke-test**~~ — ✅ done (2026-06-21, Playwright PASS).
+- ~~**Modal Phase B** (ProfilePanel → route)~~ — ✅ done; chose the **intercepting route** (modal feel + deep-link).
+- ~~**Modal Phase C** (OnboardingDrilldown → route)~~ — ✅ done; roadmap complete. See the continuation section above.
 - **PHI:** payout columns (skipped — revisit only if compliance requires; mind the `wise_recipients`
   matcher dependency). Wire real KMS: `pnpm add @aws-sdk/client-kms` + implement
   `src/server/crypto/aws-kms-provider.ts`. Build the signature_data backfill job.
@@ -116,7 +146,11 @@ strict-only, so a loosely-matched worker could fall to `unattributed` (= not pai
 - Coverage: `src/lib/coverage/classify.ts`, `src/db/queries/coverage.ts`, `src/app/(admin)/coverage/`,
   `src/server/actions/coverage.ts`
 - Attribution: `src/lib/time/attribution.ts` (shared matcher), `src/lib/payroll/mappers.ts`
-- ProfilePanel panels: `src/components/contractors/profile/`
+- ProfilePanel panels + hook: `src/components/contractors/profile/` (`useContractorProfile`, `ProfileTabs`,
+  `ContractorProfilePage`, `ProfileModalRoute`); routes `src/app/(admin)/contractors/{[workerId],@modal,loadContractor.ts}`
+- Onboarding drilldown: `src/components/onboarding/` (`OnboardingDetailBody` + `OnboardingDrilldown`/`…DetailPage`/`…ModalRoute`);
+  routes `src/app/(admin)/onboarding/{[workerId],@modal,loadOnboarding.ts}`
+- Shared Modal (native top-layer `showModal()`): `src/components/ui/Modal.tsx`
 - Pagination: `src/lib/paginate.ts`, `src/components/ui/{usePagination,Pagination}`
 - Proposals & this handoff: `audit/proposals/`, `audit/HANDOFF-2026-06.md`
 
