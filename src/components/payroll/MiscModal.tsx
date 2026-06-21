@@ -161,7 +161,7 @@ export const MiscModal = ({
   };
 
   return (
-    <Modal title={`Misc · ${name}`} onClose={onClose} escClose={false} maxWidth={640}>
+    <Modal title={`Misc · ${name}`} onClose={onClose} maxWidth={640}>
       <p className="sub" style={{ marginTop: 2, fontSize: 12 }}>
         Rate ₱{rate.toLocaleString()} · effective hourly ₱
         {hourlyRate.toLocaleString('en-US', { minimumFractionDigits: 2 })} (rate×24÷2080)
