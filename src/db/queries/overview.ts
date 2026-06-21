@@ -26,28 +26,6 @@ export const countActiveContractors = async (db: Db, companyId: string): Promise
   return count ?? 0;
 };
 
-export interface PeriodCounts {
-  open: number;
-  locked: number;
-}
-
-/** Count of pay periods by state for a company. */
-export const getPeriodCounts = async (db: Db, companyId: string): Promise<PeriodCounts> => {
-  const { data, error } = await db
-    .from('pay_periods')
-    .select('state')
-    .eq('company_id', companyId)
-    .in('state', ['open', 'locked']);
-  if (error) throw new Error(`getPeriodCounts: ${error.message}`);
-  let open = 0;
-  let locked = 0;
-  for (const row of data ?? []) {
-    if (row.state === 'open') open++;
-    else if (row.state === 'locked') locked++;
-  }
-  return { open, locked };
-};
-
 /** Sum of net_php for a specific pay period (PHP major units). */
 export const getPeriodNetTotal = async (
   db: Db,
@@ -90,6 +68,21 @@ export const countPendingTimeApprovals = async (db: Db, companyId: string): Prom
     .eq('company_id', companyId)
     .eq('approval', 'pending');
   if (error) throw new Error(`countPendingTimeApprovals: ${error.message}`);
+  return count ?? 0;
+};
+
+/**
+ * Count of payments stuck in a failed payout state (any period) for a company.
+ * Backs the Overview "Payout issues" tile — a failed Wise transfer needs
+ * attention regardless of which period it belongs to.
+ */
+export const countFailedPayouts = async (db: Db, companyId: string): Promise<number> => {
+  const { count, error } = await db
+    .from('payments')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('status', 'failed');
+  if (error) throw new Error(`countFailedPayouts: ${error.message}`);
   return count ?? 0;
 };
 
