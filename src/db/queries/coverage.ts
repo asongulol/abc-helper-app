@@ -137,6 +137,67 @@ export const fetchActualHours = async (
   }));
 };
 
+export interface CoverageRosterRow {
+  workerId: string;
+  workerName: string;
+  /** Informational fallback target (weekly_hours) when no explicit target is set. */
+  weeklyHours: number | null;
+  /** The current open, company-specific target for this worker, if any. */
+  targetId: string | null;
+  targetHours: number | null;
+  periodKind: string;
+}
+
+/**
+ * Active contractors for a company with their current OPEN company-specific
+ * coverage target (the management surface). weekly_hours is shown as the
+ * effective fallback when no explicit target exists.
+ */
+export const fetchCoverageRoster = async (
+  db: Db,
+  companyId: string,
+): Promise<CoverageRosterRow[]> => {
+  const { data: links, error } = await db
+    .from('worker_companies')
+    .select('worker_id, weekly_hours, workers(first_name, last_name)')
+    .eq('company_id', companyId)
+    .eq('status', 'active');
+  if (error) throw new Error(`coverage roster: ${error.message}`);
+
+  const active = (links ?? []).filter((l): l is typeof l & { worker_id: string } =>
+    Boolean(l.worker_id),
+  );
+  if (active.length === 0) return [];
+
+  const { data: targets, error: tErr } = await db
+    .from('coverage_targets')
+    .select('id, worker_id, period_kind, target_hours')
+    .eq('company_id', companyId)
+    .is('effective_to', null)
+    .in(
+      'worker_id',
+      active.map((l) => l.worker_id),
+    );
+  if (tErr) throw new Error(`coverage targets: ${tErr.message}`);
+
+  const byWorker = new Map(targets?.map((t) => [t.worker_id, t]) ?? []);
+
+  return active
+    .map((l) => {
+      const t = byWorker.get(l.worker_id);
+      return {
+        workerId: l.worker_id,
+        workerName: joinName(l.workers) || l.worker_id,
+        weeklyHours: l.weekly_hours === null ? null : Number(l.weekly_hours),
+        targetId: t?.id ?? null,
+        targetHours:
+          t?.target_hours === null || t?.target_hours === undefined ? null : Number(t.target_hours),
+        periodKind: t?.period_kind ?? 'semi_monthly',
+      };
+    })
+    .sort((a, b) => a.workerName.localeCompare(b.workerName));
+};
+
 /** End-to-end: expected vs actual → coverage gaps for the period (worst first). */
 export const getCoverageGaps = async (
   db: Db,
