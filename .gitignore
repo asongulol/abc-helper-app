@@ -29,8 +29,8 @@ docs/ABC-HELPER-APP-VAR
 npm-debug.log*
 pnpm-debug.log*
 
-# Test coverage
-coverage/
+# Test coverage (root output only — don't ignore src/lib/coverage etc.)
+/coverage/
 .nyc_output/
 
 # OS / editor cruft

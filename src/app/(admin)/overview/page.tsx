@@ -6,6 +6,7 @@ import { PipelineStrip } from '@/components/overview/PipelineStrip';
 import { RefreshButton } from '@/components/overview/RefreshButton';
 import { StatTile } from '@/components/overview/StatTile';
 import { createServerSupabase } from '@/db/clients/server';
+import { getCoverageGaps } from '@/db/queries/coverage';
 import { fetchDocuments } from '@/db/queries/documents';
 import { fetchOnboardingProgress } from '@/db/queries/onboarding';
 import {
@@ -89,6 +90,7 @@ export default async function OverviewPage() {
     alerts,
     periodSummaries,
     companies,
+    coverageGaps,
   ] = await Promise.all([
     countActiveContractors(supabase, companyId),
     getPeriodNetTotal(supabase, companyId, period.start, period.end),
@@ -101,6 +103,7 @@ export default async function OverviewPage() {
     getAlerts(supabase, companyId, period.start, period.end),
     fetchPeriodSummaries(supabase, companyId),
     listCompanies(),
+    getCoverageGaps(supabase, companyId, period.start, period.end),
   ]);
 
   const companyName = companies.find((c) => c.id === companyId)?.name ?? 'This company';
@@ -252,7 +255,52 @@ export default async function OverviewPage() {
           sub={failedPayouts > 0 ? 'failed payout(s) — needs attention' : 'No failed payouts'}
           tone={failedPayouts > 0 ? 'bad' : 'good'}
         />
+        <StatTile
+          icon="📉"
+          label="Coverage gaps"
+          value={coverageGaps.length}
+          sub={
+            coverageGaps.length > 0
+              ? 'contractor(s) under expected hours'
+              : 'All contractors on track'
+          }
+          tone={coverageGaps.length > 0 ? 'warn' : 'good'}
+        />
       </div>
+
+      {coverageGaps.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <b>Coverage gaps — this period</b>
+          <div className="sub" style={{ margin: '4px 0 10px' }}>
+            Active contractors whose tracked hours fall short of their expected hours (explicit
+            target, or their weekly hours × weeks in the period).
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Contractor</th>
+                  <th style={{ textAlign: 'right' }}>Worked</th>
+                  <th style={{ textAlign: 'right' }}>Expected</th>
+                  <th style={{ textAlign: 'right' }}>%</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coverageGaps.map((g) => (
+                  <tr key={g.workerId}>
+                    <td>{g.workerName}</td>
+                    <td style={{ textAlign: 'right' }}>{g.workedHours.toFixed(1)}h</td>
+                    <td style={{ textAlign: 'right' }}>{g.expectedHours.toFixed(1)}h</td>
+                    <td style={{ textAlign: 'right' }}>{Math.round(g.ratio * 100)}%</td>
+                    <td>{g.kind === 'zero_time' ? 'No time logged' : 'Under expected'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <NetSparkline periods={recentNets} deltaPct={deltaPct} />
