@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { AgreementTemplatesCard } from '@/components/config/AgreementTemplatesCard';
@@ -13,13 +14,10 @@ import type { OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
-import { OnboardingDrilldown } from './OnboardingDrilldown';
 
 interface Props {
   progress: OnboardingProgressRow[];
   companyId: string;
-  canCountersign: boolean;
-  isOwner: boolean;
   /** Standard agreement templates (edited here or in Config). */
   templates: AgreementTemplateRow[];
   employerName: string;
@@ -30,8 +28,6 @@ interface Props {
 export const OnboardingClient = ({
   progress,
   companyId,
-  canCountersign,
-  isOwner,
   templates,
   employerName,
   countersigners = [],
@@ -40,7 +36,6 @@ export const OnboardingClient = ({
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [drillWorker, setDrillWorker] = useState<OnboardingProgressRow | null>(null);
   const [showDone, setShowDone] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -135,16 +130,13 @@ export const OnboardingClient = ({
       label: '',
       render: (row) => (
         <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-          <button
-            type="button"
+          <Link
+            href={`/onboarding/${row.workerId}`}
             className="btn ghost sm"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDrillWorker(row);
-            }}
+            onClick={(e) => e.stopPropagation()}
           >
             Review
-          </button>
+          </Link>
           <button
             type="button"
             className="btn ghost sm"
@@ -233,7 +225,7 @@ export const OnboardingClient = ({
           rows={visible}
           rowKey={(r) => r.workerId}
           filterPlaceholder="Filter by name or email…"
-          onRowClick={(row) => setDrillWorker(row)}
+          onRowClick={(row) => router.push(`/onboarding/${row.workerId}`)}
         />
       )}
 
@@ -246,15 +238,6 @@ export const OnboardingClient = ({
             setShowWizard(false);
             router.refresh();
           }}
-        />
-      )}
-
-      {drillWorker !== null && (
-        <OnboardingDrilldown
-          row={drillWorker}
-          canCountersign={canCountersign}
-          isOwner={isOwner}
-          onClose={() => setDrillWorker(null)}
         />
       )}
 
