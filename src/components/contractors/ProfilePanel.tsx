@@ -1,7 +1,24 @@
 'use client';
 
-import { type FormEvent, type ReactNode, useEffect, useState, useTransition } from 'react';
-import { EmailInput, Modal, PhoneInput, Spinner, useToast, useUnsavedGuard } from '@/components/ui';
+import {
+  cloneElement,
+  type FormEvent,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+  useEffect,
+  useState,
+  useTransition,
+} from 'react';
+import {
+  EmailInput,
+  Modal,
+  PhoneInput,
+  Spinner,
+  useTablist,
+  useToast,
+  useUnsavedGuard,
+} from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { RosterWorker } from '@/db/queries/workers';
 import {
@@ -28,6 +45,7 @@ type Props = {
 };
 
 type TabKey = 'profile' | 'pay' | 'personal' | 'portal';
+const TAB_KEYS = ['profile', 'pay', 'personal', 'portal'] as const satisfies readonly TabKey[];
 
 type FormState = {
   firstName: string;
@@ -167,6 +185,7 @@ export function ProfilePanel({
   const [serverError, setServerError] = useState('');
   const [isPending, startTransition] = useTransition();
   const [activeTab, setActiveTab] = useState<TabKey>('profile');
+  const tablist = useTablist(TAB_KEYS, activeTab, setActiveTab);
 
   // Portal & login local state.
   const [loginBusy, startLogin] = useTransition();
@@ -471,6 +490,8 @@ export function ProfilePanel({
       </p>
 
       <div
+        role="tablist"
+        aria-label="Contractor details sections"
         style={{
           display: 'flex',
           gap: 4,
@@ -482,9 +503,9 @@ export function ProfilePanel({
           <button
             key={t.key}
             type="button"
+            {...tablist.tabProps(t.key)}
             className={activeTab === t.key ? 'btn sm' : 'btn ghost sm'}
             style={{ borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0' }}
-            onClick={() => setActiveTab(t.key)}
           >
             {t.label}
           </button>
@@ -493,7 +514,7 @@ export function ProfilePanel({
 
       {/* ─── Profile tab ─── */}
       {activeTab === 'profile' && (
-        <form onSubmit={handleSave} noValidate>
+        <form onSubmit={handleSave} noValidate {...tablist.panelProps()}>
           <div
             style={{
               display: 'flex',
@@ -677,7 +698,7 @@ export function ProfilePanel({
 
       {/* ─── Pay & payout tab ─── */}
       {activeTab === 'pay' && (
-        <form onSubmit={handleSave} noValidate>
+        <form onSubmit={handleSave} noValidate {...tablist.panelProps()}>
           <section>
             <h4 style={SECTION_H4}>
               Per-company engagement{companyName ? ` · ${companyName}` : ''}
@@ -861,7 +882,7 @@ export function ProfilePanel({
 
       {/* ─── Personal / HR tab ─── */}
       {activeTab === 'personal' && (
-        <form onSubmit={handleSave} noValidate>
+        <form onSubmit={handleSave} noValidate {...tablist.panelProps()}>
           <section>
             <h4 style={SECTION_H4}>Contact</h4>
             <div className="grid-2">
@@ -1147,6 +1168,7 @@ export function ProfilePanel({
       {/* ─── Portal & login tab ─── */}
       {activeTab === 'portal' && (
         <div
+          {...tablist.panelProps()}
           style={{
             borderTop: '1px solid var(--border)',
             paddingTop: 12,
@@ -1304,14 +1326,28 @@ function Field({
   error?: string | undefined;
   children: ReactNode;
 }) {
+  const errId = `${id}-err`;
+  // Link the control to its error so screen readers announce it, and flag it
+  // invalid. The control is passed as children, so clone it to inject the ARIA.
+  const control =
+    error != null && isValidElement(children)
+      ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+          'aria-describedby': errId,
+          'aria-invalid': true,
+        })
+      : children;
   return (
     <div className="field">
       <label htmlFor={id} style={{ textTransform: 'uppercase', letterSpacing: '.02em' }}>
         {label}
         {required && <span className="req"> *</span>}
       </label>
-      {children}
-      {error != null && <div className="field-err">{error}</div>}
+      {control}
+      {error != null && (
+        <div className="field-err" id={errId}>
+          {error}
+        </div>
+      )}
     </div>
   );
 }

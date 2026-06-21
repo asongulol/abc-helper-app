@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import { useToast } from '@/components/ui';
+import { useTablist, useToast } from '@/components/ui';
 import { formatPhone, PhoneInput } from '@/components/ui/PhoneInput';
 import { updateOwnProfile } from '@/server/actions/portal';
 
@@ -147,6 +147,7 @@ const SECS: ReadonlyArray<readonly [string, string]> = [
   ['payout', 'Payout'],
   ['about', 'About me'],
 ];
+const SEC_KEYS = SECS.map(([k]) => k);
 
 const fullName = (p: NonNullable<Profile>) =>
   [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(' ');
@@ -156,6 +157,7 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [psec, setPsec] = useState('contact');
+  const tablist = useTablist(SEC_KEYS, psec, setPsec);
   const [sameAddr, setSameAddr] = useState(false);
 
   const extras = useMemo<Record<string, unknown>>(
@@ -330,6 +332,8 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
 
       {/* Tabbed profile */}
       <div
+        role="tablist"
+        aria-label="Profile sections"
         className="no-print"
         style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}
       >
@@ -337,16 +341,15 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
           <button
             key={k}
             type="button"
+            {...tablist.tabProps(k)}
             className={k === psec ? 'btn sm' : 'btn ghost sm'}
-            aria-pressed={k === psec}
-            onClick={() => setPsec(k)}
           >
             {lbl}
           </button>
         ))}
       </div>
 
-      <div className="card">
+      <div className="card" {...tablist.panelProps()}>
         <p className="sub" style={{ marginTop: 0 }}>
           {anyEditable
             ? 'Update your info and Save. Fields shown as plain text are managed by payroll.'
