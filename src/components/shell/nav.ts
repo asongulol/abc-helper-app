@@ -38,7 +38,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: 'Run payroll',
     items: [
       { href: '/time', label: 'Time & Approval', icon: '⏱' },
-      { href: '/calculate', label: 'Calculate', icon: '🧮' },
+      { href: '/payroll', label: 'Calculate', icon: '🧮' },
       { href: '/process', label: 'Process and Pay', icon: '💸' },
     ],
   },
