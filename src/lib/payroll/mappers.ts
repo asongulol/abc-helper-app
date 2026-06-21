@@ -11,10 +11,10 @@
  */
 
 import { type Centavos, majorToMinor } from '@/lib/money';
-import { nameKey } from '@/lib/names';
 import { type ContractorRowResult, calcContractorRow, type MiscItem } from '@/lib/pay/calc';
 import type { Holiday } from '@/lib/pay/holidays';
 import { type RateRow, resolveRate } from '@/lib/pay/rates';
+import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 
 /** Centavos → PHP major units for DB writes (numeric(12,2)). */
 export const centavosToPhp = (value: Centavos): number => Number((value / 100).toFixed(2));
@@ -64,23 +64,27 @@ export type AttributionResult = {
 
 /**
  * Resolve every approved time entry to a worker and aggregate seconds.
- * Null `workerId` rows resolve by source name (exact, then normalized nameKey).
- * Nothing is silently dropped — unresolved rows are surfaced (legacy invariant).
+ * Null `workerId` rows resolve by source name via the SHARED matcher
+ * (src/lib/time/attribution.ts) — strict nameKey then loose first+last — so
+ * calc-time attribution matches import-time exactly (audit 03 §3: the old local
+ * matcher lacked the loose fallback, dropping loosely-matched workers to
+ * `unattributed`). Nothing is silently dropped — unresolved rows are surfaced.
  */
 export const attributeTimeEntries = (
   entries: readonly TimeEntryRow[],
   roster: readonly RosterRow[],
 ): AttributionResult => {
-  const idByName = new Map<string, string>();
-  for (const link of roster) {
-    const candidates = [link.hubstaffName, fullName(link.worker)].filter(
-      (x): x is string => !!x && x.trim().length > 0,
-    );
-    for (const cand of candidates) {
-      idByName.set(cand, link.workerId);
-      idByName.set(nameKey(cand), link.workerId);
-    }
-  }
+  const idx = buildMatchIndex(
+    roster.map((r) => ({
+      workerId: r.workerId,
+      hubstaffName: r.hubstaffName,
+      firstName: r.worker.firstName,
+      middleName: r.worker.middleName,
+      lastName: r.worker.lastName,
+      // calc-time uses the `linked` set below for company scoping, not this flag.
+      isInactive: false,
+    })),
+  );
   const linked = new Set(roster.map((r) => r.workerId));
 
   const secondsByWorker = new Map<string, number>();
@@ -91,9 +95,7 @@ export const attributeTimeEntries = (
   for (const t of entries) {
     const wid =
       t.workerId ??
-      (t.sourceName
-        ? (idByName.get(t.sourceName) ?? idByName.get(nameKey(t.sourceName)))
-        : undefined);
+      (t.sourceName ? (matchName(t.sourceName, idx)?.workerId ?? undefined) : undefined);
     if (!wid) {
       unattributed.add(t.sourceName || '(no name)');
       continue;

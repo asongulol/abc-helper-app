@@ -15,6 +15,8 @@ export interface RosterLink {
   /** worker real name for fallback matching */
   firstName: string | null;
   lastName: string | null;
+  /** Optional middle name — indexed so a source name WITH a middle still strict-matches. */
+  middleName?: string | null;
   isInactive: boolean;
 }
 
@@ -31,8 +33,12 @@ export const buildMatchIndex = (links: readonly RosterLink[]): MatchIndex => {
   for (const l of links) {
     const val = { workerId: l.workerId, isInactive: l.isInactive };
 
+    // Index hubstaff name + real name (first+last) + full name (with middle), so a
+    // source name matches whether or not it carries the middle. nameKey is sorted,
+    // so the with-middle key is distinct; looseKey (first+last) covers either way.
     const realName = [l.firstName, l.lastName].filter(Boolean).join(' ');
-    const sources = [l.hubstaffName, realName].filter(Boolean) as string[];
+    const fullName = [l.firstName, l.middleName, l.lastName].filter(Boolean).join(' ');
+    const sources = [l.hubstaffName, realName, fullName].filter(Boolean) as string[];
 
     for (const src of sources) {
       const sk = nameKey(src);

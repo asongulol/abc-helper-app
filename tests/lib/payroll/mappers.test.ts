@@ -77,6 +77,18 @@ describe('attributeTimeEntries (legacy widByName resolution)', () => {
     expect(res.secondsByWorker.get('w2')).toBe(200);
   });
 
+  it('resolves via the loose first+last fallback (unified with the import-time matcher)', () => {
+    // Roster worker is "Ana Reyes" (no middle); the source name carries an extra
+    // middle. The old calc-time matcher was strict-only and dropped this to
+    // `unattributed` — now it matches loosely, exactly like import-time.
+    const res = attributeTimeEntries(
+      [entry({ sourceName: 'Ana Marie Reyes', trackedSeconds: 300 })],
+      [roster({ workerId: 'w1' })],
+    );
+    expect(res.secondsByWorker.get('w1')).toBe(300);
+    expect(res.unattributed).toEqual([]);
+  });
+
   it('surfaces unattributed names and unlinked workers — never drops silently', () => {
     const res = attributeTimeEntries(
       [
