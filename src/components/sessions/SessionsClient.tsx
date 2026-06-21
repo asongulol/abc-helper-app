@@ -2,7 +2,14 @@
 
 import { useState, useTransition } from 'react';
 import { SessionImportModal } from '@/components/sessions/SessionImportModal';
-import { Badge, type BadgeTone, ConfirmDangerModal, useToast } from '@/components/ui';
+import {
+  Badge,
+  type BadgeTone,
+  ConfirmDangerModal,
+  Pagination,
+  usePagination,
+  useToast,
+} from '@/components/ui';
 import type { ClientOption } from '@/db/queries/invoicing';
 import type { SessionRow } from '@/db/queries/sessions';
 import { fmtDate } from '@/lib/format';
@@ -163,6 +170,8 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
   const approvedCount = sessions?.filter((s) => s.approval === 'approved').length ?? 0;
   const allSelected =
     !!sessions && sessions.length > 0 && sessions.every((s) => selected.has(s.id));
+  // Display-only pagination; selection + select-all still span the whole window.
+  const pg = usePagination(sessions ?? [], 25, clientId);
 
   return (
     <>
@@ -365,95 +374,106 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
           {sessions.length === 0 ? (
             <p className="sub">No sessions in this window.</p>
           ) : (
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 28 }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Select all sessions"
-                        checked={allSelected}
-                        ref={(el) => {
-                          if (el) el.indeterminate = selected.size > 0 && !allSelected;
-                        }}
-                        onChange={(e) =>
-                          toggleAll(
-                            sessions.map((s) => s.id),
-                            e.target.checked,
-                          )
-                        }
-                      />
-                    </th>
-                    <th>Date</th>
-                    <th>Contractor</th>
-                    <th>Item</th>
-                    <th>Child</th>
-                    <th>EIID</th>
-                    <th style={rightAlign}>Units</th>
-                    <th>Case</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sessions.map((s) => (
-                    <tr key={s.id}>
-                      <td>
+            <>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: 28 }}>
                         <input
                           type="checkbox"
-                          aria-label={`Select ${s.workerName || 'session'} ${fmtDate(s.sessionDate)}`}
-                          checked={selected.has(s.id)}
-                          onChange={() => toggle(s.id)}
+                          aria-label="Select all sessions"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = selected.size > 0 && !allSelected;
+                          }}
+                          onChange={(e) =>
+                            toggleAll(
+                              sessions.map((s) => s.id),
+                              e.target.checked,
+                            )
+                          }
                         />
-                      </td>
-                      <td>{fmtDate(s.sessionDate)}</td>
-                      <td>{s.workerName || '—'}</td>
-                      <td>{s.sessionType ?? '—'}</td>
-                      <td>{s.childInitials ?? '—'}</td>
-                      <td>{s.eiid ?? '—'}</td>
-                      <td style={rightAlign}>{s.units}</td>
-                      <td>{s.caseRef ?? '—'}</td>
-                      <td>
-                        <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {s.approval !== 'approved' && (
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              disabled={isUpdating}
-                              onClick={() => approve(s.id, 'approved')}
-                            >
-                              Approve
-                            </button>
-                          )}
-                          {s.approval !== 'rejected' && (
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              disabled={isUpdating}
-                              onClick={() => approve(s.id, 'rejected')}
-                            >
-                              Reject
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="btn danger-outline sm"
-                            disabled={isUpdating}
-                            onClick={() => setPendingDelete(s.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
+                      </th>
+                      <th>Date</th>
+                      <th>Contractor</th>
+                      <th>Item</th>
+                      <th>Child</th>
+                      <th>EIID</th>
+                      <th style={rightAlign}>Units</th>
+                      <th>Case</th>
+                      <th>Status</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {pg.pageItems.map((s) => (
+                      <tr key={s.id}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${s.workerName || 'session'} ${fmtDate(s.sessionDate)}`}
+                            checked={selected.has(s.id)}
+                            onChange={() => toggle(s.id)}
+                          />
+                        </td>
+                        <td>{fmtDate(s.sessionDate)}</td>
+                        <td>{s.workerName || '—'}</td>
+                        <td>{s.sessionType ?? '—'}</td>
+                        <td>{s.childInitials ?? '—'}</td>
+                        <td>{s.eiid ?? '—'}</td>
+                        <td style={rightAlign}>{s.units}</td>
+                        <td>{s.caseRef ?? '—'}</td>
+                        <td>
+                          <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {s.approval !== 'approved' && (
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={isUpdating}
+                                onClick={() => approve(s.id, 'approved')}
+                              >
+                                Approve
+                              </button>
+                            )}
+                            {s.approval !== 'rejected' && (
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={isUpdating}
+                                onClick={() => approve(s.id, 'rejected')}
+                              >
+                                Reject
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn danger-outline sm"
+                              disabled={isUpdating}
+                              onClick={() => setPendingDelete(s.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pagination
+                page={pg.page}
+                totalPages={pg.totalPages}
+                total={pg.total}
+                from={pg.from}
+                to={pg.to}
+                onPage={pg.setPage}
+                noun="sessions"
+              />
+            </>
           )}
         </div>
       )}

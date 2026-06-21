@@ -10,6 +10,7 @@ export {
 export { EmailInput, type EmailInputProps } from './EmailInput';
 export { EmptyState } from './EmptyState';
 export { Modal, type ModalProps } from './Modal';
+export { Pagination, type PaginationProps } from './Pagination';
 export { PhoneInput, type PhoneInputProps } from './PhoneInput';
 export {
   type SortableColumn,
@@ -23,6 +24,7 @@ export {
   type ToastType,
   useToast,
 } from './Toast';
+export { type UsePagination, usePagination } from './usePagination';
 export { useTablist } from './useTablist';
 export {
   type UseUnsavedGuardOptions,
