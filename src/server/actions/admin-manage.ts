@@ -190,6 +190,83 @@ export async function removeAdmin(args: { email: string }): Promise<ActionResult
 }
 
 /**
+ * Replace a non-owner admin's company scope (admin_companies rows).
+ *
+ * Re-scoping previously abused `addAdmin`, which returns early with
+ * "already an admin" for any signed-in admin — so the company chips silently
+ * failed to persist. This is the dedicated set-scope action: owner-gated,
+ * applies only the diff (so an unchanged chip writes nothing), and validates
+ * the company ids.
+ */
+export async function setAdminCompanies(args: {
+  email: string;
+  companyIds: string[];
+}): Promise<ActionResult> {
+  const caller = await requireOwner().catch(() => null);
+  if (!caller) return { ok: false, error: 'Not authorized — owner role required.' };
+
+  const email = String(args.email ?? '')
+    .trim()
+    .toLowerCase();
+  if (!email) return { ok: false, error: 'Email required.' };
+
+  // Service client — RLS bypassed; caller ownership already verified above.
+  const svc = createServiceClient();
+
+  const { data: adminRow } = await svc
+    .from('admin_users')
+    .select('role')
+    .eq('email', email)
+    .maybeSingle();
+  if (!adminRow)
+    return {
+      ok: false,
+      error: "That admin hasn't signed in yet — assign companies once they appear in the list.",
+    };
+  if (adminRow.role === 'owner')
+    return { ok: false, error: 'Owners already see every company — no scope to set.' };
+
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const want = new Set(
+    (args.companyIds ?? []).filter((c) => typeof c === 'string' && UUID.test(c)),
+  );
+
+  const { data: current, error: curErr } = await svc
+    .from('admin_companies')
+    .select('company_id')
+    .eq('admin_email', email);
+  if (curErr) return { ok: false, error: `Couldn't read scope: ${curErr.message}` };
+
+  const have = new Set((current ?? []).map((r) => r.company_id));
+  const toAdd = [...want].filter((id) => !have.has(id));
+  const toRemove = [...have].filter((id) => !want.has(id));
+
+  if (toRemove.length > 0) {
+    const { error } = await svc
+      .from('admin_companies')
+      .delete()
+      .eq('admin_email', email)
+      .in('company_id', toRemove);
+    if (error) return { ok: false, error: `Couldn't update scope: ${error.message}` };
+  }
+  if (toAdd.length > 0) {
+    const { error } = await svc
+      .from('admin_companies')
+      .insert(
+        toAdd.map((cid) => ({ admin_email: email, company_id: cid, added_by: caller.userId })),
+      );
+    if (error) return { ok: false, error: `Couldn't update scope: ${error.message}` };
+  }
+
+  await logEvent({
+    action: 'admin.companies_changed',
+    entity: email,
+    detail: { email, company_ids: [...want], added: toAdd.length, removed: toRemove.length },
+  });
+  return { ok: true };
+}
+
+/**
  * Promote or demote an admin's role, and optionally toggle can_countersign.
  * The DB trigger blocks demoting the last owner.
  * Signature kept identical to the contract file.

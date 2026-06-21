@@ -4,7 +4,12 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { ConfirmDangerModal, EmailInput, Modal, useToast } from '@/components/ui';
 import type { AdminRow } from '@/db/queries/admins';
-import { addAdmin, removeAdmin, setAdminRole } from '@/server/actions/admin-manage';
+import {
+  addAdmin,
+  removeAdmin,
+  setAdminCompanies,
+  setAdminRole,
+} from '@/server/actions/admin-manage';
 
 export interface AdminsModalProps {
   /** All admin_users with company scope (server-fetched in the admin layout). */
@@ -118,7 +123,7 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
   };
 
   const reassign = (admin: AdminRow, next: string[]) =>
-    run(() => addAdmin({ email: admin.email, role: admin.role, companyIds: next }));
+    run(() => setAdminCompanies({ email: admin.email, companyIds: next }));
 
   /** Company toggle chips for a non-owner admin (driven off their current scope). */
   const companyPicker = (admin: AdminRow) => {
