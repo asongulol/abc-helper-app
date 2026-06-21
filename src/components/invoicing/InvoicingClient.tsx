@@ -15,6 +15,7 @@ import {
 import type { ClientOption, InvoiceListRow } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports/csv';
+import { syncHubstaffNow } from '@/server/actions/hubstaff';
 import {
   generateInvoice,
   type InvoicePreviewResult,
@@ -26,6 +27,8 @@ import {
 interface Props {
   clients: ClientOption[];
   invoices: InvoiceListRow[];
+  /** Employer company id — target of the Hubstaff time refresh (null if unconfigured). */
+  employerId: string | null;
   defaultFrom: string;
   defaultTo: string;
 }
@@ -45,7 +48,13 @@ const csvEscape = (v: string | number | null | undefined): string => {
 const labelStyle = { display: 'block', fontSize: 11 } as const;
 const rightAlign = { textAlign: 'right' } as const;
 
-export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: Props) => {
+export const InvoicingClient = ({
+  clients,
+  invoices,
+  employerId,
+  defaultFrom,
+  defaultTo,
+}: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [clientId, setClientId] = useState('');
@@ -56,6 +65,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
   const [isPreviewing, startPreview] = useTransition();
   const [isGenerating, startGenerate] = useTransition();
   const [isUpdating, startUpdate] = useTransition();
+  const [isSyncing, startSync] = useTransition();
 
   const clientName = clients.find((c) => c.id === clientId)?.name ?? '';
   const history = useMemo(
@@ -100,6 +110,29 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
           { type: 'warn' },
         );
       }
+    });
+  };
+
+  const refreshFromHubstaff = () => {
+    if (!employerId) {
+      notify('No employer company configured.', { type: 'warn' });
+      return;
+    }
+    startSync(async () => {
+      const res = await syncHubstaffNow({
+        companyId: employerId,
+        periodStart: from,
+        periodEnd: to,
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(
+        `Synced ${res.data.rowsWritten} time row(s) for ${res.data.window.start} → ${res.data.window.stop}.`,
+        { type: 'success' },
+      );
+      if (clientId) handlePreview(); // re-price the preview against the fresh time
     });
   };
 
@@ -274,6 +307,17 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
           >
             {isPreviewing ? 'Building…' : 'Preview'}
           </button>
+          {employerId && (
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={isSyncing}
+              onClick={refreshFromHubstaff}
+              title="Pull the latest Hubstaff tracked time for this date range, then re-price the preview"
+            >
+              {isSyncing ? 'Syncing…' : '↻ Refresh from Hubstaff'}
+            </button>
+          )}
         </div>
 
         {preview && preview.lines.length > 0 && (

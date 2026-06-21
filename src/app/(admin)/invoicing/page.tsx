@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { InvoicingClient } from '@/components/invoicing/InvoicingClient';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchActiveClients, fetchInvoices } from '@/db/queries/invoicing';
+import { fetchActiveClients, fetchEmployerCompanyId, fetchInvoices } from '@/db/queries/invoicing';
 import { getCurrentAdmin } from '@/server/auth/admin';
 
 export const metadata: Metadata = {
@@ -14,9 +14,10 @@ export default async function InvoicingPage() {
   if (!admin) redirect('/login');
 
   const supabase = await createServerSupabase();
-  const [clients, invoices] = await Promise.all([
+  const [clients, invoices, employerId] = await Promise.all([
     fetchActiveClients(supabase),
     fetchInvoices(supabase),
+    fetchEmployerCompanyId(supabase),
   ]);
 
   // Default window: current month to date.
@@ -28,6 +29,7 @@ export default async function InvoicingPage() {
     <InvoicingClient
       clients={clients}
       invoices={invoices}
+      employerId={employerId}
       defaultFrom={defaultFrom}
       defaultTo={defaultTo}
     />
