@@ -52,6 +52,23 @@ export const CreateContractorSessionSchema = z.object({
 });
 export type CreateContractorSessionInput = z.infer<typeof CreateContractorSessionSchema>;
 
+/** Bulk-import sessions (admin CSV). Each row carries a roster-resolved workerId. */
+export const ImportSessionRowSchema = z.object({
+  workerId: z.string().uuid(),
+  sessionDate: IsoDateSchema,
+  sessionType: z.string().max(100).nullable().optional(),
+  units: z.number().int().min(1).max(1000),
+  childInitials: z.string().max(12).nullable().optional(),
+  eiid: z.string().max(40).nullable().optional(),
+  caseRef: z.string().max(100).nullable().optional(),
+  notes: z.string().max(1000).nullable().optional(),
+});
+export const ImportSessionsSchema = z.object({
+  clientId: z.string().uuid(),
+  rows: z.array(ImportSessionRowSchema).min(1).max(2000),
+});
+export type ImportSessionsInput = z.infer<typeof ImportSessionsSchema>;
+
 /** Approve / reject / reset a set of sessions. Only approved sessions bill. */
 export const SetSessionApprovalSchema = z.object({
   clientId: z.string().uuid(),

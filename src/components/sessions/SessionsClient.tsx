@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
+import { SessionImportModal } from '@/components/sessions/SessionImportModal';
 import { Badge, type BadgeTone, ConfirmDangerModal, useToast } from '@/components/ui';
 import type { ClientOption } from '@/db/queries/invoicing';
 import type { SessionRow } from '@/db/queries/sessions';
@@ -39,6 +40,7 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
   const [isSaving, startSave] = useTransition();
   const [isUpdating, startUpdate] = useTransition();
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showImport, setShowImport] = useState(false);
 
   // Add-session form.
   const [addWorkerId, setAddWorkerId] = useState('');
@@ -222,7 +224,22 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
 
       {roster && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <h3 style={{ marginTop: 0 }}>Add a session — {clientName}</h3>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <h3 style={{ marginTop: 0 }}>Add a session — {clientName}</h3>
+            {roster.length > 0 && (
+              <button type="button" className="btn ghost sm" onClick={() => setShowImport(true)}>
+                Import CSV
+              </button>
+            )}
+          </div>
           {roster.length === 0 ? (
             <p className="sub">
               This client has no active contractors. Assign one (with a session rate) in Contractors
@@ -447,6 +464,14 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
           confirmLabel="Delete session"
           onConfirm={doDelete}
           onCancel={() => setPendingDelete(null)}
+        />
+      )}
+      {showImport && roster && (
+        <SessionImportModal
+          clientId={clientId}
+          roster={roster}
+          onClose={() => setShowImport(false)}
+          onImported={reload}
         />
       )}
     </>

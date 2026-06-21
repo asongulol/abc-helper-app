@@ -96,6 +96,31 @@ export const insertSession = async (db: Db, row: NewSession): Promise<void> => {
   if (error) throw new Error(`add session: ${error.message}`);
 };
 
+/** Bulk-insert pending sessions (CSV import). All rows share the client company. */
+export const insertSessions = async (
+  db: Db,
+  companyId: string,
+  rows: ReadonlyArray<Omit<NewSession, 'companyId'>>,
+): Promise<number> => {
+  if (rows.length === 0) return 0;
+  const { error } = await db.from('service_sessions').insert(
+    rows.map((r) => ({
+      company_id: companyId,
+      worker_id: r.workerId,
+      session_date: r.sessionDate,
+      session_type: r.sessionType,
+      units: r.units,
+      child_initials: r.childInitials,
+      eiid: r.eiid,
+      case_ref: r.caseRef,
+      notes: r.notes,
+      approval: 'pending' as const,
+    })),
+  );
+  if (error) throw new Error(`import sessions: ${error.message}`);
+  return rows.length;
+};
+
 // ─── Contractor portal reads ────────────────────────────────────────────────
 
 export type WorkerClient = { id: string; name: string };
