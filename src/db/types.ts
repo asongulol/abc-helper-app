@@ -307,6 +307,63 @@ export type Database = {
           },
         ]
       }
+      coverage_targets: {
+        Row: {
+          company_id: string | null
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          effective_to: string | null
+          id: string
+          note: string | null
+          period_kind: string
+          target_hours: number | null
+          target_sessions: number | null
+          worker_id: string
+        }
+        Insert: {
+          company_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          effective_from: string
+          effective_to?: string | null
+          id?: string
+          note?: string | null
+          period_kind?: string
+          target_hours?: number | null
+          target_sessions?: number | null
+          worker_id: string
+        }
+        Update: {
+          company_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          note?: string | null
+          period_kind?: string
+          target_hours?: number | null
+          target_sessions?: number | null
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "coverage_targets_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "coverage_targets_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       documents: {
         Row: {
           company_id: string | null
