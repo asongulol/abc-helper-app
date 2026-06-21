@@ -13,6 +13,7 @@ import {
   deleteSession as deleteSessionRow,
   fetchSessionsList,
   insertSession,
+  insertSessions,
   type SessionRow,
   updateSessionsApproval,
 } from '@/db/queries/sessions';
@@ -22,6 +23,7 @@ import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   CreateSessionSchema,
   DeleteSessionSchema,
+  ImportSessionsSchema,
   LoadSessionsSchema,
   SetSessionApprovalSchema,
 } from '@/types/schemas/sessions';
@@ -135,6 +137,56 @@ export async function setSessionApproval(args: unknown): Promise<ActionResult<{ 
     return { ok: true, data: { count: ids.length } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Approval update failed.' };
+  }
+}
+
+/** Bulk-import sessions from a CSV (rows pre-resolved to workerIds client-side). */
+export async function importSessions(
+  args: unknown,
+): Promise<ActionResult<{ created: number; skipped: number }>> {
+  const parsed = ImportSessionsSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const { clientId, rows } = parsed.data;
+
+  const guard = await authGuard(clientId);
+  if (!guard.ok) return guard;
+
+  try {
+    const db = await createServerSupabase();
+    // Defense-in-depth: only import rows whose worker is on the client's roster,
+    // regardless of what the client mapped names to.
+    const roster = await fetchClientRoster(db, clientId);
+    const validIds = new Set(roster.map((r) => r.workerId));
+    const accepted = rows.filter((r) => validIds.has(r.workerId));
+    const skipped = rows.length - accepted.length;
+
+    if (accepted.length === 0)
+      return { ok: false, error: 'No rows matched this client’s active roster.' };
+
+    const created = await insertSessions(
+      db,
+      clientId,
+      accepted.map((r) => ({
+        workerId: r.workerId,
+        sessionDate: r.sessionDate,
+        sessionType: r.sessionType ?? null,
+        units: r.units,
+        childInitials: r.childInitials ?? null,
+        eiid: r.eiid ?? null,
+        caseRef: r.caseRef ?? null,
+        notes: r.notes ?? null,
+      })),
+    );
+    await logEvent({
+      companyId: clientId,
+      action: 'sessions_imported',
+      entity: clientId,
+      detail: { created, skipped },
+    });
+    return { ok: true, data: { created, skipped } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Import failed.' };
   }
 }
 
