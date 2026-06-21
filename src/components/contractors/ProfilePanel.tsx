@@ -1,20 +1,10 @@
 'use client';
 
-import {
-  cloneElement,
-  type FormEvent,
-  isValidElement,
-  type ReactElement,
-  type ReactNode,
-  useEffect,
-  useState,
-  useTransition,
-} from 'react';
+import { type FormEvent, useEffect, useState, useTransition } from 'react';
 import {
   EmailInput,
   Modal,
   PhoneInput,
-  Spinner,
   useTablist,
   useToast,
   useUnsavedGuard,
@@ -30,8 +20,10 @@ import {
   setWorkerPhoto,
   type WorkerEngagement,
 } from '@/server/actions/contractors';
-import { createPortalLogin } from '@/server/actions/portal-admin';
 import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
+import { Field } from './profile/Field';
+import { PortalLoginTab } from './profile/PortalLoginTab';
+import { SaveBar } from './profile/SaveBar';
 import { RateCard } from './RateCard';
 
 type Props = {
@@ -1167,80 +1159,13 @@ export function ProfilePanel({
 
       {/* ─── Portal & login tab ─── */}
       {activeTab === 'portal' && (
-        <div
-          {...tablist.panelProps()}
-          style={{
-            borderTop: '1px solid var(--border)',
-            paddingTop: 12,
-            marginTop: 8,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 10,
-              flexWrap: 'wrap',
-            }}
-          >
-            <div>
-              <b>Self-service portal login</b>
-              <div className="sub" style={{ fontSize: 12, maxWidth: 420 }}>
-                Lets this contractor sign in at the portal to view <b>only their own</b> pay, time,
-                and documents (read-only).
-              </div>
-            </div>
-            <button
-              type="button"
-              className="btn sm"
-              disabled={loginBusy || !worker.email}
-              title={worker.email ? '' : 'Set a personal email first.'}
-              onClick={() =>
-                runLogin(
-                  () =>
-                    createPortalLogin({
-                      workerId: worker.workerId,
-                      email: worker.email ?? '',
-                    }),
-                  'Portal login created.',
-                )
-              }
-            >
-              {loginBusy ? <Spinner /> : 'Create portal login'}
-            </button>
-          </div>
-          {tempPassword && (
-            <div
-              className="banner"
-              style={{
-                marginTop: 8,
-                background: '#ecfdf5',
-                borderColor: '#a7f3d0',
-                color: '#065f46',
-              }}
-            >
-              Portal credentials — share these <b>once</b> (the contractor should change the
-              password after first sign-in):
-              <br />
-              <b>Temp password:</b> <code>{tempPassword}</code>
-            </div>
-          )}
-          {worker.wiseTag && (
-            <div
-              className="banner"
-              style={{
-                marginTop: 8,
-                background: '#eff6ff',
-                borderColor: '#bfdbfe',
-                color: '#1e40af',
-              }}
-            >
-              <b>Wise Tag from contractor:</b> <code>{worker.wiseTag}</code> — use this to set up
-              their Wise recipient (then store the recipient ID/UUID above).
-            </div>
-          )}
-        </div>
+        <PortalLoginTab
+          worker={worker}
+          loginBusy={loginBusy}
+          tempPassword={tempPassword}
+          runLogin={runLogin}
+          panelProps={tablist.panelProps()}
+        />
       )}
       {pendingClose && (
         <Modal title="Unsaved changes" onClose={() => setPendingClose(false)} maxWidth={440}>
@@ -1277,77 +1202,5 @@ export function ProfilePanel({
         </Modal>
       )}
     </Modal>
-  );
-}
-
-/** Save action bar shared by the editable tabs (legacy: single "Save details"). */
-function SaveBar({ isPending, serverError }: { isPending: boolean; serverError: string }) {
-  return (
-    <>
-      {serverError && (
-        <div
-          className="banner"
-          style={{
-            marginTop: 14,
-            borderColor: 'var(--bad)',
-            background: 'var(--bad-soft)',
-            color: 'var(--bad)',
-          }}
-        >
-          {serverError}
-        </div>
-      )}
-      <div className="actions" style={{ marginTop: 20 }}>
-        <button type="submit" className="btn" disabled={isPending}>
-          {isPending ? (
-            <>
-              <Spinner /> Saving…
-            </>
-          ) : (
-            'Save details'
-          )}
-        </button>
-      </div>
-    </>
-  );
-}
-
-/** Small labeled field wrapper, matching the legacy .field pattern. */
-function Field({
-  id,
-  label,
-  required,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  required?: boolean;
-  error?: string | undefined;
-  children: ReactNode;
-}) {
-  const errId = `${id}-err`;
-  // Link the control to its error so screen readers announce it, and flag it
-  // invalid. The control is passed as children, so clone it to inject the ARIA.
-  const control =
-    error != null && isValidElement(children)
-      ? cloneElement(children as ReactElement<Record<string, unknown>>, {
-          'aria-describedby': errId,
-          'aria-invalid': true,
-        })
-      : children;
-  return (
-    <div className="field">
-      <label htmlFor={id} style={{ textTransform: 'uppercase', letterSpacing: '.02em' }}>
-        {label}
-        {required && <span className="req"> *</span>}
-      </label>
-      {control}
-      {error != null && (
-        <div className="field-err" id={errId}>
-          {error}
-        </div>
-      )}
-    </div>
   );
 }
