@@ -19,6 +19,7 @@
  */
 
 import { createServerSupabase } from '@/db/clients/server';
+import { fetchPeriodIdsForPayments, syncPeriodPaidState } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -148,7 +149,11 @@ export async function reconcileAllPending(
       .select('id');
     if (error) return { ok: false, error: error.message };
 
-    const reconciled = (upd ?? []).length;
+    const reconciledIds = (upd ?? []).map((r) => r.id);
+    const reconciled = reconciledIds.length;
+    for (const pid of await fetchPeriodIdsForPayments(db, reconciledIds)) {
+      await syncPeriodPaidState(db, pid);
+    }
     await logEvent({
       companyId,
       action: 'wise_recipient_sync',
