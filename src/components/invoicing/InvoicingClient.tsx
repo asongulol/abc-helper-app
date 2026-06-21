@@ -3,7 +3,15 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useId, useMemo, useState, useTransition } from 'react';
-import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/components/ui';
+import {
+  Badge,
+  type BadgeTone,
+  ConfirmDangerModal,
+  Modal,
+  Pagination,
+  usePagination,
+  useToast,
+} from '@/components/ui';
 import type { ClientOption, InvoiceListRow } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports/csv';
@@ -54,6 +62,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
     () => (clientId ? invoices.filter((i) => i.companyId === clientId) : invoices),
     [invoices, clientId],
   );
+  const pg = usePagination(history, 20, clientId);
 
   const handlePreview = () => {
     if (!clientId) {
@@ -349,91 +358,102 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
         {history.length === 0 ? (
           <p className="sub">No invoices yet.</p>
         ) : (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Invoice #</th>
-                  <th>Client</th>
-                  <th>Period</th>
-                  <th style={rightAlign}>Total</th>
-                  <th style={rightAlign}>Received</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((i) => (
-                  <tr key={i.id}>
-                    <td>{i.invoiceNo ?? '—'}</td>
-                    <td>{i.companyName}</td>
-                    <td>
-                      {fmtDate(i.periodStart)} – {fmtDate(i.periodEnd)}
-                    </td>
-                    <td style={rightAlign}>{money(i.totalUsd, 'USD')}</td>
-                    <td style={rightAlign}>
-                      {i.status === 'paid' && i.amountReceivedUsd != null ? (
-                        <span title={i.paymentRef ?? undefined}>
-                          {money(i.amountReceivedUsd, 'USD')}
-                          {i.receivedOn && (
-                            <span className="sub" style={{ display: 'block', fontSize: 11 }}>
-                              {fmtDate(i.receivedOn)}
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                    <td>
-                      <Badge tone={STATUS_TONE[i.status] ?? 'neutral'}>{i.status}</Badge>
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        <Link
-                          href={`/invoicing/${i.id}/print`}
-                          target="_blank"
-                          className="btn ghost sm"
-                        >
-                          Print
-                        </Link>
-                        {i.status === 'draft' && (
-                          <button
-                            type="button"
-                            className="btn ghost sm"
-                            disabled={isUpdating}
-                            onClick={() => changeStatus(i.id, 'sent')}
-                          >
-                            Mark sent
-                          </button>
-                        )}
-                        {i.status === 'sent' && (
-                          <button
-                            type="button"
-                            className="btn ghost sm"
-                            disabled={isUpdating}
-                            onClick={() => setPayingInvoice(i)}
-                          >
-                            Mark paid
-                          </button>
-                        )}
-                        {i.status !== 'void' && (
-                          <button
-                            type="button"
-                            className="btn ghost sm"
-                            disabled={isUpdating}
-                            onClick={() => changeStatus(i.id, 'void')}
-                          >
-                            Void
-                          </button>
-                        )}
-                      </div>
-                    </td>
+          <>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Invoice #</th>
+                    <th>Client</th>
+                    <th>Period</th>
+                    <th style={rightAlign}>Total</th>
+                    <th style={rightAlign}>Received</th>
+                    <th>Status</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {pg.pageItems.map((i) => (
+                    <tr key={i.id}>
+                      <td>{i.invoiceNo ?? '—'}</td>
+                      <td>{i.companyName}</td>
+                      <td>
+                        {fmtDate(i.periodStart)} – {fmtDate(i.periodEnd)}
+                      </td>
+                      <td style={rightAlign}>{money(i.totalUsd, 'USD')}</td>
+                      <td style={rightAlign}>
+                        {i.status === 'paid' && i.amountReceivedUsd != null ? (
+                          <span title={i.paymentRef ?? undefined}>
+                            {money(i.amountReceivedUsd, 'USD')}
+                            {i.receivedOn && (
+                              <span className="sub" style={{ display: 'block', fontSize: 11 }}>
+                                {fmtDate(i.receivedOn)}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>
+                        <Badge tone={STATUS_TONE[i.status] ?? 'neutral'}>{i.status}</Badge>
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <Link
+                            href={`/invoicing/${i.id}/print`}
+                            target="_blank"
+                            className="btn ghost sm"
+                          >
+                            Print
+                          </Link>
+                          {i.status === 'draft' && (
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={isUpdating}
+                              onClick={() => changeStatus(i.id, 'sent')}
+                            >
+                              Mark sent
+                            </button>
+                          )}
+                          {i.status === 'sent' && (
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={isUpdating}
+                              onClick={() => setPayingInvoice(i)}
+                            >
+                              Mark paid
+                            </button>
+                          )}
+                          {i.status !== 'void' && (
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={isUpdating}
+                              onClick={() => changeStatus(i.id, 'void')}
+                            >
+                              Void
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination
+              page={pg.page}
+              totalPages={pg.totalPages}
+              total={pg.total}
+              from={pg.from}
+              to={pg.to}
+              onPage={pg.setPage}
+              noun="invoices"
+            />
+          </>
         )}
       </div>
       {pendingVoid != null && (
