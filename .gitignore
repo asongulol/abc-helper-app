@@ -57,3 +57,8 @@ Thumbs.db
 # Editor/FUSE deleted-but-open artifacts
 .fuse_hidden*
 **/.fuse_hidden*
+
+# Finder/IDE "copy" duplicates (e.g. "loading 2.tsx", "0013 2.sql") — never real source
+* [0-9].tsx
+* [0-9].ts
+* [0-9].sql
