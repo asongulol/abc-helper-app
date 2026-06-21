@@ -476,6 +476,7 @@ export type Database = {
       }
       invoices: {
         Row: {
+          amount_received_usd: number | null
           company_id: string
           created_at: string
           created_by: string | null
@@ -485,13 +486,16 @@ export type Database = {
           markup_pct: number
           notes: string | null
           pay_date: string | null
+          payment_ref: string | null
           period_end: string
           period_start: string
+          received_on: string | null
           status: string
           subtotal_usd: number
           total_usd: number
         }
         Insert: {
+          amount_received_usd?: number | null
           company_id: string
           created_at?: string
           created_by?: string | null
@@ -501,13 +505,16 @@ export type Database = {
           markup_pct?: number
           notes?: string | null
           pay_date?: string | null
+          payment_ref?: string | null
           period_end: string
           period_start: string
+          received_on?: string | null
           status?: string
           subtotal_usd?: number
           total_usd?: number
         }
         Update: {
+          amount_received_usd?: number | null
           company_id?: string
           created_at?: string
           created_by?: string | null
@@ -517,8 +524,10 @@ export type Database = {
           markup_pct?: number
           notes?: string | null
           pay_date?: string | null
+          payment_ref?: string | null
           period_end?: string
           period_start?: string
+          received_on?: string | null
           status?: string
           subtotal_usd?: number
           total_usd?: number
