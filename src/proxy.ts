@@ -20,6 +20,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const response = NextResponse.next({ request });
   const { pathname } = request.nextUrl;
   if (PUBLIC_PATHS.has(pathname)) return response;
+  // Cron-invoked routes have no Supabase session; they self-gate via x-cron-secret
+  // (see src/server/cron.ts), so skip the audience auth gate for them.
+  if (pathname.startsWith('/api/cron/')) return response;
 
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',
