@@ -39,8 +39,6 @@ export default async function OnboardingPage() {
     <OnboardingClient
       progress={progress}
       companyId={companyId}
-      canCountersign={admin.canCountersign}
-      isOwner={admin.isOwner}
       templates={templates}
       employerName={employer?.name ?? 'Aaron Anderson E.H.S. LLC'}
     />
