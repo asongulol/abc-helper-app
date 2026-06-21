@@ -23,6 +23,7 @@ export {
   type ToastType,
   useToast,
 } from './Toast';
+export { useTablist } from './useTablist';
 export {
   type UseUnsavedGuardOptions,
   useUnsavedGuard,
