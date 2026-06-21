@@ -1,7 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { AnnouncementsCard } from '@/components/config/AnnouncementsCard';
 import type { SortableColumn } from '@/components/ui';
 import {
@@ -19,7 +20,6 @@ import { setContractorLinkStatus } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
 import { AddContractorWizard } from './AddContractorWizard';
 import { BulkImportModal } from './BulkImportModal';
-import { ProfilePanel } from './ProfilePanel';
 import { PullWiseRecipientsModal } from './PullWiseRecipientsModal';
 
 type Props = {
@@ -57,7 +57,6 @@ export function ContractorsClient({
 
   const [rows, setRows] = useState<RowShape[]>(() => buildRows(roster));
   const [showInactive, setShowInactive] = useState(false);
-  const [selectedWorker, setSelectedWorker] = useState<RosterWorker | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showPullWise, setShowPullWise] = useState(false);
@@ -68,6 +67,15 @@ export function ContractorsClient({
   const [deleting, setDeleting] = useState(false);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
+
+  // Re-sync from the server roster when it revalidates (profile save in the
+  // route modal/page calls router.refresh(); add/delete also refresh). Local
+  // optimistic edits (status toggles) survive until the next server fetch.
+  useEffect(() => {
+    setRows(buildRows(roster));
+  }, [roster]);
+
+  const profileHref = (workerId: string) => `/contractors/${workerId}`;
 
   const visibleRows = showInactive ? rows : rows.filter((r) => r._statusLabel === 'active');
   const inactiveCount = rows.filter((r) => r._statusLabel !== 'active').length;
@@ -122,7 +130,6 @@ export function ContractorsClient({
         linkStatus: newStatus as RosterWorker['linkStatus'],
       };
       refreshRow(updated);
-      if (selectedWorker?.workerId === id) setSelectedWorker(updated);
     });
   }
 
@@ -134,14 +141,14 @@ export function ContractorsClient({
       cardTitle: true,
       accessor: (r) => r._name,
       render: (r) => (
-        <button
-          type="button"
+        <Link
+          href={profileHref(r.workerId)}
           className="btn ghost sm"
           style={{ textAlign: 'left', fontWeight: 600 }}
-          onClick={() => setSelectedWorker(r)}
+          onClick={(e) => e.stopPropagation()}
         >
           {r._name || '(no name)'}
-        </button>
+        </Link>
       ),
     },
     {
@@ -189,9 +196,13 @@ export function ContractorsClient({
       sortable: false,
       render: (r) => (
         <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost sm" onClick={() => setSelectedWorker(r)}>
+          <Link
+            href={profileHref(r.workerId)}
+            className="btn ghost sm"
+            onClick={(e) => e.stopPropagation()}
+          >
             Edit
-          </button>
+          </Link>
           {r._statusLabel === 'active' ? (
             <button
               type="button"
@@ -285,24 +296,10 @@ export function ContractorsClient({
             rows={visibleRows}
             rowKey={(r) => r.workerId}
             filterPlaceholder="Filter by name, client, role…"
-            onRowClick={(r) => setSelectedWorker(r)}
+            onRowClick={(r) => router.push(profileHref(r.workerId))}
           />
         )}
       </div>
-
-      {selectedWorker && (
-        <ProfilePanel
-          worker={selectedWorker}
-          companyId={companyId}
-          companies={companies}
-          onClose={() => setSelectedWorker(null)}
-          onSaved={(updated) => {
-            refreshRow(updated);
-            setSelectedWorker(updated);
-            notify('Saved.', { type: 'success' });
-          }}
-        />
-      )}
 
       {showAdd && (
         <AddContractorWizard
