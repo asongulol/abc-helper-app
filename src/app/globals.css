@@ -1430,15 +1430,19 @@ a.btn:hover {
   overflow: auto;
   animation: modalFade var(--dur) var(--ease);
 }
-/* IMPROVED: the Next Modal is a native <dialog open> — neutralise UA dialog
-   styles so the legacy .modal box renders identically inside the flex overlay. */
+/* IMPROVED: the Next Modal is a native <dialog> promoted to the top layer via
+   showModal(); it positions itself (top-aligned, centered) and dims via
+   ::backdrop, so no wrapper overlay is needed and nested modals stack correctly. */
 dialog.modal {
-  position: static;
-  inset: auto;
-  margin: 0;
+  margin: 40px auto;
+  max-height: calc(100dvh - 80px);
+  overflow: auto;
   border: none;
   color: inherit;
-  height: fit-content;
+}
+dialog.modal::backdrop {
+  background: rgba(15, 28, 51, 0.45);
+  animation: modalFade var(--dur) var(--ease);
 }
 .modal {
   background: #fff;
@@ -1756,11 +1760,11 @@ dialog.modal {
 
 /* ===== Forms & Modals — mobile sheets (<=640px) =========================== */
 @media (max-width: 640px) {
-  .modal-bg {
-    align-items: flex-end;
-    justify-content: stretch;
-    padding: 0;
-    z-index: 50; /* above the bottom-nav (z-40) */
+  /* Pin the top-layer dialog to the bottom as a full-width sheet (overrides the
+     desktop margin: 40px auto / max-height above — same specificity, later rule). */
+  dialog.modal {
+    margin: auto 0 0;
+    max-height: 92dvh;
   }
   .modal {
     max-width: 100% !important;
