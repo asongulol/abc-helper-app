@@ -46,7 +46,11 @@ weekdays = count of Mon–Fri days in [start, end] inclusive
 holidays = weekday-only observed holidays in range
 expected = max(0, weekdays*dayH − holidays*dayH)
 ```
-Returns hours (number, not money). Holidays falling Sat/Sun do NOT reduce expected.
+Returns hours (number, not money). **Weekend observance:** an observed holiday that
+falls on Sat/Sun is shifted to the nearest weekday (Sat→Fri, Sun→Mon) by `observedDate`
+(`src/lib/pay/holidays.ts`), so it DOES reduce expected hours on that weekday. (This
+matches the legacy app and the parity fixtures; an earlier draft of this spec said the
+opposite — the code is authoritative.)
 
 ## 5. `rateFor(wid)` — line 6160 → `src/lib/pay/rates.ts`
 

@@ -8,10 +8,9 @@ type PendingAction = 'backfill' | 'scan' | null;
 
 /**
  * Wise reconciliation card (manifest 14, lower panel) — admin-only maintenance
- * tools, split into three sub-blocks: a one-time transfer-ID backfill across all
- * paid periods, an email cross-check (legacy parity TODO, rendered disabled), and
- * a cross-system drift scan over Wise + Hubstaff. Backfill/Scan call the wise
- * server actions; "Check emails" has no wired action yet.
+ * tools, split into two sub-blocks: a one-time transfer-ID backfill across all
+ * paid periods, and a cross-system drift scan over Wise + Hubstaff. Both call the
+ * wise server actions.
  */
 export const WiseReconCard = () => {
   const toast = useToast();
@@ -77,32 +76,6 @@ export const WiseReconCard = () => {
         <button type="button" className="btn" onClick={handleBackfill} disabled={pending !== null}>
           {pending === 'backfill' && <Spinner />} Backfill all paid periods
         </button>
-      </div>
-
-      <div
-        style={{
-          marginTop: 16,
-          paddingTop: 12,
-          borderTop: '1px solid var(--border)',
-        }}
-      >
-        <h4 style={{ margin: '0 0 4px' }}>Email cross-check</h4>
-        <p className="sub">
-          Compares the email on each contractor against the email Wise has on their linked
-          recipient. Surfaces mismatches for manual fix. <b>Partial signal:</b> only catches
-          mismatches where Wise actually has an email on the recipient (many PHP bank recipients
-          don't).
-        </p>
-        <div className="actions">
-          <button
-            type="button"
-            className="btn ghost"
-            disabled
-            title="No email-check action is wired yet (legacy parity TODO)."
-          >
-            Check emails
-          </button>
-        </div>
       </div>
 
       <div

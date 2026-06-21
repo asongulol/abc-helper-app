@@ -108,7 +108,7 @@ Verified present and well-built in this repo:
 ### R4 — Admin UX parity
 - [x] Typed-confirm — LOCK (PayrollShell), DELETE (owner-only typed-name, ContractorsClient), WITHDRAW (OnboardingDrilldown); RECALCULATE already present
 - [x] EmailInput / PhoneInput / ContractorPicker helpers — built + exported; ProfilePanel email/mobile retrofitted
-- [~] Unsaved-changes guard — `useUnsavedGuard` hook built; **not yet wired** into ProfilePanel (wizard relies on localStorage draft autosave instead)
+- [x] Unsaved-changes guard — `useUnsavedGuard` hook built **and wired** into `ProfilePanel.tsx` and `PortalFieldsCard.tsx`; the hire wizard additionally keeps its localStorage draft autosave
 - [x] Draft autosave/resume — `hire-draft` (`eis_hire_draft_<companyId>`) + resume banner in the 3-step `AddContractorWizard`
 - [x] Command palette (⌘K) — mounted in AdminShell (⌘K + Find); layout feeds roster + periods; routes with `?focus=`/`?period=`
 
@@ -131,4 +131,4 @@ Verified present and well-built in this repo:
 - ~~**Invoicing usage**~~ — RESOLVED: built in-app per direction (Hubstaff import deferred).
 - ~~**Portal self-service**~~ — RESOLVED: Time + Docs tabs added.
 - ~~**Tools vault**~~ — RESOLVED: one-time reveal (decrypt-then-purge) + portal `ToolsPopup`.
-- **Follow-ups:** wire `useUnsavedGuard` into ProfilePanel; surface the contractor agreement-print link inside the portal onboarding flow; run `supabase db reset` (or a branch) to apply-validate `0004–0006` before cutover.
+- **Follow-ups:** surface the contractor agreement-print link inside the portal onboarding flow; run `supabase db reset` (or a branch) to apply-validate the migrations before cutover.
