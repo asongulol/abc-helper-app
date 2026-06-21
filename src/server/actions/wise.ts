@@ -13,7 +13,7 @@
  *     (the cron path — x-cron-secret — stays in the deployed Deno edge function
  *      supabase/functions/wise-payouts/index.ts; this action covers the
  *      on-demand admin-triggered path only)
- *   lookups (wiseStatus, wiseRates, wiseRecipients, wiseGetRecipient,
+ *   lookups (wiseStatus, wiseRecipients, wiseGetRecipient,
  *            wiseFindTransfersByRecipient) → any admin
  */
 
@@ -28,7 +28,6 @@ import {
   serviceGetRecipient,
   serviceMatch,
   servicePoll,
-  serviceRates,
   serviceRecipients,
   serviceStatus,
 } from '@/server/wise/service';
@@ -266,24 +265,6 @@ export async function wiseStatus(
         };
       }),
     );
-  } catch (e) {
-    return fail(e);
-  }
-}
-
-/** Admin: locked FX rates for the given transfer ids (read-only GET). */
-export async function wiseRates(): Promise<WiseActionResult<{ rate: number; time: string }>> {
-  try {
-    await requireAdmin();
-    // The legacy stub returned a single mid-market rate. The full rates endpoint
-    // is available via serviceRates(ids) for per-transfer lookups. This wrapper
-    // preserves the contract return type for callers that just want a reference.
-    const rates = await serviceRates([]);
-    const first = rates[0];
-    return ok({
-      rate: first?.rate ?? 1,
-      time: new Date().toISOString(),
-    });
   } catch (e) {
     return fail(e);
   }
