@@ -55,6 +55,15 @@ const EnvSchema = z.object({
    * Defaults to http://localhost:3000 for local dev.
    */
   APP_URL: z.string().url().optional().default('http://localhost:3000'),
+  /**
+   * PHI column encryption (app-layer envelope encryption — see
+   * src/server/crypto). PHI_KMS_PROVIDER selects the key source: 'local' (a
+   * base64 32-byte master key in PHI_LOCAL_MASTER_KEY, dev only) or 'aws' (AWS
+   * KMS key PHI_KMS_KEY_ID — adapter to be wired). Defaults to 'local'.
+   */
+  PHI_KMS_PROVIDER: z.enum(['local', 'aws']).optional(),
+  PHI_LOCAL_MASTER_KEY: z.string().optional(),
+  PHI_KMS_KEY_ID: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
