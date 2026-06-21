@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Badge, type BadgeTone, useToast } from '@/components/ui';
+import { Badge, type BadgeTone, ConfirmDangerModal, useToast } from '@/components/ui';
 import type { ClientOption } from '@/db/queries/invoicing';
 import type { SessionRow } from '@/db/queries/sessions';
 import { fmtDate } from '@/lib/format';
@@ -113,8 +113,11 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
     });
   };
 
-  const remove = (id: string) => {
-    if (!window.confirm('Delete this session?')) return;
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const doDelete = () => {
+    const id = pendingDelete;
+    if (!id) return;
+    setPendingDelete(null);
     startUpdate(async () => {
       const res = await deleteSession({ clientId, id });
       if (!res.ok) {
@@ -330,7 +333,7 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                             type="button"
                             className="btn danger-outline sm"
                             disabled={isUpdating}
-                            onClick={() => remove(s.id)}
+                            onClick={() => setPendingDelete(s.id)}
                           >
                             Delete
                           </button>
@@ -343,6 +346,15 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
             </div>
           )}
         </div>
+      )}
+      {pendingDelete != null && (
+        <ConfirmDangerModal
+          title="Delete session"
+          message="Delete this session? It will be removed from billing."
+          confirmLabel="Delete session"
+          onConfirm={doDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </>
   );

@@ -85,6 +85,9 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
   return (
     <ToastProvider>
       <div className={`portal portal-shell${navCollapsed ? ' nav-collapsed' : ''}`}>
+        <a href="#main" className="skip-link">
+          Skip to content
+        </a>
         <div className="top">
           <span
             style={{

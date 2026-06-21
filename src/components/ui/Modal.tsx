@@ -34,6 +34,24 @@ export const Modal = ({ title, onClose, escClose = true, maxWidth, children }: M
     const node = ref.current;
     if (!node) return;
     const prevFocus = document.activeElement as HTMLElement | null;
+    // Isolate the background: mark everything outside this dialog `inert` so neither
+    // keyboard focus nor assistive tech can reach it (the manual Tab trap below stays
+    // as a fallback). Walk up from .modal-bg and inert each ancestor's other children.
+    const inerted: HTMLElement[] = [];
+    for (
+      let el: HTMLElement | null = node.parentElement;
+      el && el !== document.body;
+      el = el.parentElement
+    ) {
+      const parent = el.parentElement;
+      if (!parent) break;
+      for (const sib of Array.from(parent.children)) {
+        if (sib !== el && sib instanceof HTMLElement && !sib.hasAttribute('inert')) {
+          sib.setAttribute('inert', '');
+          inerted.push(sib);
+        }
+      }
+    }
     const focusables = () =>
       Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
         (el) => el.offsetWidth > 0 || el.offsetHeight > 0 || el === document.activeElement,
@@ -79,6 +97,7 @@ export const Modal = ({ title, onClose, escClose = true, maxWidth, children }: M
     document.addEventListener('keydown', onKey, true);
     return () => {
       document.removeEventListener('keydown', onKey, true);
+      for (const el of inerted) el.removeAttribute('inert');
       try {
         prevFocus?.focus();
       } catch {

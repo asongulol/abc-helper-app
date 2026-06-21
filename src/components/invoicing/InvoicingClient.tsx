@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState, useTransition } from 'react';
-import { Badge, type BadgeTone, useToast } from '@/components/ui';
+import { Badge, type BadgeTone, ConfirmDangerModal, useToast } from '@/components/ui';
 import type { ClientOption, InvoiceListRow } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports/csv';
@@ -118,10 +118,8 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
     });
   };
 
-  const changeStatus = (invoiceId: string, status: 'sent' | 'paid' | 'void') => {
-    if (status === 'void' && !window.confirm('Void this invoice? You can then regenerate it.')) {
-      return;
-    }
+  const [pendingVoid, setPendingVoid] = useState<string | null>(null);
+  const applyStatus = (invoiceId: string, status: 'sent' | 'paid' | 'void') => {
     startUpdate(async () => {
       const res = await setInvoiceStatus({ invoiceId, status });
       if (!res.ok) {
@@ -133,6 +131,19 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       });
       router.refresh();
     });
+  };
+  const changeStatus = (invoiceId: string, status: 'sent' | 'paid' | 'void') => {
+    if (status === 'void') {
+      setPendingVoid(invoiceId);
+      return;
+    }
+    applyStatus(invoiceId, status);
+  };
+  const confirmVoid = () => {
+    const id = pendingVoid;
+    if (!id) return;
+    setPendingVoid(null);
+    applyStatus(id, 'void');
   };
 
   const exportPreviewCsv = () => {
@@ -388,6 +399,15 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
           </div>
         )}
       </div>
+      {pendingVoid != null && (
+        <ConfirmDangerModal
+          title="Void invoice"
+          message="Void this invoice? You can then regenerate it for the same period."
+          confirmLabel="Void invoice"
+          onConfirm={confirmVoid}
+          onCancel={() => setPendingVoid(null)}
+        />
+      )}
     </>
   );
 };

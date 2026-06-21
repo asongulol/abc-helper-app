@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { EmailInput, Modal, useToast } from '@/components/ui';
+import { ConfirmDangerModal, EmailInput, Modal, useToast } from '@/components/ui';
 import type { AdminRow } from '@/db/queries/admins';
 import { addAdmin, removeAdmin, setAdminRole } from '@/server/actions/admin-manage';
 
@@ -108,14 +108,12 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
       }),
     );
 
-  const remove = (admin: AdminRow) => {
-    if (
-      !window.confirm(
-        `Remove admin access for ${admin.email}? They'll keep their Google account but lose access to this app.`,
-      )
-    ) {
-      return;
-    }
+  const [pendingRemove, setPendingRemove] = useState<AdminRow | null>(null);
+  const remove = (admin: AdminRow) => setPendingRemove(admin);
+  const confirmRemove = () => {
+    const admin = pendingRemove;
+    if (!admin) return;
+    setPendingRemove(null);
     run(() => removeAdmin({ email: admin.email }));
   };
 
@@ -352,6 +350,16 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
           );
         })}
       </div>
+      {pendingRemove && (
+        <ConfirmDangerModal
+          title="Remove admin access"
+          message={`Remove admin access for ${pendingRemove.email}? They keep their Google account but lose access to this app.`}
+          consequence="Access is revoked immediately."
+          confirmLabel="Remove access"
+          onConfirm={confirmRemove}
+          onCancel={() => setPendingRemove(null)}
+        />
+      )}
     </Modal>
   );
 };
