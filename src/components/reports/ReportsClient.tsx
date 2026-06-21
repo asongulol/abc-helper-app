@@ -255,7 +255,15 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                     <Fragment key={p.key}>
                       <tr
                         className="clickable"
+                        tabIndex={0}
+                        aria-expanded={open}
                         onClick={() => setOpenKey(open ? null : p.key)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setOpenKey(open ? null : p.key);
+                          }
+                        }}
                         style={{
                           cursor: 'pointer',
                           background: open ? '#f1f5f9' : undefined,

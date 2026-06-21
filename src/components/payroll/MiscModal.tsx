@@ -287,10 +287,11 @@ export const MiscModal = ({
               <button
                 type="button"
                 className="btn ghost sm"
+                aria-label="Remove earning"
                 onClick={() => setEarns((prev) => prev.filter((_, j) => j !== i))}
                 style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
               >
-                ×
+                <span aria-hidden="true">×</span>
               </button>
             </div>
           ))
@@ -379,10 +380,11 @@ export const MiscModal = ({
               <button
                 type="button"
                 className="btn ghost sm"
+                aria-label="Remove hours item"
                 onClick={() => setHrs((prev) => prev.filter((_, j) => j !== i))}
                 style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
               >
-                ×
+                <span aria-hidden="true">×</span>
               </button>
             </div>
           ))
@@ -451,10 +453,11 @@ export const MiscModal = ({
               <button
                 type="button"
                 className="btn ghost sm"
+                aria-label="Remove deduction"
                 onClick={() => setDeds((prev) => prev.filter((_, j) => j !== i))}
                 style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
               >
-                ×
+                <span aria-hidden="true">×</span>
               </button>
             </div>
           ))

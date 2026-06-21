@@ -850,6 +850,7 @@ export const PayrollShell = ({
                                   className="btn ghost sm"
                                   style={{ marginLeft: 4, padding: '2px 6px' }}
                                   title="Revert to computed"
+                                  aria-label="Revert to computed value"
                                   onClick={() =>
                                     patchRow(r.workerId, {
                                       grossPhp: r.computedGrossPhp,
