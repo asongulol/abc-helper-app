@@ -447,6 +447,51 @@ export const stepPeriodToLocked = async (db: Db, periodId: string): Promise<void
   if (error) throw new Error(`step to locked: ${error.message}`);
 };
 
+/**
+ * Keep the documented open->locked->paid machine in sync after a payment-status
+ * change: a period with payments that are ALL sent/reconciled becomes 'paid'; a
+ * 'paid' period that regains an unpaid payment steps back to 'locked'. 'open'
+ * periods are never touched.
+ */
+export const syncPeriodPaidState = async (db: Db, periodId: string): Promise<void> => {
+  const { data: period, error: perr } = await db
+    .from('pay_periods')
+    .select('state')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (perr) throw new Error(`sync paid state (period): ${perr.message}`);
+  if (!period || period.state === 'open') return;
+  const { data: pays, error } = await db
+    .from('payments')
+    .select('status')
+    .eq('pay_period_id', periodId);
+  if (error) throw new Error(`sync paid state (payments): ${error.message}`);
+  const rows = pays ?? [];
+  const allDone =
+    rows.length > 0 && rows.every((p) => p.status === 'sent' || p.status === 'reconciled');
+  if (allDone && period.state !== 'paid') {
+    const { error: e } = await db.from('pay_periods').update({ state: 'paid' }).eq('id', periodId);
+    if (e) throw new Error(`set paid: ${e.message}`);
+  } else if (!allDone && period.state === 'paid') {
+    const { error: e } = await db
+      .from('pay_periods')
+      .update({ state: 'locked' })
+      .eq('id', periodId);
+    if (e) throw new Error(`unset paid: ${e.message}`);
+  }
+};
+
+/** Distinct pay_period_ids that the given payment ids belong to. */
+export const fetchPeriodIdsForPayments = async (
+  db: Db,
+  paymentIds: string[],
+): Promise<string[]> => {
+  if (paymentIds.length === 0) return [];
+  const { data, error } = await db.from('payments').select('pay_period_id').in('id', paymentIds);
+  if (error) throw new Error(`period ids for payments: ${error.message}`);
+  return [...new Set((data ?? []).map((p) => p.pay_period_id))];
+};
+
 /* ---------- NEW: wise row lock ---------- */
 
 export const setWiseRowLock = async (

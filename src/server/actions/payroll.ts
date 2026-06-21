@@ -14,6 +14,7 @@ import {
   deleteStatement as dbDeleteStatement,
   lockPeriod as dbLockPeriod,
   unlockPeriod as dbUnlockPeriod,
+  fetchPeriodIdsForPayments,
   fetchPeriodSummaries,
   fetchProcessPayments,
   fetchSavedPayments,
@@ -22,6 +23,7 @@ import {
   markPaymentsUnpaid,
   setWiseRowLock,
   stepPeriodToLocked,
+  syncPeriodPaidState,
   updatePaymentRow,
 } from '@/db/queries/payroll';
 import type { RateHistoryRow } from '@/db/queries/rates';
@@ -547,6 +549,9 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
     const db = await createServerSupabase();
     const paidAt = input.paidAt ?? new Date().toISOString();
     await markPaymentsPaid(db, input.paymentIds, paidAt);
+    for (const pid of await fetchPeriodIdsForPayments(db, input.paymentIds)) {
+      await syncPeriodPaidState(db, pid);
+    }
     await logEvent({
       companyId: input.companyId,
       action: 'mark_paid',
@@ -585,6 +590,9 @@ export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCo
   try {
     const db = await createServerSupabase();
     await markPaymentsUnpaid(db, input.paymentIds);
+    for (const pid of await fetchPeriodIdsForPayments(db, input.paymentIds)) {
+      await syncPeriodPaidState(db, pid);
+    }
     await logEvent({
       companyId: input.companyId,
       action: 'mark_unpaid',
