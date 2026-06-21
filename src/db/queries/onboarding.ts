@@ -6,6 +6,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { decryptIfNeeded } from '@/server/crypto';
 
 type Db = SupabaseClient<Database>;
 
@@ -149,22 +150,25 @@ export const fetchSignatures = async (
     .eq('worker_id', workerId)
     .order('signed_at', { ascending: false });
   if (error) throw new Error(`onboarding_signatures: ${error.message}`);
-  return (data ?? []).map((s) => ({
-    id: s.id,
-    workerId: s.worker_id,
-    agreementKind: s.agreement_kind,
-    signedLegalName: s.signed_legal_name,
-    signatureMethod: s.signature_method,
-    signatureData: s.signature_data,
-    docVersion: s.doc_version,
-    docSha256: s.doc_sha256,
-    signedAt: s.signed_at,
-    signedDate: s.signed_date,
-    scrolledToEnd: s.scrolled_to_end,
-    status: s.status,
-    ipAddress: s.ip_address,
-    userAgent: s.user_agent,
-  }));
+  return Promise.all(
+    (data ?? []).map(async (s) => ({
+      id: s.id,
+      workerId: s.worker_id,
+      agreementKind: s.agreement_kind,
+      signedLegalName: s.signed_legal_name,
+      signatureMethod: s.signature_method,
+      // signature_data is PHI; decrypt envelope tokens, pass legacy plaintext through.
+      signatureData: s.signature_data ? await decryptIfNeeded(s.signature_data) : null,
+      docVersion: s.doc_version,
+      docSha256: s.doc_sha256,
+      signedAt: s.signed_at,
+      signedDate: s.signed_date,
+      scrolledToEnd: s.scrolled_to_end,
+      status: s.status,
+      ipAddress: s.ip_address,
+      userAgent: s.user_agent,
+    })),
+  );
 };
 
 /** Agreements (countersign state) for a worker. */
