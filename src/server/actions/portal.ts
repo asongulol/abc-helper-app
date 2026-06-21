@@ -27,6 +27,7 @@ import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
+import { encryptIfConfigured } from '@/server/crypto';
 
 /* ---------- SAFE_FIELDS mirror of portal-self edge fn ---------- */
 
@@ -444,6 +445,12 @@ export async function signAgreement(args: {
       timeZone: 'Asia/Manila',
     }).format(new Date());
 
+    // Derive the method from the PLAINTEXT before encrypting (ciphertext won't
+    // start with "data:"). signature_data is PHI — encrypt at rest when a key is
+    // configured (no-op plaintext otherwise; see src/server/crypto).
+    const signatureMethod = signatureData?.startsWith('data:') ? 'drawn' : 'typed';
+    const signatureStored = signatureData ? await encryptIfConfigured(signatureData) : null;
+
     // Insert signature (ignore-duplicates = immutable evidence)
     const { error: insErr } = await svc.from('onboarding_signatures').upsert(
       {
@@ -451,8 +458,8 @@ export async function signAgreement(args: {
         agreement_kind: agreementKey,
         doc_version: '1',
         signed_legal_name: args.typedName.trim(),
-        signature_method: signatureData?.startsWith('data:') ? 'drawn' : 'typed',
-        signature_data: signatureData,
+        signature_method: signatureMethod,
+        signature_data: signatureStored,
         // Record the real value (the portal gates signing on it); default to
         // true only when an older caller omits it, to preserve prior behavior.
         scrolled_to_end: args.scrolledToEnd ?? true,
