@@ -1,7 +1,7 @@
 'use client';
 
 import { type FormEvent, useEffect, useState, useTransition } from 'react';
-import { EmailInput, Modal, useTablist, useToast, useUnsavedGuard } from '@/components/ui';
+import { Modal, useTablist, useToast, useUnsavedGuard } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { RosterWorker } from '@/db/queries/workers';
 import {
@@ -13,13 +13,12 @@ import {
   setWorkerPhoto,
   type WorkerEngagement,
 } from '@/server/actions/contractors';
-import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
-import { Field } from './profile/Field';
+import type { ContractType } from '@/types/schemas/contractors';
+import { PayTab } from './profile/PayTab';
 import { PersonalTab } from './profile/PersonalTab';
 import { PortalLoginTab } from './profile/PortalLoginTab';
-import { SaveBar } from './profile/SaveBar';
-import { type FormState, SECTION_H4 } from './profile/types';
-import { RateCard } from './RateCard';
+import { ProfileTab } from './profile/ProfileTab';
+import type { FormState } from './profile/types';
 
 type Props = {
   worker: RosterWorker;
@@ -424,370 +423,43 @@ export function ProfilePanel({
 
       {/* ─── Profile tab ─── */}
       {activeTab === 'profile' && (
-        <form onSubmit={handleSave} noValidate {...tablist.panelProps()}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 14,
-              marginBottom: 16,
-            }}
-          >
-            {photoUrl ? (
-              // biome-ignore lint/performance/noImgElement: remote Supabase signed-URL photo fetched at runtime, not a static asset
-              <img
-                src={photoUrl}
-                alt={fullName}
-                width={56}
-                height={56}
-                style={{
-                  borderRadius: '50%',
-                  objectFit: 'cover',
-                  boxShadow: '0 0 0 2px var(--gold)',
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: '50%',
-                  background: 'var(--navy, #1f3a68)',
-                  color: '#fff',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 700,
-                  fontSize: 20,
-                }}
-              >
-                {(worker.firstName[0] ?? '?').toUpperCase()}
-              </div>
-            )}
-            <label className="btn ghost sm" style={{ cursor: 'pointer' }}>
-              {photoBusy ? 'Uploading…' : photoUrl ? 'Change photo' : 'Upload photo'}
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                style={{ display: 'none' }}
-                disabled={photoBusy}
-                onChange={(e) => handlePhoto(e.target.files?.[0])}
-              />
-            </label>
-          </div>
-          <div className="grid-2">
-            <Field id="pp-first" label="First name" required error={errors.firstName}>
-              <input
-                id="pp-first"
-                value={form.firstName}
-                onChange={(e) => set('firstName', e.target.value)}
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-middle" label="Middle name (optional)">
-              <input
-                id="pp-middle"
-                value={form.middleName}
-                onChange={(e) => set('middleName', e.target.value)}
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-last" label="Last name" required error={errors.lastName}>
-              <input
-                id="pp-last"
-                value={form.lastName}
-                onChange={(e) => set('lastName', e.target.value)}
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-contract" label="Contract">
-              <select
-                id="pp-contract"
-                value={form.contract}
-                onChange={(e) => set('contract', e.target.value as ContractType)}
-                disabled={isPending}
-              >
-                {CONTRACT_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field id="pp-role" label="Role">
-              <input
-                id="pp-role"
-                value={form.role}
-                onChange={(e) => set('role', e.target.value)}
-                placeholder="e.g. Billing Associate"
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-hours" label="Expected hours / week" error={errors.weeklyHours}>
-              <input
-                id="pp-hours"
-                type="number"
-                min="0"
-                max="168"
-                step="0.5"
-                value={form.weeklyHours}
-                onChange={(e) => set('weeklyHours', e.target.value)}
-                placeholder="40"
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-payout" label="Payout method">
-              <select
-                id="pp-payout"
-                value={form.payoutMethod}
-                onChange={(e) => set('payoutMethod', e.target.value)}
-                disabled={isPending}
-              >
-                <option value="">— not set —</option>
-                <option value="wise">Wise</option>
-                <option value="bpi">BPI</option>
-                <option value="gcash">Gcash</option>
-                <option value="paymaya">Paymaya</option>
-                <option value="paypal">Paypal</option>
-              </select>
-            </Field>
-            <Field id="pp-email" label="Personal email" error={errors.email}>
-              <EmailInput
-                id="pp-email"
-                value={form.email}
-                onChange={(v) => set('email', v)}
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-hubstaff" label="Hubstaff name (import match)">
-              <input
-                id="pp-hubstaff"
-                value={form.hubstaffName}
-                onChange={(e) => set('hubstaffName', e.target.value)}
-                disabled={isPending}
-              />
-            </Field>
-          </div>
-          <div style={{ display: 'flex', gap: 24, marginTop: 16 }}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 13,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={form.healthAllowanceEligible}
-                onChange={(e) => set('healthAllowanceEligible', e.target.checked)}
-                disabled={isPending}
-              />
-              Health allowance
-            </label>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 13,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={form.thirteenthMonthEligible}
-                onChange={(e) => set('thirteenthMonthEligible', e.target.checked)}
-                disabled={isPending}
-              />
-              13th-month
-            </label>
-          </div>
-          <SaveBar isPending={isPending} serverError={serverError} />
-        </form>
+        <ProfileTab
+          worker={worker}
+          fullName={fullName}
+          photoUrl={photoUrl}
+          photoBusy={photoBusy}
+          onPhoto={handlePhoto}
+          form={form}
+          set={set}
+          errors={errors}
+          isPending={isPending}
+          serverError={serverError}
+          onSubmit={handleSave}
+          panelProps={tablist.panelProps()}
+        />
       )}
 
       {/* ─── Pay & payout tab ─── */}
       {activeTab === 'pay' && (
-        <form onSubmit={handleSave} noValidate {...tablist.panelProps()}>
-          <section>
-            <h4 style={SECTION_H4}>
-              Per-company engagement{companyName ? ` · ${companyName}` : ''}
-            </h4>
-            <div className="grid-2">
-              <Field id="pp-position" label="Position">
-                <input
-                  id="pp-position"
-                  value={form.role}
-                  onChange={(e) => set('role', e.target.value)}
-                  placeholder="e.g. Billing Specialist"
-                  disabled={isPending}
-                />
-              </Field>
-              <Field id="pp-bill" label="Bill rate (USD/hr)" error={errors.billRateUsd}>
-                <input
-                  id="pp-bill"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.billRateUsd}
-                  onChange={(e) => set('billRateUsd', e.target.value)}
-                  placeholder="—"
-                  disabled={isPending}
-                />
-              </Field>
-              <Field id="pp-session" label="Session rate (USD/visit)" error={errors.sessionRateUsd}>
-                <input
-                  id="pp-session"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.sessionRateUsd}
-                  onChange={(e) => set('sessionRateUsd', e.target.value)}
-                  placeholder="—"
-                  disabled={isPending}
-                />
-              </Field>
-              <Field id="pp-link-status" label="Assignment status">
-                <select
-                  id="pp-link-status"
-                  value={form.linkStatus}
-                  onChange={(e) =>
-                    set('linkStatus', e.target.value as 'active' | 'inactive' | 'ended')
-                  }
-                  disabled={isPending}
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="ended">Ended</option>
-                </select>
-              </Field>
-            </div>
-          </section>
-          <SaveBar isPending={isPending} serverError={serverError} />
-          <section style={{ marginTop: 24 }}>
-            <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
-            <RateCard workerId={worker.workerId} companyId={companyId} />
-          </section>
-          <section style={{ marginTop: 24 }}>
-            <h4 style={SECTION_H4}>Client engagements</h4>
-            {engagements.length === 0 ? (
-              <p className="sub" style={{ margin: 0 }}>
-                No company engagements yet.
-              </p>
-            ) : (
-              engagements.map((e, i) => (
-                <div
-                  key={e.companyId}
-                  className="row"
-                  style={{
-                    alignItems: 'flex-end',
-                    flexWrap: 'wrap',
-                    gap: 8,
-                    paddingTop: 8,
-                    borderTop: '1px solid var(--border)',
-                  }}
-                >
-                  <div style={{ flex: '1 1 140px', minWidth: 0 }}>
-                    <strong style={{ fontSize: 13 }}>{e.companyName}</strong>
-                    {e.kind === 'employer' && (
-                      <span className="muted" style={{ fontSize: 11 }}>
-                        {' '}
-                        · employer
-                      </span>
-                    )}
-                  </div>
-                  <Field id={`eng-pos-${e.companyId}`} label="Position">
-                    <input
-                      id={`eng-pos-${e.companyId}`}
-                      value={e.role ?? ''}
-                      onChange={(ev) => updateEng(i, { role: ev.target.value || null })}
-                      disabled={isPending}
-                    />
-                  </Field>
-                  <Field id={`eng-rate-${e.companyId}`} label="Bill rate (USD/hr)">
-                    <input
-                      id={`eng-rate-${e.companyId}`}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={e.billRateUsd ?? ''}
-                      onChange={(ev) =>
-                        updateEng(i, {
-                          billRateUsd: ev.target.value === '' ? null : Number(ev.target.value),
-                        })
-                      }
-                      disabled={isPending}
-                    />
-                  </Field>
-                  <Field id={`eng-srate-${e.companyId}`} label="Session rate (USD/visit)">
-                    <input
-                      id={`eng-srate-${e.companyId}`}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={e.sessionRateUsd ?? ''}
-                      onChange={(ev) =>
-                        updateEng(i, {
-                          sessionRateUsd: ev.target.value === '' ? null : Number(ev.target.value),
-                        })
-                      }
-                      disabled={isPending}
-                    />
-                  </Field>
-                  <Field id={`eng-status-${e.companyId}`} label="Status">
-                    <select
-                      id={`eng-status-${e.companyId}`}
-                      value={e.status}
-                      onChange={(ev) => updateEng(i, { status: ev.target.value })}
-                      disabled={isPending}
-                    >
-                      <option value="active">Active</option>
-                      <option value="inactive">Inactive</option>
-                      <option value="ended">Ended</option>
-                    </select>
-                  </Field>
-                  <button
-                    type="button"
-                    className="btn ghost sm"
-                    disabled={isPending}
-                    onClick={() => saveEng(e)}
-                  >
-                    Save
-                  </button>
-                </div>
-              ))
-            )}
-            {companies.length > 0 && (
-              <div className="row" style={{ marginTop: 12, alignItems: 'flex-end', gap: 8 }}>
-                <Field id="eng-assign" label="Assign to company">
-                  <select
-                    id="eng-assign"
-                    value={assignTo}
-                    onChange={(ev) => setAssignTo(ev.target.value)}
-                    disabled={isPending}
-                  >
-                    <option value="">— select —</option>
-                    {companies
-                      .filter((c) => !engagements.some((e) => e.companyId === c.id))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name}
-                        </option>
-                      ))}
-                  </select>
-                </Field>
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={isPending || !assignTo}
-                  onClick={handleAssign}
-                >
-                  Add company
-                </button>
-              </div>
-            )}
-          </section>
-        </form>
+        <PayTab
+          worker={worker}
+          companyId={companyId}
+          companyName={companyName}
+          companies={companies}
+          engagements={engagements}
+          updateEng={updateEng}
+          saveEng={saveEng}
+          assignTo={assignTo}
+          setAssignTo={setAssignTo}
+          handleAssign={handleAssign}
+          form={form}
+          set={set}
+          errors={errors}
+          isPending={isPending}
+          serverError={serverError}
+          onSubmit={handleSave}
+          panelProps={tablist.panelProps()}
+        />
       )}
 
       {/* ─── Personal / HR tab ─── */}
