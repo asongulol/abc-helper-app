@@ -35,10 +35,12 @@ import 'server-only';
  */
 
 import { createServiceClient } from '@/db/clients/service';
+import { getPortalSettings, parseOnboardingConfig } from '@/db/queries/config';
 import {
   fetchDocumentsForExpiryCheck,
   fetchDocumentsForHiringReview,
 } from '@/db/queries/documents';
+import { shouldSendDigestToday } from '@/lib/documents/digest-schedule';
 import type { ExpiryResult } from '@/lib/documents/expiry';
 import { classifyExpiry } from '@/lib/documents/expiry';
 import type { HiringReviewResult } from '@/lib/documents/hiring-review';
@@ -136,6 +138,11 @@ export interface HiringReviewCheckOptions {
   includeDeferred?: boolean;
   /** Skip sending the email digest (default false). */
   skipEmail?: boolean;
+  /**
+   * Digest recipients (the admin's `reminders.send_to`). Empty/omitted falls
+   * back to GMAIL_USER so a misconfigured list never silently drops the digest.
+   */
+  recipients?: string[];
 }
 
 export interface HiringReviewCheckResult extends HiringReviewResult {
@@ -165,7 +172,8 @@ export const runHiringReviewCheck = async (
   let emailError: string | undefined;
 
   if (!opts.skipEmail && (pendingDocs > 0 || deferredDocs > 0)) {
-    const to = env.GMAIL_USER;
+    const configured = (opts.recipients ?? []).map((r) => r.trim()).filter(Boolean);
+    const to = configured.length ? configured.join(', ') : env.GMAIL_USER;
     if (to) {
       const liItems = (arr: string[]): string =>
         arr.map((x) => `<li>${escapeHtml(x)}</li>`).join('');
@@ -213,4 +221,50 @@ export const runHiringReviewCheck = async (
     emailed,
     ...(emailError !== undefined ? { emailError } : {}),
   };
+};
+
+// ---------------------------------------------------------------------------
+// Scheduled hiring-review digest (config-driven)
+// ---------------------------------------------------------------------------
+
+export interface ScheduledDigestResult {
+  /** Did the digest actually run (config enabled AND today matched the frequency)? */
+  ran: boolean;
+  /** When `ran` is false, why it was skipped. */
+  skippedReason?: 'disabled' | 'frequency';
+  /** Present only when `ran` is true. */
+  result?: HiringReviewCheckResult;
+}
+
+/**
+ * The cron-driven entry point for the hiring-review digest. Reads the admin's
+ * `reminders` config (Configuration → Onboarding) and applies it:
+ *   - `enabled: false`  → skip (reason 'disabled')
+ *   - `frequency`       → skip on non-matching days (reason 'frequency')
+ *   - `send_to`         → digest recipients (falls back to GMAIL_USER)
+ *   - `include_deferred`→ whether deferred follow-ups are included
+ *
+ * This is what brings the otherwise write-only `reminders` config to life; the
+ * cron itself fires daily (migration 0016) and this gates which ticks email.
+ */
+export const runScheduledHiringReviewDigest = async (
+  opts: { today?: Date } = {},
+): Promise<ScheduledDigestResult> => {
+  const today = opts.today ?? new Date();
+
+  const db = createServiceClient();
+  const settings = await getPortalSettings(db);
+  const { reminders } = parseOnboardingConfig(settings.onboardingConfigRaw);
+
+  if (!reminders.enabled) return { ran: false, skippedReason: 'disabled' };
+  if (!shouldSendDigestToday(reminders.frequency, today)) {
+    return { ran: false, skippedReason: 'frequency' };
+  }
+
+  const result = await runHiringReviewCheck({
+    includeDeferred: reminders.include_deferred,
+    recipients: reminders.send_to,
+    skipEmail: false,
+  });
+  return { ran: true, result };
 };
