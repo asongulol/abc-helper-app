@@ -1,13 +1,16 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
+import { AlertsBanner } from '@/components/overview/AlertsBanner';
 import { NetSparkline } from '@/components/overview/NetSparkline';
 import { PipelineStrip } from '@/components/overview/PipelineStrip';
+import { RefreshButton } from '@/components/overview/RefreshButton';
 import { StatTile } from '@/components/overview/StatTile';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchDocuments } from '@/db/queries/documents';
 import { fetchOnboardingProgress } from '@/db/queries/onboarding';
 import {
   countActiveContractors,
+  countFailedPayouts,
   countPendingTimeApprovals,
   getAlerts,
   getPeriodNetTotal,
@@ -78,6 +81,7 @@ export default async function OverviewPage() {
     activeContractors,
     currentNetTotal,
     pendingApprovals,
+    failedPayouts,
     documents,
     onboardingProgress,
     pipeline,
@@ -89,6 +93,7 @@ export default async function OverviewPage() {
     countActiveContractors(supabase, companyId),
     getPeriodNetTotal(supabase, companyId, period.start, period.end),
     countPendingTimeApprovals(supabase, companyId),
+    countFailedPayouts(supabase, companyId),
     fetchDocuments(supabase, companyId),
     fetchOnboardingProgress(supabase, companyId),
     getPipelineData(supabase, companyId, period.start, period.end),
@@ -165,15 +170,15 @@ export default async function OverviewPage() {
             gap: 6,
           }}
         >
-          <Link className="btn ghost sm" href="/overview">
-            ↻ Refresh
-          </Link>
+          <RefreshButton />
           <span className="ov-updated">
             <span className="dot" />
             updated just now
           </span>
         </div>
       </div>
+
+      <AlertsBanner alerts={alerts} />
 
       <div className="card ov-cycle" style={{ marginBottom: 16 }}>
         <div className="ov-cycle-head">
@@ -240,7 +245,13 @@ export default async function OverviewPage() {
           }
           tone={docsOnboarding > 0 ? 'info' : 'good'}
         />
-        <StatTile icon="🚩" label="Payout issues" value={0} sub="No failed payouts" tone="good" />
+        <StatTile
+          icon="🚩"
+          label="Payout issues"
+          value={failedPayouts}
+          sub={failedPayouts > 0 ? 'failed payout(s) — needs attention' : 'No failed payouts'}
+          tone={failedPayouts > 0 ? 'bad' : 'good'}
+        />
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -264,7 +275,7 @@ export default async function OverviewPage() {
             </div>
           </div>
           <Link className="btn ghost sm" href="/reports">
-            Run check
+            View in Reports
           </Link>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
