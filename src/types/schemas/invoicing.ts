@@ -28,3 +28,16 @@ export const SetInvoiceStatusSchema = z.object({
   status: InvoiceStatusSchema,
 });
 export type SetInvoiceStatusInput = z.infer<typeof SetInvoiceStatusSchema>;
+
+/**
+ * Marking an invoice paid also records the accounts-receivable receipt (how much
+ * landed, when, and an optional bank/Wise reference). Amounts are USD decimals to
+ * match the rest of invoicing (numeric(14,2) columns), not centavos.
+ */
+export const MarkInvoicePaidSchema = z.object({
+  invoiceId: z.string().uuid(),
+  amountReceivedUsd: z.number().min(0, 'must be ≥ 0').max(1_000_000_000),
+  receivedOn: IsoDateSchema,
+  paymentRef: z.string().trim().max(120).optional(),
+});
+export type MarkInvoicePaidInput = z.infer<typeof MarkInvoicePaidSchema>;

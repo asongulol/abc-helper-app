@@ -24,6 +24,10 @@ export type InvoiceListRow = {
   subtotalUsd: number;
   totalUsd: number;
   markupPct: number;
+  /** Accounts-receivable receipt (null until the invoice is marked paid). */
+  amountReceivedUsd: number | null;
+  receivedOn: string | null;
+  paymentRef: string | null;
   createdAt: string;
 };
 
@@ -215,7 +219,7 @@ export const fetchInvoices = async (db: Db, clientId?: string): Promise<InvoiceL
   let q = db
     .from('invoices')
     .select(
-      'id, company_id, period_start, period_end, invoice_no, status, subtotal_usd, total_usd, markup_pct, created_at, companies(name)',
+      'id, company_id, period_start, period_end, invoice_no, status, subtotal_usd, total_usd, markup_pct, amount_received_usd, received_on, payment_ref, created_at, companies(name)',
     )
     .order('created_at', { ascending: false });
   if (clientId) q = q.eq('company_id', clientId);
@@ -232,6 +236,9 @@ export const fetchInvoices = async (db: Db, clientId?: string): Promise<InvoiceL
     subtotalUsd: Number(i.subtotal_usd ?? 0),
     totalUsd: Number(i.total_usd ?? 0),
     markupPct: Number(i.markup_pct ?? 0),
+    amountReceivedUsd: i.amount_received_usd === null ? null : Number(i.amount_received_usd),
+    receivedOn: i.received_on,
+    paymentRef: i.payment_ref,
     createdAt: i.created_at,
   }));
 };
@@ -344,4 +351,22 @@ export const createInvoiceWithLines = async (
 export const updateInvoiceStatus = async (db: Db, id: string, status: string): Promise<void> => {
   const { error } = await db.from('invoices').update({ status }).eq('id', id);
   if (error) throw new Error(`invoice status: ${error.message}`);
+};
+
+/** Mark an invoice paid AND record its accounts-receivable receipt in one write. */
+export const markInvoicePaidReceipt = async (
+  db: Db,
+  id: string,
+  receipt: { amountReceivedUsd: number; receivedOn: string; paymentRef: string | null },
+): Promise<void> => {
+  const { error } = await db
+    .from('invoices')
+    .update({
+      status: 'paid',
+      amount_received_usd: receipt.amountReceivedUsd,
+      received_on: receipt.receivedOn,
+      payment_ref: receipt.paymentRef,
+    })
+    .eq('id', id);
+  if (error) throw new Error(`invoice receipt: ${error.message}`);
 };

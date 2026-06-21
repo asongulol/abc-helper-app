@@ -2,14 +2,15 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState, useTransition } from 'react';
-import { Badge, type BadgeTone, ConfirmDangerModal, useToast } from '@/components/ui';
+import { useId, useMemo, useState, useTransition } from 'react';
+import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import type { ClientOption, InvoiceListRow } from '@/db/queries/invoicing';
 import { fmtDate, money } from '@/lib/format';
 import { downloadCsv } from '@/lib/reports/csv';
 import {
   generateInvoice,
   type InvoicePreviewResult,
+  markInvoicePaid,
   previewInvoice,
   setInvoiceStatus,
 } from '@/server/actions/invoicing';
@@ -119,7 +120,8 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
   };
 
   const [pendingVoid, setPendingVoid] = useState<string | null>(null);
-  const applyStatus = (invoiceId: string, status: 'sent' | 'paid' | 'void') => {
+  const [payingInvoice, setPayingInvoice] = useState<InvoiceListRow | null>(null);
+  const applyStatus = (invoiceId: string, status: 'sent' | 'void') => {
     startUpdate(async () => {
       const res = await setInvoiceStatus({ invoiceId, status });
       if (!res.ok) {
@@ -132,7 +134,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
       router.refresh();
     });
   };
-  const changeStatus = (invoiceId: string, status: 'sent' | 'paid' | 'void') => {
+  const changeStatus = (invoiceId: string, status: 'sent' | 'void') => {
     if (status === 'void') {
       setPendingVoid(invoiceId);
       return;
@@ -144,6 +146,26 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
     if (!id) return;
     setPendingVoid(null);
     applyStatus(id, 'void');
+  };
+  const confirmPaid = (receipt: {
+    amountReceivedUsd: number;
+    receivedOn: string;
+    paymentRef: string;
+  }) => {
+    const inv = payingInvoice;
+    if (!inv) return;
+    startUpdate(async () => {
+      const res = await markInvoicePaid({ invoiceId: inv.id, ...receipt });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`Marked paid — ${money(receipt.amountReceivedUsd, 'USD')} received.`, {
+        type: 'success',
+      });
+      setPayingInvoice(null);
+      router.refresh();
+    });
   };
 
   const exportPreviewCsv = () => {
@@ -335,6 +357,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
                   <th>Client</th>
                   <th>Period</th>
                   <th style={rightAlign}>Total</th>
+                  <th style={rightAlign}>Received</th>
                   <th>Status</th>
                   <th>Actions</th>
                 </tr>
@@ -348,6 +371,20 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
                       {fmtDate(i.periodStart)} – {fmtDate(i.periodEnd)}
                     </td>
                     <td style={rightAlign}>{money(i.totalUsd, 'USD')}</td>
+                    <td style={rightAlign}>
+                      {i.status === 'paid' && i.amountReceivedUsd != null ? (
+                        <span title={i.paymentRef ?? undefined}>
+                          {money(i.amountReceivedUsd, 'USD')}
+                          {i.receivedOn && (
+                            <span className="sub" style={{ display: 'block', fontSize: 11 }}>
+                              {fmtDate(i.receivedOn)}
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td>
                       <Badge tone={STATUS_TONE[i.status] ?? 'neutral'}>{i.status}</Badge>
                     </td>
@@ -375,7 +412,7 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
                             type="button"
                             className="btn ghost sm"
                             disabled={isUpdating}
-                            onClick={() => changeStatus(i.id, 'paid')}
+                            onClick={() => setPayingInvoice(i)}
                           >
                             Mark paid
                           </button>
@@ -408,6 +445,116 @@ export const InvoicingClient = ({ clients, invoices, defaultFrom, defaultTo }: P
           onCancel={() => setPendingVoid(null)}
         />
       )}
+      {payingInvoice && (
+        <InvoiceReceiptModal
+          invoice={payingInvoice}
+          isSaving={isUpdating}
+          onConfirm={confirmPaid}
+          onCancel={() => setPayingInvoice(null)}
+        />
+      )}
     </>
+  );
+};
+
+const todayIso = (): string => new Date().toISOString().slice(0, 10);
+
+interface InvoiceReceiptModalProps {
+  invoice: InvoiceListRow;
+  isSaving: boolean;
+  onConfirm: (receipt: {
+    amountReceivedUsd: number;
+    receivedOn: string;
+    paymentRef: string;
+  }) => void;
+  onCancel: () => void;
+}
+
+/** Captures the accounts-receivable receipt when marking an invoice paid. */
+const InvoiceReceiptModal = ({
+  invoice,
+  isSaving,
+  onConfirm,
+  onCancel,
+}: InvoiceReceiptModalProps) => {
+  const amountId = useId();
+  const dateId = useId();
+  const refId = useId();
+  const [amount, setAmount] = useState(invoice.totalUsd.toFixed(2));
+  const [receivedOn, setReceivedOn] = useState(todayIso());
+  const [paymentRef, setPaymentRef] = useState('');
+
+  const amt = Number(amount);
+  const validAmount = Number.isFinite(amt) && amt >= 0;
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(receivedOn);
+  const delta = validAmount ? amt - invoice.totalUsd : 0;
+
+  const submit = () => {
+    if (!validAmount || !validDate) return;
+    onConfirm({ amountReceivedUsd: amt, receivedOn, paymentRef: paymentRef.trim() });
+  };
+
+  return (
+    <Modal title="Record payment" onClose={onCancel} maxWidth={420}>
+      <p className="sub">
+        {invoice.invoiceNo ?? 'Invoice'} — invoiced total {money(invoice.totalUsd, 'USD')}. Record
+        what was actually received.
+      </p>
+      <div className="field">
+        <label htmlFor={amountId} style={labelStyle}>
+          Amount received (USD)
+        </label>
+        <input
+          id={amountId}
+          type="number"
+          min="0"
+          step="0.01"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor={dateId} style={labelStyle}>
+          Received on
+        </label>
+        <input
+          id={dateId}
+          type="date"
+          value={receivedOn}
+          onChange={(e) => setReceivedOn(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor={refId} style={labelStyle}>
+          Reference (optional)
+        </label>
+        <input
+          id={refId}
+          type="text"
+          maxLength={120}
+          placeholder="Bank / Wise ref"
+          value={paymentRef}
+          onChange={(e) => setPaymentRef(e.target.value)}
+        />
+      </div>
+      {validAmount && delta !== 0 && (
+        <p className="sub" style={{ color: delta < 0 ? '#b45309' : '#3730a3' }}>
+          {delta < 0 ? `Short by ${money(-delta, 'USD')}` : `Over by ${money(delta, 'USD')}`}
+        </p>
+      )}
+      <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+        <button type="button" className="btn ghost" onClick={onCancel} disabled={isSaving}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={submit}
+          disabled={isSaving || !validAmount || !validDate}
+        >
+          {isSaving ? 'Saving…' : 'Mark paid'}
+        </button>
+      </div>
+    </Modal>
   );
 };

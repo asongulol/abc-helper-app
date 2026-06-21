@@ -16,6 +16,7 @@ import {
   fetchClientSessions,
   fetchEmployerCompanyId,
   fetchEmployerTrackedSeconds,
+  markInvoicePaidReceipt,
   type NewInvoiceLine,
   updateInvoiceStatus,
 } from '@/db/queries/invoicing';
@@ -25,6 +26,7 @@ import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   GenerateInvoiceSchema,
+  MarkInvoicePaidSchema,
   PreviewInvoiceSchema,
   SetInvoiceStatusSchema,
 } from '@/types/schemas/invoicing';
@@ -237,6 +239,9 @@ export async function setInvoiceStatus(args: unknown): Promise<ActionResult> {
     };
   const { invoiceId, status } = parsed.data;
 
+  // Paid carries an AR receipt — that goes through markInvoicePaid, not here.
+  if (status === 'paid') return { ok: false, error: 'Use markInvoicePaid to record the receipt.' };
+
   try {
     const db = await createServerSupabase();
     await updateInvoiceStatus(db, invoiceId, status);
@@ -244,6 +249,43 @@ export async function setInvoiceStatus(args: unknown): Promise<ActionResult> {
       action: status === 'void' ? 'invoice_voided' : 'invoice_status',
       entity: `Invoice ${invoiceId}`,
       detail: { status },
+    });
+    revalidatePath('/invoicing');
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Update failed.',
+    };
+  }
+}
+
+/** Mark an invoice paid and record its accounts-receivable receipt. */
+export async function markInvoicePaid(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = MarkInvoicePaidSchema.safeParse(args);
+  if (!parsed.success)
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
+  const { invoiceId, amountReceivedUsd, receivedOn, paymentRef } = parsed.data;
+  const ref = paymentRef && paymentRef.length > 0 ? paymentRef : null;
+
+  try {
+    const db = await createServerSupabase();
+    // RLS scopes the update to the admin's companies; an out-of-scope id is a no-op.
+    await markInvoicePaidReceipt(db, invoiceId, {
+      amountReceivedUsd,
+      receivedOn,
+      paymentRef: ref,
+    });
+    await logEvent({
+      action: 'invoice_paid',
+      entity: `Invoice ${invoiceId}`,
+      detail: { amount_received_usd: amountReceivedUsd, received_on: receivedOn, payment_ref: ref },
     });
     revalidatePath('/invoicing');
     return { ok: true };
