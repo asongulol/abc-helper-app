@@ -39,58 +39,65 @@ export function PayTab({
   panelProps,
 }: Props) {
   return (
-    <form onSubmit={onSubmit} noValidate {...panelProps}>
-      <section>
-        <h4 style={SECTION_H4}>Per-company engagement{companyName ? ` · ${companyName}` : ''}</h4>
-        <div className="grid-2">
-          <Field id="pp-position" label="Position">
-            <input
-              id="pp-position"
-              value={form.role}
-              onChange={(e) => set('role', e.target.value)}
-              placeholder="e.g. Billing Specialist"
-              disabled={isPending}
-            />
-          </Field>
-          <Field id="pp-bill" label="Bill rate (USD/hr)" error={errors.billRateUsd}>
-            <input
-              id="pp-bill"
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.billRateUsd}
-              onChange={(e) => set('billRateUsd', e.target.value)}
-              placeholder="—"
-              disabled={isPending}
-            />
-          </Field>
-          <Field id="pp-session" label="Session rate (USD/visit)" error={errors.sessionRateUsd}>
-            <input
-              id="pp-session"
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.sessionRateUsd}
-              onChange={(e) => set('sessionRateUsd', e.target.value)}
-              placeholder="—"
-              disabled={isPending}
-            />
-          </Field>
-          <Field id="pp-link-status" label="Assignment status">
-            <select
-              id="pp-link-status"
-              value={form.linkStatus}
-              onChange={(e) => set('linkStatus', e.target.value as 'active' | 'inactive' | 'ended')}
-              disabled={isPending}
-            >
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-              <option value="ended">Ended</option>
-            </select>
-          </Field>
-        </div>
-      </section>
-      <SaveBar isPending={isPending} serverError={serverError} />
+    <div {...panelProps}>
+      {/* Only the per-company engagement saves via the profile form; the rate
+          card and client-engagement rows below have their own controls, so they
+          sit outside it — a <form> cannot legally nest the RateCard's <form>. */}
+      <form onSubmit={onSubmit} noValidate>
+        <section>
+          <h4 style={SECTION_H4}>Per-company engagement{companyName ? ` · ${companyName}` : ''}</h4>
+          <div className="grid-2">
+            <Field id="pp-position" label="Position">
+              <input
+                id="pp-position"
+                value={form.role}
+                onChange={(e) => set('role', e.target.value)}
+                placeholder="e.g. Billing Specialist"
+                disabled={isPending}
+              />
+            </Field>
+            <Field id="pp-bill" label="Bill rate (USD/hr)" error={errors.billRateUsd}>
+              <input
+                id="pp-bill"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.billRateUsd}
+                onChange={(e) => set('billRateUsd', e.target.value)}
+                placeholder="—"
+                disabled={isPending}
+              />
+            </Field>
+            <Field id="pp-session" label="Session rate (USD/visit)" error={errors.sessionRateUsd}>
+              <input
+                id="pp-session"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.sessionRateUsd}
+                onChange={(e) => set('sessionRateUsd', e.target.value)}
+                placeholder="—"
+                disabled={isPending}
+              />
+            </Field>
+            <Field id="pp-link-status" label="Assignment status">
+              <select
+                id="pp-link-status"
+                value={form.linkStatus}
+                onChange={(e) =>
+                  set('linkStatus', e.target.value as 'active' | 'inactive' | 'ended')
+                }
+                disabled={isPending}
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="ended">Ended</option>
+              </select>
+            </Field>
+          </div>
+        </section>
+        <SaveBar isPending={isPending} serverError={serverError} />
+      </form>
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
         <RateCard workerId={worker.workerId} companyId={companyId} />
@@ -214,6 +221,6 @@ export function PayTab({
           </div>
         )}
       </section>
-    </form>
+    </div>
   );
 }
