@@ -96,16 +96,27 @@ export const fetchApprovalSnapshot = async (
   }));
 };
 
-/** Update approval status for a set of ids (chunked to avoid URL length). */
+/**
+ * Update approval status for a set of ids (chunked to avoid URL length).
+ *
+ * F8: stamp approved_at/approved_by when approving so approval timing is
+ * auditable at the row level (and detectable relative to a period lock); clear
+ * them on reject so the invariant "timing set ⇔ approval='approved'" holds.
+ */
 export const updateApproval = async (
   db: Db,
   ids: string[],
   status: 'approved' | 'rejected',
+  actorId?: string | null,
 ): Promise<void> => {
+  const patch =
+    status === 'approved'
+      ? { approval: status, approved_at: new Date().toISOString(), approved_by: actorId ?? null }
+      : { approval: status, approved_at: null, approved_by: null };
   const CHUNK = 100;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    const { error } = await db.from('time_entries').update({ approval: status }).in('id', chunk);
+    const { error } = await db.from('time_entries').update(patch).in('id', chunk);
     if (error) throw new Error(`approval update: ${error.message}`);
   }
 };
@@ -129,10 +140,18 @@ export const restoreApprovals = async (
       }
     }
     for (const [status, ids] of byStatus) {
-      const { error } = await db
-        .from('time_entries')
-        .update({ approval: status as 'pending' | 'approved' | 'rejected' })
-        .in('id', ids);
+      // Keep the F8 invariant: clear approval timing when restoring to any
+      // non-approved state. (The undo snapshot doesn't carry the original
+      // approved_at, so a restore back to 'approved' leaves timing as-is.)
+      const patch =
+        status === 'approved'
+          ? { approval: 'approved' as const }
+          : {
+              approval: status as 'pending' | 'rejected',
+              approved_at: null,
+              approved_by: null,
+            };
+      const { error } = await db.from('time_entries').update(patch).in('id', ids);
       if (error) throw new Error(`restore approvals: ${error.message}`);
     }
   }

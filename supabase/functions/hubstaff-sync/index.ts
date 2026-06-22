@@ -325,19 +325,30 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
       }
   }
 
-  // Decided guard.
+  // Decided guard. Also capture stored seconds so we can detect divergence (F3)
+  // when a decided day's Hubstaff numbers change after a human decision.
   const exRes = await fetch(
-    `${SB_URL}/rest/v1/time_entries?company_id=eq.${companyId}&work_date=gte.${start}&work_date=lte.${stop}&select=company_id,worker_id,source_name,work_date,approval`,
+    `${SB_URL}/rest/v1/time_entries?company_id=eq.${companyId}&work_date=gte.${start}&work_date=lte.${stop}&select=company_id,worker_id,source_name,work_date,approval,tracked_seconds,pto_seconds`,
     { headers: tokHdr },
   );
   const decidedBySrc = new Set<string>();
   const decidedByWorker = new Set<string>();
+  const decidedValues = new Map<string, { tracked: number; pto: number }>();
   if (exRes.ok)
     for (const row of await exRes.json()) {
       if (row.approval && row.approval !== 'pending') {
-        decidedBySrc.add(`${row.company_id}|${row.source_name}|${row.work_date}`);
-        if (row.worker_id)
-          decidedByWorker.add(`${row.company_id}|${row.worker_id}|${row.work_date}`);
+        const srcKey = `${row.company_id}|${row.source_name}|${row.work_date}`;
+        decidedBySrc.add(srcKey);
+        const vals = {
+          tracked: Number(row.tracked_seconds ?? 0),
+          pto: Number(row.pto_seconds ?? 0),
+        };
+        decidedValues.set(srcKey, vals);
+        if (row.worker_id) {
+          const workerKey = `${row.company_id}|${row.worker_id}|${row.work_date}`;
+          decidedByWorker.add(workerKey);
+          decidedValues.set(workerKey, vals);
+        }
       }
     }
 
@@ -346,6 +357,15 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
   const rows: unknown[] = [];
   const importBatchId = crypto.randomUUID();
   const idsToPersist: Array<{ company_id: string; worker_id: string; uid: number }> = [];
+  const divergences: Array<{
+    worker_id: string;
+    source_name: string;
+    work_date: string;
+    stored_tracked: number;
+    stored_pto: number;
+    incoming_tracked: number;
+    incoming_pto: number;
+  }> = [];
 
   for (const uid of userIds) {
     const nm = nameById.get(uid) ?? `user ${uid}`;
@@ -364,8 +384,25 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
       const tracked = trackedDay.get(uid)?.get(day) ?? 0;
       const pto = ptoDay.get(uid)?.get(day) ?? 0;
       if (tracked === 0 && pto === 0) continue;
-      if (decidedBySrc.has(`${co}|${src}|${day}`) || decidedByWorker.has(`${co}|${wId}|${day}`))
+      const srcKey = `${co}|${src}|${day}`;
+      const workerKey = `${co}|${wId}|${day}`;
+      if (decidedBySrc.has(srcKey) || decidedByWorker.has(workerKey)) {
+        // F3: decided day — never overwrite, but surface a divergence if the
+        // freshly-pulled seconds differ from the frozen stored value.
+        const stored = decidedValues.get(srcKey) ?? decidedValues.get(workerKey);
+        if (stored && (stored.tracked !== tracked || stored.pto !== pto)) {
+          divergences.push({
+            worker_id: wId,
+            source_name: src,
+            work_date: day,
+            stored_tracked: stored.tracked,
+            stored_pto: stored.pto,
+            incoming_tracked: tracked,
+            incoming_pto: pto,
+          });
+        }
         continue;
+      }
       const overall = overallDay.get(uid)?.get(day) ?? 0;
       const activityPct = tracked > 0 ? Math.round((overall / tracked) * 100) : null;
       rows.push({
@@ -409,6 +446,20 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
     ).catch(() => undefined);
   }
 
+  // F3: audit-log decided-day divergences (best-effort) so they aren't silent.
+  if (divergences.length) {
+    await fetch(`${SB_URL}/rest/v1/audit_log`, {
+      method: 'POST',
+      headers: { ...tokHdr, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        company_id: companyId,
+        action: 'time_divergence',
+        entity: companyId,
+        detail: { count: divergences.length, window: { start, stop }, items: divergences.slice(0, 100) },
+      }),
+    }).catch(() => undefined);
+  }
+
   return json({
     ok: true,
     window: { start, stop },
@@ -416,6 +467,7 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
     members_seen: userIds.length,
     rows_written: written,
     ids_persisted: idsToPersist.length,
+    divergences,
     unmatched: [...unmatched],
     import_batch_id: importBatchId,
   });

@@ -65,7 +65,7 @@ export async function setTimeApproval(
     const db = await createServerSupabase();
     // Snapshot BEFORE update so we can undo.
     const snapshot = await fetchApprovalSnapshot(db, ids);
-    await updateApproval(db, ids, status);
+    await updateApproval(db, ids, status, guard.admin.userId);
     await logEvent({
       companyId,
       action: 'approve_time',

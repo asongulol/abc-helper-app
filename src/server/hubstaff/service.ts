@@ -41,7 +41,7 @@ import {
   persistHubstaffUserId,
 } from '@/db/queries/hubstaff';
 import { upsertTimeEntries } from '@/db/queries/time';
-import type { Database } from '@/db/types';
+import type { Database, Json } from '@/db/types';
 import {
   accumulateActivities,
   accumulatePto,
@@ -51,7 +51,12 @@ import {
   resolveWindow,
   transformActivities,
 } from '@/lib/hubstaff/transform';
-import type { HubstaffDailyActivity, HubstaffTimeOffRequest } from '@/lib/hubstaff/types';
+import type {
+  HubstaffDailyActivity,
+  HubstaffTimeOffRequest,
+  TransformDivergence,
+} from '@/lib/hubstaff/types';
+import { logEvent } from '@/server/audit';
 import { fetchMemberNames, getAccessToken, HUBSTAFF_API_BASE, pageAll } from './client';
 
 type Db = SupabaseClient<Database>;
@@ -67,6 +72,8 @@ export interface HubstaffSyncSummary {
   rowsWritten: number;
   idsPersisted: number;
   skippedDecided: number;
+  /** F3: decided days whose Hubstaff seconds changed after a human decision. */
+  divergences: TransformDivergence[];
   unmatched: string[];
   importBatchId: string;
 }
@@ -155,6 +162,7 @@ export async function syncHubstaffForCompany(
       rowsWritten: 0,
       idsPersisted: 0,
       skippedDecided: 0,
+      divergences: [],
       unmatched: [],
       importBatchId,
     };
@@ -205,6 +213,22 @@ export async function syncHubstaffForCompany(
     }
   }
 
+  // 13b. F3: surface decided-day divergences (Hubstaff seconds changed after a
+  // human approved/rejected the day). The row is intentionally not overwritten;
+  // an admin must re-open + correct it. Audit-logged so it's not silent.
+  if (result.divergences.length > 0) {
+    await logEvent({
+      companyId,
+      action: 'time_divergence',
+      entity: companyId,
+      detail: {
+        count: result.divergences.length,
+        window: { start, stop },
+        items: result.divergences.slice(0, 100) as unknown as Json,
+      },
+    });
+  }
+
   return {
     ok: true,
     window: { start, stop },
@@ -214,6 +238,7 @@ export async function syncHubstaffForCompany(
     rowsWritten: result.rows.length,
     idsPersisted: result.idsToPersist.length,
     skippedDecided,
+    divergences: result.divergences,
     unmatched: result.unmatched,
     importBatchId,
   };

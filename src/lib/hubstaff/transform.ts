@@ -189,18 +189,26 @@ export function matchWorker(
 export function buildDecidedSets(existing: ExistingDecidedEntry[]): {
   decidedBySrc: Set<string>;
   decidedByWorker: Set<string>;
+  /** F3: stored seconds for each decided key, for divergence detection. */
+  decidedValues: Map<string, { tracked: number; pto: number }>;
 } {
   const decidedBySrc = new Set<string>();
   const decidedByWorker = new Set<string>();
+  const decidedValues = new Map<string, { tracked: number; pto: number }>();
   for (const row of existing) {
     if (row.approval && row.approval !== 'pending') {
-      decidedBySrc.add(`${row.company_id}|${row.source_name}|${row.work_date}`);
+      const srcKey = `${row.company_id}|${row.source_name}|${row.work_date}`;
+      decidedBySrc.add(srcKey);
+      const values = { tracked: row.tracked_seconds ?? 0, pto: row.pto_seconds ?? 0 };
+      decidedValues.set(srcKey, values);
       if (row.worker_id) {
-        decidedByWorker.add(`${row.company_id}|${row.worker_id}|${row.work_date}`);
+        const workerKey = `${row.company_id}|${row.worker_id}|${row.work_date}`;
+        decidedByWorker.add(workerKey);
+        decidedValues.set(workerKey, values);
       }
     }
   }
-  return { decidedBySrc, decidedByWorker };
+  return { decidedBySrc, decidedByWorker, decidedValues };
 }
 
 // ─── Canonical source_name resolution ─────────────────────────────────────
@@ -244,18 +252,23 @@ export function transformActivities(opts: {
   nameById: Map<number, string>;
   idx: WorkerMatchIndex;
   canonical: Map<string, string>;
-  decided: { decidedBySrc: Set<string>; decidedByWorker: Set<string> };
+  decided: {
+    decidedBySrc: Set<string>;
+    decidedByWorker: Set<string>;
+    decidedValues?: Map<string, { tracked: number; pto: number }>;
+  };
   targetCompanyId: string;
   days: string[];
   importBatchId: string | null;
 }): TransformResult {
   const { accum, nameById, idx, canonical, decided, targetCompanyId, days, importBatchId } = opts;
-  const { decidedBySrc, decidedByWorker } = decided;
+  const { decidedBySrc, decidedByWorker, decidedValues } = decided;
 
   const rows: TransformResult['rows'] = [];
   const unmatched = new Set<string>();
   const matchedWorkerIds = new Set<string>();
   const idsToPersist: TransformResult['idsToPersist'] = [];
+  const divergences: TransformResult['divergences'] = [];
 
   for (const [uid, dayMap] of accum) {
     const hubstaffName = nameById.get(uid) ?? `user ${uid}`;
@@ -288,11 +301,24 @@ export function transformActivities(opts: {
       const pto = d?.pto ?? 0;
       if (tracked === 0 && pto === 0) continue;
 
-      // Skip rows a human has already decided.
-      if (
-        decidedBySrc.has(`${targetCompanyId}|${src}|${day}`) ||
-        decidedByWorker.has(`${targetCompanyId}|${workerId}|${day}`)
-      ) {
+      // Skip rows a human has already decided — but if the freshly-pulled
+      // seconds differ from the frozen stored value, surface a divergence (F3)
+      // so an admin can re-open + correct. The row is still NOT overwritten.
+      const srcKey = `${targetCompanyId}|${src}|${day}`;
+      const workerKey = `${targetCompanyId}|${workerId}|${day}`;
+      if (decidedBySrc.has(srcKey) || decidedByWorker.has(workerKey)) {
+        const stored = decidedValues?.get(srcKey) ?? decidedValues?.get(workerKey);
+        if (stored && (stored.tracked !== tracked || stored.pto !== pto)) {
+          divergences.push({
+            workerId,
+            sourceName: src,
+            workDate: day,
+            storedTracked: stored.tracked,
+            storedPto: stored.pto,
+            incomingTracked: tracked,
+            incomingPto: pto,
+          });
+        }
         continue;
       }
 
@@ -318,6 +344,7 @@ export function transformActivities(opts: {
     unmatched: [...unmatched],
     matchedWorkerIds: [...matchedWorkerIds],
     idsToPersist,
+    divergences,
   };
 }
 

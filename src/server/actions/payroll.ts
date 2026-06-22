@@ -10,6 +10,7 @@
 import { createServerSupabase } from '@/db/clients/server';
 import type { PeriodSummaryRow, ProcessPayment, SavedPayment } from '@/db/queries/payroll';
 import {
+  countPendingTime,
   deleteAllStatements as dbDeleteAllStatements,
   deleteStatement as dbDeleteStatement,
   lockPeriod as dbLockPeriod,
@@ -21,6 +22,8 @@ import {
   findPeriod,
   markPaymentsPaid,
   markPaymentsUnpaid,
+  type PaymentSnapshotRow,
+  restorePaymentRows,
   setWiseRowLock,
   stepPeriodToLocked,
   syncPeriodPaidState,
@@ -45,6 +48,7 @@ import {
   MarkPaidSchema,
   MarkUnpaidSchema,
   RateSaveSchema,
+  RestoreSnapshotSchema,
   ToggleWiseRowLockSchema,
   UnlockPeriodSchema,
   UpdatePaymentRowSchema,
@@ -150,6 +154,55 @@ export async function calculatePeriodDraft(
   }
 }
 
+/**
+ * F6: undo the most recent recalc by restoring the snapshot returned from
+ * calculatePeriodDraft. Only valid while the period is still OPEN.
+ */
+export async function restorePaymentsSnapshot(
+  args: unknown,
+): Promise<ActionResult<{ restored: number }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = RestoreSnapshotSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const { data: pp } = await db
+      .from('pay_periods')
+      .select('state, company_id')
+      .eq('id', input.periodId)
+      .maybeSingle();
+    if (!pp || pp.company_id !== input.companyId)
+      return { ok: false, error: 'Period not in this company.' };
+    if (pp.state !== 'open')
+      return { ok: false, error: 'Period is not open — cannot undo recalculation.' };
+
+    const restored = await restorePaymentRows(
+      db,
+      input.companyId,
+      input.periodId,
+      input.snapshot as unknown as PaymentSnapshotRow[],
+    );
+    await logEvent({
+      companyId: input.companyId,
+      action: 'restore_recalc',
+      entity: input.periodId,
+      detail: { rows: restored },
+    });
+    return { ok: true, data: { restored } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Undo failed.' };
+  }
+}
+
 /* ---------- Period summaries (batch list) ---------- */
 
 export async function getPeriodSummaries(args: {
@@ -233,6 +286,33 @@ export async function lockPeriod(
       return {
         ok: false,
         error: `${noRate.length} contractor(s) have no rate and cannot be locked: ${names}`,
+      };
+    }
+
+    // F2: refuse to lock while approved-pending hours exist in the period —
+    // pending time is invisible to the gross calc and would be silently
+    // underpaid. The admin must approve (to pay) or reject (to exclude) first.
+    const pendingCount = await countPendingTime(
+      db,
+      input.companyId,
+      input.periodStart,
+      input.periodEnd,
+    );
+    if (pendingCount > 0) {
+      return {
+        ok: false,
+        error: `${pendingCount} time entr${pendingCount === 1 ? 'y is' : 'ies are'} still pending approval in this period. Approve or reject them before locking, then recalculate.`,
+      };
+    }
+
+    // New-2: a negative net (e.g. a deduction larger than earnings) would lock
+    // and pay through as a negative remittance. Refuse — the row must be fixed.
+    const negativeNet = payments.filter((p) => p.netPhp != null && p.netPhp < 0);
+    if (negativeNet.length > 0) {
+      const names = negativeNet.map((p) => p.name).join(', ');
+      return {
+        ok: false,
+        error: `${negativeNet.length} contractor(s) have a negative net and cannot be locked: ${names}`,
       };
     }
 

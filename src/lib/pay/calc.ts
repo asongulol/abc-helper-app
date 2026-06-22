@@ -58,6 +58,15 @@ export type ContractorRowInput = {
   periodEnd: string;
   /** Resolved per-period rate (see resolveRate), or null when the worker has none. */
   rate: Centavos | null;
+  /**
+   * PH/PS only (F4): a date-aware gross precomputed by the data layer when a
+   * per-unit rate change lands mid-period, so units worked before the change
+   * are priced at the old rate and units after at the new rate. When supplied
+   * it REPLACES the naive `rate × totalUnits` product. Omit (undefined) for the
+   * common single-rate case — the engine then computes gross exactly as before
+   * (parity). `rate` still carries the latest period rate for display.
+   */
+  perUnitGrossOverride?: Centavos | null;
   hireDate?: string | null;
   healthAllowanceEligible?: boolean;
   thirteenthMonthEligible?: boolean;
@@ -115,7 +124,14 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     expected = 0;
     ratio = 0;
     const units = input.contract === 'PH' ? worked : (input.sessionUnits ?? 0);
-    gross = rate === null ? null : mulRatioMinor(rate, units);
+    // F4: prefer the date-aware gross when the data layer supplied one (a
+    // mid-period rate change); otherwise the naive single-rate product (parity).
+    gross =
+      rate === null
+        ? null
+        : input.perUnitGrossOverride !== undefined
+          ? input.perUnitGrossOverride
+          : mulRatioMinor(rate, units);
     shortfall = zeroCentavos();
   } else {
     expected = expectedHours(input.contract, input.periodStart, input.periodEnd, input.holidays);

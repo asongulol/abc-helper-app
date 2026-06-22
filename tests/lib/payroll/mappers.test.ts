@@ -205,6 +205,161 @@ describe('buildStatements + toPaymentDraft', () => {
   });
 });
 
+describe('F4: date-aware PH/PS gross on a mid-period rate change', () => {
+  const phWorker = (workerId: string): RosterRow => roster({ workerId, contract: 'PH' });
+
+  it('PH: prices pre-change hours at the old rate and post-change hours at the new rate', () => {
+    // ₱200/hr through 06-08, ₱250/hr from 06-09 (exclusive close, no overlap).
+    const rates = [
+      {
+        workerId: 'w1',
+        amountPhp: '200.00',
+        effectiveStart: '2026-06-01',
+        effectiveEnd: '2026-06-08',
+      },
+      {
+        workerId: 'w1',
+        amountPhp: '250.00',
+        effectiveStart: '2026-06-09',
+        effectiveEnd: null,
+      },
+    ];
+    const attribution = attributeTimeEntries(
+      [
+        entry({ workerId: 'w1', workDate: '2026-06-05', trackedSeconds: 10 * 3600 }),
+        entry({ workerId: 'w1', workDate: '2026-06-10', trackedSeconds: 10 * 3600 }),
+      ],
+      [phWorker('w1')],
+    );
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [phWorker('w1')],
+      rates,
+    });
+    // Date-aware: 200×10 + 250×10 = 4500, NOT the naive latest-rate 250×20 = 5000.
+    expect(rows[0]?.result.gross).toBe(450_000);
+    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, { fxRate: undefined });
+    expect(draft?.gross_php).toBe(4500);
+  });
+
+  it('PH: single rate across the period is unchanged (naive product, parity)', () => {
+    const rates = [
+      { workerId: 'w1', amountPhp: '250.00', effectiveStart: '2026-01-01', effectiveEnd: null },
+    ];
+    const attribution = attributeTimeEntries(
+      [
+        entry({ workerId: 'w1', workDate: '2026-06-05', trackedSeconds: 10 * 3600 }),
+        entry({ workerId: 'w1', workDate: '2026-06-10', trackedSeconds: 10 * 3600 }),
+      ],
+      [phWorker('w1')],
+    );
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [phWorker('w1')],
+      rates,
+    });
+    expect(rows[0]?.result.gross).toBe(500_000); // 250 × 20h
+  });
+
+  it('PS: prices pre-change sessions at the old rate and post-change at the new rate', () => {
+    const rates = [
+      {
+        workerId: 'w1',
+        amountPhp: '300.00',
+        effectiveStart: '2026-06-01',
+        effectiveEnd: '2026-06-08',
+      },
+      {
+        workerId: 'w1',
+        amountPhp: '400.00',
+        effectiveStart: '2026-06-09',
+        effectiveEnd: null,
+      },
+    ];
+    const ps = roster({ workerId: 'w1', contract: 'PS' });
+    const attribution = attributeTimeEntries([], [ps]);
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [ps],
+      rates,
+      sessionsByWorker: new Map([['w1', 5]]),
+      sessionUnitsByWorkerByDate: new Map([
+        [
+          'w1',
+          new Map([
+            ['2026-06-05', 2],
+            ['2026-06-10', 3],
+          ]),
+        ],
+      ]),
+    });
+    // 300×2 + 400×3 = 1800, NOT latest 400×5 = 2000.
+    expect(rows[0]?.result.gross).toBe(180_000);
+  });
+});
+
+describe('F7: HA-eligible worker with zero approved time in their anniversary period', () => {
+  const haRates = [
+    { workerId: 'w1', amountPhp: '15000.00', effectiveStart: '2024-01-01', effectiveEnd: null },
+  ];
+  const haWorker = roster({
+    workerId: 'w1',
+    worker: {
+      ...roster({ workerId: 'w1' }).worker,
+      hireDate: '2024-06-10', // anniversary June 10 lands in the 06-01..06-15 period
+      healthAllowanceEligible: true,
+    },
+  });
+
+  it('still builds a row and pays the ₱20k health allowance with zero time', () => {
+    const attribution = attributeTimeEntries([], [haWorker]); // no approved time at all
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [haWorker],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.result.workedHours).toBe(0);
+    expect(rows[0]?.result.healthAllowance).toBe(2_000_000); // ₱20,000
+    expect(rows[0]?.result.net).toBe(2_000_000);
+    const draft = toPaymentDraft(rows[0] as NonNullable<(typeof rows)[0]>, { fxRate: undefined });
+    expect(draft?.net_php).toBe(20000);
+  });
+
+  it('does NOT build a zero-time row outside the anniversary period', () => {
+    const attribution = attributeTimeEntries([], [haWorker]);
+    const rows = buildStatements({
+      periodStart: '2026-07-01', // July — no anniversary, no time
+      periodEnd: '2026-07-15',
+      attribution,
+      roster: [haWorker],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('does NOT build when the HA batch toggle is off', () => {
+    const attribution = attributeTimeEntries([], [haWorker]);
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [haWorker],
+      rates: haRates,
+      includeHealthAllowance: false,
+    });
+    expect(rows).toHaveLength(0);
+  });
+});
+
 describe('money boundary helpers', () => {
   it('round-trips PHP ↔ centavos', () => {
     expect(phpToCentavos('12345.67')).toBe(1_234_567);
