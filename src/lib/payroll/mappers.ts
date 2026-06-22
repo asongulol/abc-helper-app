@@ -10,7 +10,8 @@
  * inside the engine is integer centavos. Conversions happen ONLY here.
  */
 
-import { type Centavos, majorToMinor } from '@/lib/money';
+import { addMinor, type Centavos, majorToMinor, mulRatioMinor, zeroCentavos } from '@/lib/money';
+import { healthAllowance } from '@/lib/pay/allowances';
 import { type ContractorRowResult, calcContractorRow, type MiscItem } from '@/lib/pay/calc';
 import type { Holiday } from '@/lib/pay/holidays';
 import { type RateRow, resolveRate } from '@/lib/pay/rates';
@@ -54,6 +55,9 @@ export const fullName = (w: RosterRow['worker']): string =>
 export type AttributionResult = {
   /** Σ (tracked + pto) seconds per resolved worker. */
   secondsByWorker: Map<string, number>;
+  /** Σ (tracked + pto) seconds per resolved worker, broken down by work_date.
+   *  Used by the date-aware PH gross (F4) when a rate change lands mid-period. */
+  secondsByWorkerByDate: Map<string, Map<string, number>>;
   /** Distinct work dates with any positive time, per worker. */
   daysByWorker: Map<string, Set<string>>;
   /** Approved rows whose contractor couldn't be resolved (source names). */
@@ -88,6 +92,7 @@ export const attributeTimeEntries = (
   const linked = new Set(roster.map((r) => r.workerId));
 
   const secondsByWorker = new Map<string, number>();
+  const secondsByWorkerByDate = new Map<string, Map<string, number>>();
   const daysByWorker = new Map<string, Set<string>>();
   const unattributed = new Set<string>();
   const unlinked = new Set<string>();
@@ -106,6 +111,9 @@ export const attributeTimeEntries = (
     }
     const secs = (Number(t.trackedSeconds) || 0) + (Number(t.ptoSeconds) || 0);
     secondsByWorker.set(wid, (secondsByWorker.get(wid) ?? 0) + secs);
+    const byDate = secondsByWorkerByDate.get(wid) ?? new Map<string, number>();
+    byDate.set(t.workDate, (byDate.get(t.workDate) ?? 0) + secs);
+    secondsByWorkerByDate.set(wid, byDate);
     if (secs > 0) {
       const days = daysByWorker.get(wid) ?? new Set<string>();
       days.add(t.workDate);
@@ -115,10 +123,37 @@ export const attributeTimeEntries = (
 
   return {
     secondsByWorker,
+    secondsByWorkerByDate,
     daysByWorker,
     unattributed: [...unattributed],
     unlinkedWorkerIds: [...unlinked],
   };
+};
+
+/**
+ * F4: date-aware per-unit gross for PH/PS. Sums Σ rate(date) × units(date)
+ * ONLY when the worker has ≥2 distinct non-null rates across the dates worked
+ * (a genuine mid-period rate change). Returns undefined in every other case so
+ * the engine falls back to its single-rate `rate × totalUnits` product
+ * (byte-for-byte parity). `unitsByDate` is HOURS per date for PH, session units
+ * per date for PS.
+ */
+const dateAwarePerUnitGross = (
+  rates: readonly RateRow[],
+  workerId: string,
+  unitsByDate: ReadonlyMap<string, number> | undefined,
+): Centavos | undefined => {
+  if (!unitsByDate || unitsByDate.size === 0) return undefined;
+  const distinct = new Set<number>();
+  let total = zeroCentavos();
+  for (const [date, units] of unitsByDate) {
+    if (!(units > 0)) continue;
+    const r = resolveRate(rates, workerId, date, date);
+    if (r === null) return undefined; // partial-null ⇒ defer to single-rate behavior
+    distinct.add(r);
+    total = addMinor(total, mulRatioMinor(r, units));
+  }
+  return distinct.size >= 2 ? total : undefined;
 };
 
 /* ---------- statement building ---------- */
@@ -147,6 +182,9 @@ export type BuildStatementsArgs = {
   holidays?: readonly Holiday[];
   /** Σ approved session units in the period per worker (PS pay). */
   sessionsByWorker?: ReadonlyMap<string, number>;
+  /** Approved session units per worker broken down by session_date (PS) — used
+   *  by the date-aware gross (F4) when a rate change lands mid-period. */
+  sessionUnitsByWorkerByDate?: ReadonlyMap<string, ReadonlyMap<string, number>>;
 };
 
 /** One engine pass per attributed worker — the heart of legacy `calculate()`. */
@@ -159,6 +197,22 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     const link = byId.get(workerId);
     if (!link) return; // already surfaced as unlinked by attribution
     const w = link.worker;
+    // F4: for PH/PS, compute a date-aware gross when the rate changed mid-period
+    // (otherwise undefined → engine uses the single-rate product, parity).
+    let perUnitGrossOverride: Centavos | undefined;
+    if (link.contract === 'PH') {
+      const secsByDate = args.attribution.secondsByWorkerByDate.get(workerId);
+      const hoursByDate = secsByDate
+        ? new Map([...secsByDate].map(([d, s]) => [d, s / 3600]))
+        : undefined;
+      perUnitGrossOverride = dateAwarePerUnitGross(args.rates, workerId, hoursByDate);
+    } else if (link.contract === 'PS') {
+      perUnitGrossOverride = dateAwarePerUnitGross(
+        args.rates,
+        workerId,
+        args.sessionUnitsByWorkerByDate?.get(workerId),
+      );
+    }
     const result = calcContractorRow({
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
@@ -166,6 +220,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       periodStart: args.periodStart,
       periodEnd: args.periodEnd,
       rate: resolveRate(args.rates, workerId, args.periodStart, args.periodEnd),
+      ...(perUnitGrossOverride !== undefined ? { perUnitGrossOverride } : {}),
       hireDate: w.hireDate,
       healthAllowanceEligible: w.healthAllowanceEligible,
       thirteenthMonthEligible: w.thirteenthMonthEligible,
@@ -198,6 +253,18 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       if (processed.has(workerId) || units <= 0) continue;
       if (byId.get(workerId)?.contract !== 'PS') continue;
       build(workerId, 0);
+    }
+  }
+  // F7: an HA-eligible worker whose hire anniversary lands in THIS period must
+  // get a statement row even with zero approved time — otherwise the once-a-year
+  // ₱20k health allowance is silently lost (no carry-forward). calcContractorRow
+  // pays HA on a zero-time row (gross 0 + HA) as long as the worker has a rate.
+  if (args.includeHealthAllowance ?? true) {
+    for (const r of args.roster) {
+      if (processed.has(r.workerId)) continue;
+      if (!r.worker.healthAllowanceEligible) continue;
+      if (healthAllowance(r.worker.hireDate, args.periodStart, args.periodEnd) <= 0) continue;
+      build(r.workerId, 0);
     }
   }
 

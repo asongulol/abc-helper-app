@@ -6,7 +6,13 @@
  * effective_end] validity; an open rate has effective_end = null.
  */
 
+import { isoToUtcMs, utcMsToIso } from '@/lib/dates/periods';
 import { type Centavos, centavos, majorToMinor } from '@/lib/money';
+
+const DAY_MS = 86_400_000;
+
+/** The ISO date one day before `date` (UTC-day based). */
+const dayBefore = (date: string): string => utcMsToIso(isoToUtcMs(date) - DAY_MS);
 
 export type RateRow = {
   workerId: string;
@@ -61,6 +67,11 @@ export type RateUpsertPlan =
  *  2. otherwise close any open rate whose effective_start is STRICTLY before
  *     the new date (never retro-close a future-dated rate), then
  *  3. insert the new rate (period_basis 'semi_monthly').
+ *
+ * F9: the prior rate is closed at `effectiveStart − 1 day` (exclusive), so the
+ * old and new rows never both cover the boundary day. resolveRate's
+ * effective_end test is inclusive (>= periodStart), so the old rate still
+ * covers up to and including its last day.
  */
 export const planRateUpsert = (
   existing: readonly {
@@ -81,7 +92,7 @@ export const planRateUpsert = (
     };
   return {
     kind: 'close-and-insert',
-    closeBefore: effectiveStart,
+    closeBefore: dayBefore(effectiveStart),
     amountPhp,
     effectiveStart,
   };

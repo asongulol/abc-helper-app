@@ -104,6 +104,25 @@ export interface TransformResult {
     companyId: string;
     hubstaffUserId: number;
   }>;
+  /**
+   * F3: decided (approved/rejected) days whose freshly-pulled Hubstaff seconds
+   * DIFFER from the frozen stored value. The row is intentionally NOT
+   * overwritten (the decided-row invariant), but the divergence is surfaced so
+   * an admin can decide whether to re-open + correct it. Empty in the common
+   * case (no decided day changed).
+   */
+  divergences: TransformDivergence[];
+}
+
+/** A decided day whose stored seconds no longer match Hubstaff (F3). */
+export interface TransformDivergence {
+  workerId: string | null;
+  sourceName: string;
+  workDate: string;
+  storedTracked: number;
+  storedPto: number;
+  incomingTracked: number;
+  incomingPto: number;
 }
 
 // ─── Decided rows (for skip-decided logic) ────────────────────────────────────
@@ -120,4 +139,7 @@ export interface ExistingDecidedEntry {
   work_date: string;
   /** 'pending' | 'approved' | 'rejected' */
   approval: string;
+  /** Stored seconds — used for F3 divergence detection on decided days. */
+  tracked_seconds?: number;
+  pto_seconds?: number;
 }

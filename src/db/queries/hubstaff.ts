@@ -116,7 +116,7 @@ export const fetchExistingDecided = async (
 
   const { data, error } = await db
     .from('time_entries')
-    .select('company_id,worker_id,source_name,work_date,approval')
+    .select('company_id,worker_id,source_name,work_date,approval,tracked_seconds,pto_seconds')
     .in('company_id', companyIds)
     .gte('work_date', start)
     .lte('work_date', stop);
@@ -128,6 +128,8 @@ export const fetchExistingDecided = async (
     source_name: r.source_name,
     work_date: r.work_date,
     approval: r.approval,
+    tracked_seconds: Number(r.tracked_seconds ?? 0),
+    pto_seconds: Number(r.pto_seconds ?? 0),
   }));
 };
 

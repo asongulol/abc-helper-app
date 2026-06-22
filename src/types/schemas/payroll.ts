@@ -5,6 +5,7 @@
  */
 
 import { z } from 'zod';
+import { periodFor } from '@/lib/dates/periods';
 
 export const IsoDateSchema = z
   .string()
@@ -35,13 +36,32 @@ export const RateSaveSchema = z.object({
 });
 export type RateSaveInput = z.infer<typeof RateSaveSchema>;
 
-/** Batch calculate request (legacy `calculate`/`calcBatch`). */
+/**
+ * Batch calculate request (legacy `calculate`/`calcBatch`).
+ *
+ * F11: includeThirteenth defaults to false to match the UI (the 13th-month
+ * accrual is an explicit, opt-in year-end run; a default of true would have any
+ * caller that omits the flag over-accrue on every period).
+ *
+ * New-3: periodStart/periodEnd must be a canonical semi-monthly period
+ * (1–15 or 16–EOM). Arbitrary/overlapping ranges would create distinct
+ * pay_periods that each pull the shared work_dates and double-pay them.
+ */
 export const CalculateDraftSchema = PeriodKeySchema.extend({
   payDate: IsoDateSchema,
   includeHealthAllowance: z.boolean().default(true),
-  includeThirteenth: z.boolean().default(true),
+  includeThirteenth: z.boolean().default(false),
   /** PHP per USD, display reference only. */
   fxRate: z.number().positive().optional(),
+}).superRefine((val, ctx) => {
+  const canonical = periodFor(val.periodStart);
+  if (canonical.start !== val.periodStart || canonical.end !== val.periodEnd) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Period must be a semi-monthly range (expected ${canonical.start} → ${canonical.end}).`,
+      path: ['periodEnd'],
+    });
+  }
 });
 export type CalculateDraftInput = z.infer<typeof CalculateDraftSchema>;
 
@@ -72,6 +92,14 @@ export const UpdatePaymentRowSchema = z.object({
   fxRate: z.number().positive().optional(),
 });
 export type UpdatePaymentRowInput = z.infer<typeof UpdatePaymentRowSchema>;
+
+/** F6: restore a recalc undo snapshot (full payment rows captured pre-recalc). */
+export const RestoreSnapshotSchema = z.object({
+  companyId: z.string().uuid(),
+  periodId: z.string().uuid(),
+  snapshot: z.array(z.record(z.string(), z.unknown())),
+});
+export type RestoreSnapshotInput = z.infer<typeof RestoreSnapshotSchema>;
 
 export const DeleteStatementSchema = z.object({
   paymentId: z.string().uuid(),

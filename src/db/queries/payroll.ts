@@ -38,6 +38,29 @@ export const fetchApprovedTime = async (
   }));
 };
 
+/**
+ * Count time_entries still awaiting approval (approval='pending') in
+ * [start, end] for a company. Used by lockPeriod to refuse locking a period
+ * that still has unapproved hours — those hours are invisible to
+ * fetchApprovedTime and would be silently underpaid (review finding F2).
+ */
+export const countPendingTime = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  end: string,
+): Promise<number> => {
+  const { count, error } = await db
+    .from('time_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .gte('work_date', start)
+    .lte('work_date', end)
+    .eq('approval', 'pending');
+  if (error) throw new Error(`pending time count: ${error.message}`);
+  return count ?? 0;
+};
+
 /** Company roster: links + worker payroll fields (legacy step 2). */
 export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[]> => {
   const { data, error } = await db
@@ -109,6 +132,38 @@ export const fetchSessionUnitsByWorker = async (
   for (const r of data ?? []) {
     if (!r.worker_id) continue;
     out.set(r.worker_id, (out.get(r.worker_id) ?? 0) + (Number(r.units) || 0));
+  }
+  return out;
+};
+
+/**
+ * Approved session units per worker broken down by session_date, for PS
+ * date-aware gross (F4). Same scope/approval rules as
+ * {@link fetchSessionUnitsByWorker}; the per-worker total is just the sum of a
+ * worker's date buckets.
+ */
+export const fetchSessionUnitsByWorkerByDate = async (
+  db: Db,
+  workerIds: string[],
+  from: string,
+  to: string,
+): Promise<Map<string, Map<string, number>>> => {
+  const out = new Map<string, Map<string, number>>();
+  if (workerIds.length === 0) return out;
+  const { data, error } = await db
+    .from('service_sessions')
+    .select('worker_id, session_date, units')
+    .in('worker_id', workerIds)
+    .eq('approval', 'approved')
+    .gte('session_date', from)
+    .lte('session_date', to)
+    .limit(100000);
+  if (error) throw new Error(`session units by date: ${error.message}`);
+  for (const r of data ?? []) {
+    if (!r.worker_id || !r.session_date) continue;
+    const byDate = out.get(r.worker_id) ?? new Map<string, number>();
+    byDate.set(r.session_date, (byDate.get(r.session_date) ?? 0) + (Number(r.units) || 0));
+    out.set(r.worker_id, byDate);
   }
   return out;
 };
@@ -205,6 +260,73 @@ export const upsertDraftPayments = async (
     .from('payments')
     .upsert(rows, { onConflict: 'pay_period_id,worker_id' });
   if (error) throw new Error(`payments upsert: ${error.message}`);
+};
+
+/**
+ * Delete draft payment rows for an OPEN period whose worker is NOT in
+ * `keepWorkerIds`. Used by the recalc path so that retracting a worker's
+ * approved time and recalculating removes their stale payment row instead of
+ * leaving it payable (review finding F5). An empty keep-set deletes ALL rows
+ * for the period (no payable workers remain). Returns the number deleted.
+ *
+ * Caller must guarantee the period is open (the only payments trigger that
+ * enforces period state guards INSERT/UPDATE, not DELETE).
+ */
+export const pruneDraftPaymentsExcept = async (
+  db: Db,
+  payPeriodId: string,
+  keepWorkerIds: readonly string[],
+): Promise<number> => {
+  let q = db.from('payments').delete().eq('pay_period_id', payPeriodId);
+  if (keepWorkerIds.length > 0) {
+    const list = keepWorkerIds.map((w) => `"${w}"`).join(',');
+    q = q.not('worker_id', 'in', `(${list})`);
+  }
+  const { data, error } = await q.select('id');
+  if (error) throw new Error(`prune draft payments: ${error.message}`);
+  return (data ?? []).length;
+};
+
+/** A full payments row captured for the recalc undo snapshot (F6). */
+export type PaymentSnapshotRow = Database['public']['Tables']['payments']['Row'];
+
+/**
+ * Snapshot every payments row for a period verbatim (all columns) so a recalc
+ * can be undone (F6). Returns [] when the period has no rows yet.
+ */
+export const fetchPaymentRowsForRestore = async (
+  db: Db,
+  payPeriodId: string,
+): Promise<PaymentSnapshotRow[]> => {
+  const { data, error } = await db.from('payments').select('*').eq('pay_period_id', payPeriodId);
+  if (error) throw new Error(`payment snapshot: ${error.message}`);
+  return data ?? [];
+};
+
+/**
+ * Restore a previously-captured snapshot: delete the period's current rows and
+ * re-insert the snapshot verbatim (F6 undo). company_id/pay_period_id are forced
+ * to the verified values so a client can't inject rows into another period.
+ * Caller must verify the period is OPEN (the period-state trigger blocks inserts
+ * otherwise). Returns the number of rows restored.
+ */
+export const restorePaymentRows = async (
+  db: Db,
+  companyId: string,
+  payPeriodId: string,
+  rows: readonly PaymentSnapshotRow[],
+): Promise<number> => {
+  const { error: delError } = await db.from('payments').delete().eq('pay_period_id', payPeriodId);
+  if (delError) throw new Error(`restore (clear): ${delError.message}`);
+  if (rows.length === 0) return 0;
+  const sanitized = rows.map((r) => ({
+    ...r,
+    company_id: companyId,
+    pay_period_id: payPeriodId,
+  }));
+  const { error: insError } = await db.from('payments').insert(sanitized);
+  if (insError) throw new Error(`restore (insert): ${insError.message}`);
+  return sanitized.length;
 };
 
 export type SavedPayment = {

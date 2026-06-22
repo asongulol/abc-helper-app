@@ -471,6 +471,65 @@ describe('transformActivities', () => {
     expect(result.rows).toHaveLength(1);
   });
 
+  it('F3: records a divergence when a decided day’s Hubstaff seconds changed (still no row)', () => {
+    const acts: HubstaffDailyActivity[] = [makeActivity(1, '2026-06-01', 10800, 10800)];
+    const decided: ExistingDecidedEntry[] = [
+      {
+        company_id: COMPANY_ID,
+        worker_id: WORKER_ID_A,
+        source_name: 'Alice Smith',
+        work_date: '2026-06-01',
+        approval: 'approved',
+        tracked_seconds: 7200, // approved at 2h; Hubstaff now reports 3h
+        pto_seconds: 0,
+      },
+    ];
+    const result = runTransform({ acts, decided });
+    expect(result.rows).toHaveLength(0); // never overwrite a decided row
+    expect(result.divergences).toHaveLength(1);
+    expect(result.divergences[0]).toMatchObject({
+      workDate: '2026-06-01',
+      storedTracked: 7200,
+      incomingTracked: 10800,
+    });
+  });
+
+  it('F3: no divergence when a decided day’s seconds are unchanged', () => {
+    const acts: HubstaffDailyActivity[] = [makeActivity(1, '2026-06-01', 7200, 7200)];
+    const decided: ExistingDecidedEntry[] = [
+      {
+        company_id: COMPANY_ID,
+        worker_id: WORKER_ID_A,
+        source_name: 'Alice Smith',
+        work_date: '2026-06-01',
+        approval: 'approved',
+        tracked_seconds: 7200,
+        pto_seconds: 0,
+      },
+    ];
+    const result = runTransform({ acts, decided });
+    expect(result.rows).toHaveLength(0);
+    expect(result.divergences).toHaveLength(0);
+  });
+
+  it('F3: pending days are not divergence-checked (they upsert normally)', () => {
+    const acts: HubstaffDailyActivity[] = [makeActivity(1, '2026-06-01', 10800, 10800)];
+    const decided: ExistingDecidedEntry[] = [
+      {
+        company_id: COMPANY_ID,
+        worker_id: WORKER_ID_A,
+        source_name: 'Alice Smith',
+        work_date: '2026-06-01',
+        approval: 'pending',
+        tracked_seconds: 7200,
+        pto_seconds: 0,
+      },
+    ];
+    const result = runTransform({ acts, decided });
+    expect(result.rows).toHaveLength(1); // pending refreshes
+    expect(result.divergences).toHaveLength(0);
+  });
+
   it('resolves canonical source_name from prior time_entries', () => {
     const canonical = new Map([[`${COMPANY_ID}|${WORKER_ID_A}`, 'alice smith']]);
     const acts: HubstaffDailyActivity[] = [makeActivity(1, '2026-06-01', 7200, 7200)];

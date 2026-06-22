@@ -12,10 +12,13 @@ import { createServiceClient } from '@/db/clients/service';
 import {
   fetchApprovedTime,
   fetchLastPayoutMethods,
+  fetchPaymentRowsForRestore,
   fetchRates,
   fetchRoster,
-  fetchSessionUnitsByWorker,
+  fetchSessionUnitsByWorkerByDate,
   findPeriod,
+  type PaymentSnapshotRow,
+  pruneDraftPaymentsExcept,
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
@@ -37,13 +40,20 @@ export type CalculateDraftResult = {
   unlinkedWorkerIds: string[];
   /** Rows skipped from persistence because the worker has no rate (net null). */
   skippedNoRate: string[];
+  /**
+   * F6: the period's payment rows as they were BEFORE this recalc (verbatim),
+   * so the UI can offer an Undo that restores manual overrides/adjustments the
+   * recalc discarded. Empty on a first calculate.
+   */
+  priorSnapshot: PaymentSnapshotRow[];
 };
 
 /**
  * Rebuild a period's statements purely from tracked hours and persist them as
- * DRAFT. Refuses to touch a locked/paid period. NOTE the legacy semantics this
- * preserves: recalculating discards manual overrides/adjustments — the UI layer
- * owns the warning + undo snapshot before invoking this.
+ * DRAFT. Refuses to touch a locked/paid period. Recalculating discards manual
+ * overrides/adjustments for rebuilt rows and prunes rows whose worker no longer
+ * has approved time (F5); the UI owns the typed-word warning, and the prior rows
+ * are returned as `priorSnapshot` so the caller can offer an Undo (F6).
  */
 export const calculateDraft = async (input: CalculateDraftInput): Promise<CalculateDraftResult> => {
   const db = await createServerSupabase();
@@ -66,12 +76,19 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   // employer-side and must see ALL of a worker's approved client sessions
   // regardless of which admin runs it — read via the service role behind the
   // caller's already-verified admin identity (ADR-0004; see src/server/company.ts).
-  const sessionsByWorker = await fetchSessionUnitsByWorker(
+  const sessionUnitsByWorkerByDate = await fetchSessionUnitsByWorkerByDate(
     createServiceClient(),
     roster.map((r) => r.workerId),
     input.periodStart,
     input.periodEnd,
   );
+  // Per-worker totals derived from the date buckets (PS gross + PS-only build).
+  const sessionsByWorker = new Map<string, number>();
+  for (const [workerId, byDate] of sessionUnitsByWorkerByDate) {
+    let total = 0;
+    for (const units of byDate.values()) total += units;
+    sessionsByWorker.set(workerId, total);
+  }
 
   const attribution = attributeTimeEntries(entries, roster);
   const rows = buildStatements({
@@ -84,6 +101,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     includeHealthAllowance: input.includeHealthAllowance,
     includeThirteenth: input.includeThirteenth,
     sessionsByWorker,
+    sessionUnitsByWorkerByDate,
   });
 
   const period = await upsertOpenPeriod(
@@ -94,9 +112,25 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     input.payDate,
   );
 
+  // F6: snapshot the prior rows (incl. manual overrides) before we overwrite
+  // them, so the caller can offer an Undo. Captured after upsertOpenPeriod so
+  // period.id is known; before prune/upsert so the old values are still present.
+  const priorSnapshot = await fetchPaymentRowsForRestore(db, period.id);
+
   const drafts = rows
     .map((r) => toPaymentDraft(r, { fxRate: input.fxRate }))
     .filter((d): d is NonNullable<typeof d> => d !== null);
+
+  // F5: recalc is authoritative for an OPEN period — remove payment rows for
+  // workers no longer in the result (their approved time was retracted) so a
+  // stale row can't be locked/paid. Runs before the upsert; the period is
+  // guaranteed open by the guard above.
+  await pruneDraftPaymentsExcept(
+    db,
+    period.id,
+    drafts.map((d) => d.worker_id),
+  );
+
   await upsertDraftPayments(db, input.companyId, period.id, drafts);
 
   await logEvent({
@@ -112,5 +146,6 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     unattributed: attribution.unattributed,
     unlinkedWorkerIds: attribution.unlinkedWorkerIds,
     skippedNoRate: rows.filter((r) => r.result.net === null).map((r) => r.name),
+    priorSnapshot,
   };
 };

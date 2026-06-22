@@ -27,6 +27,7 @@ import {
   deleteStatement,
   getSavedPayments,
   lockPeriod,
+  restorePaymentsSnapshot,
   unlockPeriod,
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
@@ -130,6 +131,13 @@ export const PayrollShell = ({
   const [rows, setRows] = useState<EditableRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const suppressSave = useRef(false);
+
+  // F6: snapshot of the pre-recalc rows, so a recalc that overwrote manual
+  // overrides/adjustments can be undone while the period is still open.
+  const [undoSnapshot, setUndoSnapshot] = useState<{
+    periodId: string;
+    rows: unknown[];
+  } | null>(null);
 
   // Warnings
   const [unattributed, setUnattributed] = useState<string[]>([]);
@@ -246,6 +254,13 @@ export const PayrollShell = ({
       setUnattributed(ua);
       setUnlinked(ul);
       setSkippedNoRate(snr);
+      // F6: keep the pre-recalc snapshot so the user can undo if this recalc
+      // overwrote manual overrides. Only offer it when there was something to lose.
+      setUndoSnapshot(
+        res.data.priorSnapshot.length > 0
+          ? { periodId: res.data.periodId, rows: res.data.priorSnapshot }
+          : null,
+      );
       if (ua.length > 0 || ul.length > 0 || snr.length > 0) {
         notify('Calculation complete with warnings — see banners above.', {
           type: 'warn',
@@ -256,6 +271,30 @@ export const PayrollShell = ({
       // Reload saved rows to reflect the newly persisted draft
       const refreshed = periods;
       setPeriods(refreshed);
+      await loadSaved();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // F6: restore the snapshot captured before the last recalc.
+  const handleUndoRecalc = async () => {
+    if (!undoSnapshot) return;
+    setBusy(true);
+    try {
+      const res = await restorePaymentsSnapshot({
+        companyId,
+        periodId: undoSnapshot.periodId,
+        snapshot: undoSnapshot.rows,
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error', persistent: true });
+        return;
+      }
+      setUndoSnapshot(null);
+      notify(`Recalculation undone — restored ${res.data.restored} statement(s).`, {
+        type: 'success',
+      });
       await loadSaved();
     } finally {
       setBusy(false);
@@ -737,6 +776,17 @@ export const PayrollShell = ({
           >
             {busy ? 'Working…' : 'Calculate / Recalculate'}
           </button>
+          {undoSnapshot && currentPeriod?.state === 'open' && (
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={handleUndoRecalc}
+              title="Restore the statements as they were before the last recalculation, including manual overrides and adjustments."
+            >
+              ↩ Undo recalculation
+            </button>
+          )}
         </div>
 
         {/* Draft table */}
