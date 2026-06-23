@@ -1,6 +1,3 @@
-// Auto-generated from the ABC Supabase schema (supabase gen types) — DO NOT EDIT.
-// Regenerate via the Supabase MCP/CLI when migrations change.
-
 export type Json =
   | string
   | number
@@ -233,6 +230,7 @@ export type Database = {
       companies: {
         Row: {
           address: string | null
+          api_payouts_enabled: boolean
           contacts: Json
           created_at: string
           hubstaff_org_id: number | null
@@ -246,6 +244,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          api_payouts_enabled?: boolean
           contacts?: Json
           created_at?: string
           hubstaff_org_id?: number | null
@@ -259,6 +258,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          api_payouts_enabled?: boolean
           contacts?: Json
           created_at?: string
           hubstaff_org_id?: number | null
@@ -368,6 +368,7 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
+          defer_until: string | null
           expires_on: string | null
           file_size_bytes: number | null
           id: string
@@ -387,6 +388,7 @@ export type Database = {
         Insert: {
           company_id?: string | null
           created_at?: string
+          defer_until?: string | null
           expires_on?: string | null
           file_size_bytes?: number | null
           id?: string
@@ -406,6 +408,7 @@ export type Database = {
         Update: {
           company_id?: string | null
           created_at?: string
+          defer_until?: string | null
           expires_on?: string | null
           file_size_bytes?: number | null
           id?: string
@@ -928,8 +931,13 @@ export type Database = {
         Row: {
           bonus_php: number
           company_id: string
+          contract: string | null
           created_at: string
+          deduction_php: number
           expected_hours: number | null
+          fund_error: string | null
+          funded_at: string | null
+          funded_by: string | null
           fx_rate: number | null
           gross_php: number
           health_allowance_php: number
@@ -939,6 +947,7 @@ export type Database = {
           note: string | null
           original_net_php: number | null
           paid_at: string | null
+          pay_basis: string | null
           pay_period_id: string
           payout_amount: number | null
           payout_currency: string
@@ -946,9 +955,9 @@ export type Database = {
           pdd_lunch_php: number
           performance_ratio: number | null
           rate_php: number | null
-          shortfall_php: number
           status: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php: number
+          units: number | null
           wise_dates: Json | null
           wise_locked_at: string | null
           wise_transfer_id: string | null
@@ -958,8 +967,13 @@ export type Database = {
         Insert: {
           bonus_php?: number
           company_id: string
+          contract?: string | null
           created_at?: string
+          deduction_php?: number
           expected_hours?: number | null
+          fund_error?: string | null
+          funded_at?: string | null
+          funded_by?: string | null
           fx_rate?: number | null
           gross_php?: number
           health_allowance_php?: number
@@ -969,6 +983,7 @@ export type Database = {
           note?: string | null
           original_net_php?: number | null
           paid_at?: string | null
+          pay_basis?: string | null
           pay_period_id: string
           payout_amount?: number | null
           payout_currency?: string
@@ -976,9 +991,9 @@ export type Database = {
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
-          shortfall_php?: number
           status?: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php?: number
+          units?: number | null
           wise_dates?: Json | null
           wise_locked_at?: string | null
           wise_transfer_id?: string | null
@@ -988,8 +1003,13 @@ export type Database = {
         Update: {
           bonus_php?: number
           company_id?: string
+          contract?: string | null
           created_at?: string
+          deduction_php?: number
           expected_hours?: number | null
+          fund_error?: string | null
+          funded_at?: string | null
+          funded_by?: string | null
           fx_rate?: number | null
           gross_php?: number
           health_allowance_php?: number
@@ -999,6 +1019,7 @@ export type Database = {
           note?: string | null
           original_net_php?: number | null
           paid_at?: string | null
+          pay_basis?: string | null
           pay_period_id?: string
           payout_amount?: number | null
           payout_currency?: string
@@ -1006,9 +1027,9 @@ export type Database = {
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
-          shortfall_php?: number
           status?: Database["public"]["Enums"]["payment_status"]
           thirteenth_month_php?: number
+          units?: number | null
           wise_dates?: Json | null
           wise_locked_at?: string | null
           wise_transfer_id?: string | null
@@ -1330,6 +1351,7 @@ export type Database = {
           hubstaff_name: string | null
           hubstaff_user_id: number | null
           id: string
+          pay_basis: string | null
           role: string | null
           session_rate_usd: number | null
           started_on: string | null
@@ -1345,6 +1367,7 @@ export type Database = {
           hubstaff_name?: string | null
           hubstaff_user_id?: number | null
           id?: string
+          pay_basis?: string | null
           role?: string | null
           session_rate_usd?: number | null
           started_on?: string | null
@@ -1360,6 +1383,7 @@ export type Database = {
           hubstaff_name?: string | null
           hubstaff_user_id?: number | null
           id?: string
+          pay_basis?: string | null
           role?: string | null
           session_rate_usd?: number | null
           started_on?: string | null
@@ -1598,6 +1622,7 @@ export type Database = {
       my_admin_company_ids: { Args: never; Returns: string[] }
       my_tools_pending: { Args: never; Returns: boolean }
       my_worker_id: { Args: never; Returns: string }
+      payments_misc_items_ok: { Args: { items: Json }; Returns: boolean }
       reveal_worker_tools: { Args: { p_worker_id: string }; Returns: Json }
       set_time_entry_activity: { Args: { p: Json }; Returns: number }
       set_tools_requested: {
@@ -1608,6 +1633,7 @@ export type Database = {
         Args: { p_creds: Json; p_worker_id: string }
         Returns: undefined
       }
+      worker_has_payment_in_period: { Args: { pid: string }; Returns: boolean }
     }
     Enums: {
       agreement_kind:

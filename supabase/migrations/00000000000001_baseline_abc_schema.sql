@@ -462,7 +462,7 @@ begin
   if new.pdd_lunch_php        is distinct from old.pdd_lunch_php        then changed_cols := array_append(changed_cols,'pdd_lunch_php'); end if;
   if new.bonus_php            is distinct from old.bonus_php            then changed_cols := array_append(changed_cols,'bonus_php'); end if;
   if new.thirteenth_month_php is distinct from old.thirteenth_month_php then changed_cols := array_append(changed_cols,'thirteenth_month_php'); end if;
-  if new.shortfall_php        is distinct from old.shortfall_php        then changed_cols := array_append(changed_cols,'shortfall_php'); end if;
+  if new.deduction_php        is distinct from old.deduction_php        then changed_cols := array_append(changed_cols,'deduction_php'); end if;
   if new.net_php              is distinct from old.net_php              then changed_cols := array_append(changed_cols,'net_php'); end if;
   if new.original_net_php     is distinct from old.original_net_php     then changed_cols := array_append(changed_cols,'original_net_php'); end if;
   if new.payout_currency      is distinct from old.payout_currency      then changed_cols := array_append(changed_cols,'payout_currency'); end if;
@@ -871,7 +871,7 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
     "gross_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "health_allowance_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "thirteenth_month_php" numeric(12,2) DEFAULT 0 NOT NULL,
-    "shortfall_php" numeric(12,2) DEFAULT 0 NOT NULL,
+    "deduction_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "net_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "fx_rate" numeric(14,6),
     "payout_currency" "text" DEFAULT 'USD'::"text" NOT NULL,
@@ -895,7 +895,7 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
 ALTER TABLE "public"."payments" OWNER TO "postgres";
 
 
-COMMENT ON COLUMN "public"."payments"."shortfall_php" IS 'Performance shortfall (rate − gross). INFORMATIONAL ONLY — never subtracted from net_php. Renamed from the legacy "deduction_php", whose name wrongly implied money was withheld. Real, subtracted deductions live in misc_items (kind=deduction).';
+COMMENT ON COLUMN "public"."payments"."deduction_php" IS 'Performance shortfall (rate − gross). INFORMATIONAL ONLY — never subtracted from net_php. Despite the legacy name "deduction_php" (kept to match the shared prod DB the original apps own), this is NOT a withholding. Surfaced internally/UI as "performance shortfall". Real, subtracted deductions live in misc_items (kind=deduction).';
 
 
 CREATE TABLE IF NOT EXISTS "public"."pending_admins" (

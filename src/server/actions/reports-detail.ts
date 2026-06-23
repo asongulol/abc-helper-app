@@ -167,7 +167,7 @@ type PaymentJoin = {
   pdd_lunch_php: number;
   bonus_php: number;
   thirteenth_month_php: number;
-  shortfall_php: number;
+  deduction_php: number;
   misc_items: unknown;
   net_php: number;
   fx_rate: number | null;
@@ -188,7 +188,7 @@ type PaymentJoin = {
 
 const PAYMENT_SELECT =
   'worker_id,worked_hours,rate_php,gross_php,health_allowance_php,pdd_lunch_php,' +
-  'bonus_php,thirteenth_month_php,shortfall_php,misc_items,net_php,fx_rate,status,payout_method,' +
+  'bonus_php,thirteenth_month_php,deduction_php,misc_items,net_php,fx_rate,status,payout_method,' +
   'pay_periods(period_start,period_end,pay_date,state),' +
   'workers(first_name,middle_name,last_name)';
 
@@ -283,7 +283,7 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
       lunch: Number(p.pdd_lunch_php || 0),
       bonus: Number(p.bonus_php || 0),
       t13: Number(p.thirteenth_month_php || 0),
-      perfShort: Number(p.shortfall_php || 0),
+      perfShort: Number(p.deduction_php || 0),
       miscEarn,
       miscDeduct,
       net: Number(p.net_php || 0),
@@ -334,7 +334,7 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
     g.lunch += Number(p.pdd_lunch_php || 0);
     g.bonus += Number(p.bonus_php || 0);
     g.misc += mi;
-    g.ded += Number(p.shortfall_php || 0);
+    g.ded += Number(p.deduction_php || 0);
     g.net += Number(p.net_php || 0);
     if (PAID(p.status)) g.paid += Number(p.net_php || 0);
     g.statements.push({
@@ -348,7 +348,7 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
       lunch: Number(p.pdd_lunch_php || 0),
       bonus: Number(p.bonus_php || 0),
       misc: mi,
-      ded: Number(p.shortfall_php || 0),
+      ded: Number(p.deduction_php || 0),
       net: Number(p.net_php || 0),
       status: p.status,
     });

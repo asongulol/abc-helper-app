@@ -45,7 +45,7 @@ The legacy `FEATURES.md` conflates three different things. Each item below is ta
 
 | # | Problem (§) | Fix |
 |---|---|---|
-| 1 | `deduction_php` is named "deduction" but is **never subtracted** (it's the perf shortfall; §5.8 flags it twice) | Use the separate `shortfall_php` the new `calc.ts` already emits; never reintroduce the misleading column/label |
+| 1 | `deduction_php` is named "deduction" but is **never subtracted** (it's the perf shortfall; §5.8 flags it twice) | ~~Use a separate `shortfall_php`~~ **Superseded 2026-06-22:** abc-helper-app now SHARES the originals' prod DB and must keep the column name `deduction_php`. The originals already label it honestly as "Perf short" (not "Deduction") and route real deductions through `misc_items`. So: keep the DB name `deduction_php`; surface it internally/UI as "performance shortfall". |
 | 2 | All edge functions deployed `--no-verify-jwt`, "in-code gate is the control" (§7.1) | Keep edge functions cron-only + secret-gated; verify JWT where possible; payroll mutations stay in server actions (ADR-0004) |
 | 3 | `worker_tools` stores contractors' **recoverable** 3rd-party passwords (§5.6/§7.2) | Redesign: one-time secure share (or drop). Do not store recoverable external credentials |
 | 4 | Avatars = 256px JPEG **data-URI in a TEXT column** (§3.1) | Store in the Supabase Storage bucket; keep only a URL/path |
@@ -90,7 +90,7 @@ Verified present and well-built in this repo:
 ## Phased plan (post-cutover)
 
 ### R1 — Correctness & safety (cheap, do regardless)
-- [x] Retire the misleading `deduction_php` concept; standardize on `shortfall_php` end-to-end (#1)
+- [x] ~~Standardize on `shortfall_php` end-to-end~~ **Reverted 2026-06-22 for shared-prod conformance:** DB column stays `deduction_php` (prod name); concept surfaced internally/UI as "performance shortfall" (#1)
 - [x] Lock down edge-function auth — cron-only + secret-gated, no blanket `--no-verify-jwt` (#2 — explicit `verify_jwt = false` + secret gate in config.toml)
 - [x] Capture all out-of-band schema in the baseline migration (#7 — verified: app_secrets, worker_tools, admin_users.name/can_countersign all present)
 - [x] Derive the employer from `companies.kind`; remove any hardcoded UUID (#5)

@@ -62,7 +62,7 @@ export const buildPaymentDetailCsv = (payments: readonly ReportPaymentRow[]): st
     '13th Month PHP',
     'PDD/Lunch PHP',
     'Bonus PHP',
-    'Shortfall PHP',
+    'Perf short PHP',
     'Net PHP',
     'Payout Method',
     'Status',

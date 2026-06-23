@@ -221,7 +221,7 @@ export const fetchReportPayments = async (
   const { data: pays, error: paye } = await db
     .from('payments')
     .select(
-      'id, worker_id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, payout_method, status, workers(first_name, middle_name, last_name)',
+      'id, worker_id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, workers(first_name, middle_name, last_name)',
     )
     .in('pay_period_id', periodIds)
     .eq('company_id', companyId)
@@ -246,7 +246,7 @@ export const fetchReportPayments = async (
       t13Centavos: Math.round(Number(p.thirteenth_month_php ?? 0) * 100),
       pddCentavos: Math.round(Number(p.pdd_lunch_php ?? 0) * 100),
       bonusCentavos: Math.round(Number(p.bonus_php ?? 0) * 100),
-      shortfallCentavos: Math.round(Number(p.shortfall_php ?? 0) * 100),
+      shortfallCentavos: Math.round(Number(p.deduction_php ?? 0) * 100),
       netCentavos: Math.round(Number(p.net_php ?? 0) * 100),
       payoutMethod: p.payout_method,
       status: p.status,

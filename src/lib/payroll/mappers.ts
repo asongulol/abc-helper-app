@@ -285,8 +285,12 @@ export type PaymentDraft = {
   thirteenth_month_php: number;
   pdd_lunch_php: number;
   bonus_php: number;
-  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
-  shortfall_php: number;
+  /**
+   * Informational performance shortfall (rate − gross); NOT subtracted from net.
+   * DB column is `deduction_php` (shared-prod name); surfaced internally/UI as
+   * "performance shortfall". Real, subtracted deductions live in misc_items.
+   */
+  deduction_php: number;
   net_php: number;
   misc_items: MiscItem[];
   fx_rate: number | null;
@@ -322,7 +326,7 @@ export const toPaymentDraft = (
     thirteenth_month_php: centavosToPhp(r.thirteenth),
     pdd_lunch_php: centavosToPhp(r.pddLunch),
     bonus_php: centavosToPhp(r.bonus),
-    shortfall_php: centavosToPhp(r.shortfall),
+    deduction_php: centavosToPhp(r.shortfall),
     net_php: centavosToPhp(r.net),
     misc_items: [],
     fx_rate: opts.fxRate ?? null,

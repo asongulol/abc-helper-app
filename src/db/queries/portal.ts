@@ -55,7 +55,7 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, payout_method, status, paid_at, pay_periods(period_start, period_end, pay_date)',
+      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, paid_at, pay_periods(period_start, period_end, pay_date)',
     )
     .eq('worker_id', workerId)
     .order('pay_period_id', { ascending: false });
@@ -71,7 +71,7 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
     bonusPhp: Number(p.bonus_php ?? 0),
-    shortfallPhp: Number(p.shortfall_php ?? 0),
+    shortfallPhp: Number(p.deduction_php ?? 0),
     netPhp: Number(p.net_php ?? 0),
     payoutMethod: p.payout_method,
     status: p.status,
