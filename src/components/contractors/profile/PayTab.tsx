@@ -1,5 +1,6 @@
 import type { RosterWorker } from '@/db/queries/workers';
 import type { WorkerEngagement } from '@/server/actions/contractors';
+import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
 import { RateCard } from '../RateCard';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
@@ -168,6 +169,25 @@ export function PayTab({
                   disabled={isPending}
                 />
               </Field>
+              {e.contract === 'PHS' && (
+                <Field id={`eng-basis-${e.companyId}`} label="Pay basis">
+                  <select
+                    id={`eng-basis-${e.companyId}`}
+                    value={e.payBasis ?? ''}
+                    onChange={(ev) =>
+                      updateEng(i, { payBasis: (ev.target.value || null) as PayBasis | null })
+                    }
+                    disabled={isPending}
+                  >
+                    <option value="">Select…</option>
+                    {PAY_BASIS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
               <Field id={`eng-status-${e.companyId}`} label="Status">
                 <select
                   id={`eng-status-${e.companyId}`}

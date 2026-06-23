@@ -242,7 +242,15 @@ now reads *and writes* `PHS` + `pay_basis`, keeping `PH`/`PS` only for paying le
 - **Validated**: `supabase db reset` 001→019 clean · `tsc` clean · **413/413 vitest** (incl. PHS=PH/PS
   parity, unset-basis safety, pull-in, no-13th) · biome clean.
 
-### ⏭ Also still pending (from §4C, unchanged): add the 3 repo-only objects the app uses
-(`coverage_targets`, `invoices.{amount_received_usd,payment_ref,received_on}`, `worker_tools.revealed_at`)
-to prod **additively** via reviewed SQL Editor, after grepping all three siblings. Decision: "Add to prod
-additively" (chosen). Not done yet — separate staged step.
+### 🟡  AWAITING MANUAL APPLY — additive prod objects (§4C)
+Sibling-grep done (2026-06-23): **0** references in any of the three live apps to `coverage_targets`,
+`invoices.{amount_received_usd,payment_ref,received_on}`, or `worker_tools.revealed_at` — so adding them
+is purely additive and cannot affect the originals. Reviewed script written:
+**`audit/prod-additive-conformance.sql`** — apply via Dashboard SQL Editor (idempotent; do NOT run via the
+migration CLI; do NOT append `rollback;`). **Out of scope (deliberately):** the worker-tools reveal RPCs
+(`reveal_worker_tools`, `my_tools_pending`) — prod's namesakes have different signatures the originals use,
+so only the additive `revealed_at` COLUMN is added; the functions need separate per-function review.
+
+### ✅ Engagements editor — pay-basis selector added
+The PayTab "Client engagements" editor now shows a pay-basis selector for any PHS engagement (it edits
+role/rate/status, not contract, so this lets a PHS engagement's basis be set/corrected there too).
