@@ -219,6 +219,9 @@ describe('calcContractorRow — PHS (shared-prod per hour / session via pay_basi
     expect(phs.shortfall).toBe(0);
     expect(phs.net).toBe(500_000);
     expect(phs.payBasisUnset).toBe(false);
+    // per_hour keeps its quantity in workedHours; payments.units stays null (parity).
+    expect(phs.units).toBeNull();
+    expect(ph.units).toBeNull();
   });
 
   it("PHS + pay_basis='per_session' is identical to legacy PS", () => {
@@ -240,6 +243,9 @@ describe('calcContractorRow — PHS (shared-prod per hour / session via pay_basi
     expect(phs.gross).toBe(ps.gross); // 480_000
     expect(phs.net).toBe(480_000);
     expect(phs.payBasisUnset).toBe(false);
+    // per_session stores the session count in payments.units (prod parity).
+    expect(phs.units).toBe(12);
+    expect(ps.units).toBe(12);
   });
 
   it('PHS with an UNSET pay_basis is paid NOTHING (never worked×rate) and is flagged', () => {

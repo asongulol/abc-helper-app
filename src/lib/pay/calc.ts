@@ -116,6 +116,11 @@ export type ContractorRowResult = {
    * "set the pay basis" instead of silently dropping the row.
    */
   payBasisUnset: boolean;
+  /**
+   * Approved session count for a per_session row (parity with payments.units);
+   * null for per_hour / salaried / unset (their quantity lives in workedHours).
+   */
+  units: number | null;
 };
 
 /** One contractor's pay statement for a period. */
@@ -167,8 +172,6 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     (input.includeHealthAllowance ?? true) && input.healthAllowanceEligible
       ? healthAllowance(input.hireDate, input.periodStart, input.periodEnd)
       : zeroCentavos();
-  // 13th-month is a salaried accrual on the period rate — skip for PH/PS, whose
-  // rate is per-unit (accruing on it would be meaningless).
   // 13th-month accrues on a salaried period rate only — never for a per-unit
   // (or unset) PHS/PH/PS engagement, whose rate is not a monthly salary.
   const t13 =
@@ -202,6 +205,9 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     misc,
     net,
     payBasisUnset,
+    // Parity with the originals' payments.units: the approved session COUNT for a
+    // per_session row, null otherwise (per_hour keeps its quantity in workedHours).
+    units: model === 'per_session' ? (input.sessionUnits ?? 0) : null,
   };
 };
 

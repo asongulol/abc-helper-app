@@ -17,8 +17,11 @@
 -- PH, per_session ≡ legacy PS; an unset pay_basis is paid NOTHING, never guessed).
 ALTER TYPE "public"."contract_type" ADD VALUE IF NOT EXISTS 'PHS';
 
--- payments: prod's funding-workflow + pay-basis columns (all nullable, app does
--- not yet read them; present so local rows round-trip identically to prod).
+-- payments: prod's funding-workflow + pay-basis columns (all nullable). The
+-- payroll engine WRITES contract, pay_basis, and units (session count for
+-- per_session rows) onto each payment for parity with the originals; the
+-- funding columns (funded_at/funded_by/fund_error) stay app-unwritten (the
+-- original apps own the Wise funding workflow).
 ALTER TABLE "public"."payments" ADD COLUMN IF NOT EXISTS "contract" text;
 ALTER TABLE "public"."payments" ADD COLUMN IF NOT EXISTS "pay_basis" text;
 ALTER TABLE "public"."payments" ADD COLUMN IF NOT EXISTS "units" numeric(12,2);

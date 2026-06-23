@@ -295,6 +295,8 @@ export type PaymentDraft = {
    *  are not frozen on a locked row — treat them as last-recalc, not immutable. */
   contract: string;
   pay_basis: string | null;
+  /** Approved session count for a per_session row (prod parity), null otherwise. */
+  units: number | null;
   expected_hours: number;
   worked_hours: number;
   performance_ratio: number;
@@ -338,6 +340,7 @@ export const toPaymentDraft = (
     worker_id: row.workerId,
     contract: row.contract,
     pay_basis: row.payBasis,
+    units: r.units,
     expected_hours: r.expectedHours,
     worked_hours: Number(r.workedHours.toFixed(2)),
     performance_ratio: Number(r.ratio.toFixed(4)),
