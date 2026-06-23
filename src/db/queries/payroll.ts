@@ -66,7 +66,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
   const { data, error } = await db
     .from('worker_companies')
     .select(
-      'worker_id, contract, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)',
+      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)',
     )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
@@ -75,6 +75,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
     return {
       workerId: l.worker_id,
       contract: l.contract,
+      payBasis: l.pay_basis ?? null,
       hubstaffName: l.hubstaff_name,
       linkStatus: l.status,
       worker: {
@@ -671,7 +672,7 @@ export const fetchPaymentDetail = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
+      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -693,7 +694,7 @@ export const fetchPaymentDetail = async (
     t13Php: Number(data.thirteenth_month_php ?? 0),
     pddPhp: Number(data.pdd_lunch_php ?? 0),
     bonusPhp: Number(data.bonus_php ?? 0),
-    shortfallPhp: Number(data.shortfall_php ?? 0),
+    shortfallPhp: Number(data.deduction_php ?? 0),
     netPhp: data.net_php,
     miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
     payoutMethod: data.payout_method,
@@ -712,7 +713,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, shortfall_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -732,7 +733,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
     bonusPhp: Number(p.bonus_php ?? 0),
-    shortfallPhp: Number(p.shortfall_php ?? 0),
+    shortfallPhp: Number(p.deduction_php ?? 0),
     netPhp: p.net_php,
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,

@@ -14,7 +14,7 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { seedOnboardingProgress } from '@/db/queries/onboarding';
-import { revealWorkerToolsOnce } from '@/db/queries/secrets';
+import { decryptWorkerTools } from '@/db/queries/secrets';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
@@ -401,10 +401,10 @@ export async function resendHireEmails(args: {
 }
 
 /**
- * Send tools credentials email — performs the contractor's ONE-TIME reveal via
- * the `reveal_worker_tools` RPC (decrypt-then-purge) and emails the credentials.
- * Works only before the credentials have been revealed (by this path or the
- * worker's own portal popup); afterward the admin must re-provision to resend.
+ * Send tools credentials email — decrypts via the `decrypt_worker_tools` RPC
+ * (persistent — shared-prod model) and emails the credentials. Re-readable: the
+ * admin can resend without re-provisioning. Authorization is enforced here
+ * (company scope), since the RPC itself is unscoped service-role.
  */
 export async function sendToolsEmail(args: { workerId: string }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
@@ -412,6 +412,19 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
 
   try {
     const db = await createServerSupabase();
+    // Authorize per-company: the decrypt RPC is service-role + unscoped (matches
+    // shared prod, where decrypt_worker_tools has no in-DB authz), so a non-owner
+    // admin must be confirmed to share a company with this worker BEFORE the
+    // decrypt — otherwise any admin could read any worker's tool credentials.
+    if (!admin.isOwner) {
+      const { data: links } = await db
+        .from('worker_companies')
+        .select('company_id')
+        .eq('worker_id', args.workerId);
+      const inScope = (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+      if (!inScope) return { ok: false, error: 'Not authorized for this contractor.' };
+    }
+
     const { data: login } = await db
       .from('contractor_logins')
       .select('email')
@@ -419,14 +432,13 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
       .maybeSingle();
     if (!login?.email) return { ok: false, error: 'This contractor has no portal login yet.' };
 
-    // One-time reveal: decrypt + permanently purge via the service-role RPC.
+    // Decrypt the stored credentials via the service-role RPC (persistent).
     const svc = createServiceClient();
-    const creds = await revealWorkerToolsOnce(svc, args.workerId);
+    const creds = await decryptWorkerTools(svc, args.workerId);
     if (creds === null || typeof creds !== 'object' || Array.isArray(creds)) {
       return {
         ok: false,
-        error:
-          'No revealable tool credentials for this contractor. They may have already been revealed once — re-provision the tools to send again.',
+        error: 'No tool credentials provisioned for this contractor — provision the tools first.',
       };
     }
 

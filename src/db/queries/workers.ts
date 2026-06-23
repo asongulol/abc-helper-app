@@ -49,6 +49,8 @@ export type RosterWorker = {
   linkId: string;
   companyId: string;
   contract: Database['public']['Enums']['contract_type'];
+  /** PHS unit: 'hourly' | 'per_session' (else null). */
+  payBasis: string | null;
   role: string | null;
   hubstaffName: string | null;
   weeklyHours: number | null;
@@ -63,7 +65,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -116,6 +118,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         linkId: l.id,
         companyId: l.company_id,
         contract: l.contract,
+        payBasis: l.pay_basis ?? null,
         role: l.role,
         hubstaffName: l.hubstaff_name,
         weeklyHours: l.weekly_hours,
@@ -133,7 +136,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -182,6 +185,7 @@ export const fetchWorkerLink = async (
     linkId: data.id,
     companyId: data.company_id,
     contract: data.contract,
+    payBasis: data.pay_basis ?? null,
     role: data.role,
     hubstaffName: data.hubstaff_name,
     weeklyHours: data.weekly_hours,
@@ -225,6 +229,7 @@ export const insertWorkerWithLink = async (
     lastName: string;
     companyId: string;
     contract: Database['public']['Enums']['contract_type'];
+    payBasis?: string | null;
   },
 ): Promise<string> => {
   const { data: worker, error: workerErr } = await db
@@ -244,6 +249,7 @@ export const insertWorkerWithLink = async (
     worker_id: worker.id,
     company_id: args.companyId,
     contract: args.contract,
+    pay_basis: args.payBasis ?? null,
     status: 'active',
   });
   if (linkErr) {
@@ -304,6 +310,7 @@ export const updateWorkerLink = async (
   companyId: string,
   patch: {
     contract: Database['public']['Enums']['contract_type'];
+    pay_basis?: string | null;
     role: string | null;
     hubstaff_name: string | null;
     weekly_hours: number | null;

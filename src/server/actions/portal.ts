@@ -1035,10 +1035,11 @@ export async function getAdminDocumentUrl(args: {
   }
 }
 
-/* ---------- portal Tools: one-time reveal (§10.6) ---------- */
+/* ---------- portal Tools: reveal (§10.6) ---------- */
 
-/** One-time reveal of the worker's provisioned tool credentials (get_my_tools
- * decrypts then permanently purges enc). */
+/** Reveal the worker's provisioned tool credentials (get_my_tools decrypts and
+ * returns {creds, popup_pending}). Persistent on shared prod — re-readable; the
+ * popup is dismissed via ackMyTools (clears popup_pending), not by purging enc. */
 export async function revealMyTools(): Promise<
   ActionResult<{ creds: unknown; popupPending: boolean } | null>
 > {

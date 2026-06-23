@@ -25,6 +25,7 @@ import {
   AddContractorSchema,
   type ContractType,
   HireContractorSchema,
+  type PayBasis,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
 } from '@/types/schemas/contractors';
@@ -53,11 +54,13 @@ export async function addContractor(args: unknown): Promise<ActionResult<{ worke
       lastName: input.lastName,
       companyId: input.companyId,
       contract: input.contract,
+      payBasis: input.payBasis,
     });
     // Set hubstaff_name on the link if provided (e.g. from CSV import unmatched name).
     if (input.hubstaffName) {
       await updateWorkerLink(db, workerId, input.companyId, {
         contract: input.contract,
+        pay_basis: input.payBasis,
         role: null,
         hubstaff_name: input.hubstaffName,
         weekly_hours: null,
@@ -135,6 +138,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
     });
     await updateWorkerLink(db, input.workerId, input.companyId, {
       contract: input.contract,
+      pay_basis: input.payBasis,
       role: input.role,
       hubstaff_name: input.hubstaffName,
       weekly_hours: input.weeklyHours,
@@ -340,6 +344,7 @@ export async function hireContractor(
       lastName: input.lastName,
       companyId: input.companyId,
       contract: input.contract,
+      payBasis: input.payBasis,
     });
 
     // 2) Fill the rest of the worker profile (covers email/addresses/eligibility).
@@ -375,6 +380,7 @@ export async function hireContractor(
     // 3) Link engagement fields: role, weekly_hours, started_on=hire_date.
     await updateWorkerLink(db, workerId, input.companyId, {
       contract: input.contract,
+      pay_basis: input.payBasis,
       role: input.role,
       hubstaff_name: null,
       weekly_hours: input.weeklyHours,
@@ -418,6 +424,7 @@ export async function hireContractor(
           worker_id: workerId,
           company_id: input.invoiceClientId,
           contract: input.contract,
+          pay_basis: input.payBasis,
           role: input.role,
           status: 'active',
           bill_rate_usd: input.billRateUsd,
@@ -634,6 +641,7 @@ export interface WorkerEngagement {
   companyName: string;
   kind: string;
   contract: string;
+  payBasis: string | null;
   role: string | null;
   billRateUsd: number | null;
   sessionRateUsd: number | null;
@@ -651,7 +659,7 @@ export async function getWorkerCompanies(args: {
     const { data, error } = await svc
       .from('worker_companies')
       .select(
-        'company_id, contract, role, bill_rate_usd, session_rate_usd, status, companies(name, kind)',
+        'company_id, contract, pay_basis, role, bill_rate_usd, session_rate_usd, status, companies(name, kind)',
       )
       .eq('worker_id', args.workerId);
     if (error) return { ok: false, error: error.message };
@@ -660,6 +668,7 @@ export async function getWorkerCompanies(args: {
       companyName: r.companies?.name ?? '—',
       kind: r.companies?.kind ?? 'client',
       contract: r.contract,
+      payBasis: r.pay_basis ?? null,
       role: r.role,
       billRateUsd: r.bill_rate_usd,
       sessionRateUsd: r.session_rate_usd,
@@ -682,10 +691,27 @@ export async function saveWorkerCompanyLink(args: {
   billRateUsd: number | null;
   sessionRateUsd: number | null;
   contract: ContractType;
+  payBasis: PayBasis | null;
   status: 'active' | 'inactive' | 'ended';
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  // This action writes via the service-role client (RLS bypassed), so the
+  // per-company scope must be enforced here — same guard as addContractor /
+  // saveWorkerProfile / hireContractor.
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+  // A PHS engagement with no pay_basis is unpayable (payModelFor → 'unset' →
+  // the worker is silently dropped from payroll). The Add/Hire/Profile paths
+  // enforce this via the requirePayBasisForPhs zod refinement; this plain-typed
+  // action needs the equivalent runtime guard.
+  if (args.contract === 'PHS' && args.payBasis == null) {
+    return {
+      ok: false,
+      error: 'Choose a pay basis (per hour or per session) for a per-hour/session contract.',
+    };
+  }
   try {
     const svc = createServiceClient();
     const { error } = await svc
@@ -695,6 +721,7 @@ export async function saveWorkerCompanyLink(args: {
         bill_rate_usd: args.billRateUsd,
         session_rate_usd: args.sessionRateUsd,
         contract: args.contract,
+        pay_basis: args.payBasis,
         status: args.status,
       })
       .eq('worker_id', args.workerId)
@@ -722,6 +749,10 @@ export async function assignWorkerCompany(args: {
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  // Service-role write (RLS bypassed) — enforce per-company scope here.
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
   try {
     const svc = createServiceClient();
     const { data: existing } = await svc

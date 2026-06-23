@@ -198,6 +198,97 @@ describe('calcContractorRow — PH (per hour) / PS (per session)', () => {
   });
 });
 
+describe('calcContractorRow — PHS (shared-prod per hour / session via pay_basis)', () => {
+  it("PHS + pay_basis='hourly' is identical to legacy PH", () => {
+    const phs = calcContractorRow({
+      workedSeconds: 10 * 3600,
+      contract: 'PHS',
+      payBasis: 'hourly',
+      rate: centavos(50_000),
+      ...PERIOD,
+    });
+    const ph = calcContractorRow({
+      workedSeconds: 10 * 3600,
+      contract: 'PH',
+      rate: centavos(50_000),
+      ...PERIOD,
+    });
+    expect(phs.gross).toBe(ph.gross); // 500_000
+    expect(phs.expectedHours).toBe(0);
+    expect(phs.ratio).toBe(0);
+    expect(phs.shortfall).toBe(0);
+    expect(phs.net).toBe(500_000);
+    expect(phs.payBasisUnset).toBe(false);
+    // per_hour keeps its quantity in workedHours; payments.units stays null (parity).
+    expect(phs.units).toBeNull();
+    expect(ph.units).toBeNull();
+  });
+
+  it("PHS + pay_basis='per_session' is identical to legacy PS", () => {
+    const phs = calcContractorRow({
+      workedSeconds: 0,
+      sessionUnits: 12,
+      contract: 'PHS',
+      payBasis: 'per_session',
+      rate: centavos(40_000),
+      ...PERIOD,
+    });
+    const ps = calcContractorRow({
+      workedSeconds: 0,
+      sessionUnits: 12,
+      contract: 'PS',
+      rate: centavos(40_000),
+      ...PERIOD,
+    });
+    expect(phs.gross).toBe(ps.gross); // 480_000
+    expect(phs.net).toBe(480_000);
+    expect(phs.payBasisUnset).toBe(false);
+    // per_session stores the session count in payments.units (prod parity).
+    expect(phs.units).toBe(12);
+    expect(ps.units).toBe(12);
+  });
+
+  it('PHS with an UNSET pay_basis is paid NOTHING (never worked×rate) and is flagged', () => {
+    const r = calcContractorRow({
+      workedSeconds: 40 * 3600, // would be ₱20k if mis-paid hourly
+      sessionUnits: 0,
+      contract: 'PHS',
+      payBasis: null,
+      rate: centavos(50_000),
+      ...PERIOD,
+    });
+    expect(r.gross).toBeNull(); // safety: no silent salary→hourly conversion
+    expect(r.net).toBeNull();
+    expect(r.payBasisUnset).toBe(true);
+  });
+
+  it('PHS with an INVALID pay_basis is also treated as unset (unpayable)', () => {
+    const r = calcContractorRow({
+      workedSeconds: 8 * 3600,
+      contract: 'PHS',
+      payBasis: 'weekly', // not 'hourly' | 'per_session'
+      rate: centavos(50_000),
+      ...PERIOD,
+    });
+    expect(r.gross).toBeNull();
+    expect(r.payBasisUnset).toBe(true);
+  });
+
+  it('PHS gets no 13th-month accrual even if flagged eligible', () => {
+    const r = calcContractorRow({
+      workedSeconds: 8 * 3600,
+      contract: 'PHS',
+      payBasis: 'hourly',
+      rate: centavos(50_000),
+      hireDate: '2024-01-01',
+      thirteenthMonthEligible: true,
+      includeThirteenth: true,
+      ...PERIOD,
+    });
+    expect(r.thirteenth).toBe(0);
+  });
+});
+
 describe('miscTotal (legacy ~6369)', () => {
   it('deduction kind subtracts; others add; junk counts 0', () => {
     expect(

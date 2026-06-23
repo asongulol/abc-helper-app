@@ -71,7 +71,7 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'payments_amounts_nonneg' AND conrelid = 'public.payments'::regclass) THEN
     ALTER TABLE public.payments ADD CONSTRAINT payments_amounts_nonneg CHECK (
       gross_php >= 0 AND health_allowance_php >= 0 AND thirteenth_month_php >= 0
-      AND shortfall_php >= 0 AND pdd_lunch_php >= 0 AND bonus_php >= 0
+      AND deduction_php >= 0 AND pdd_lunch_php >= 0 AND bonus_php >= 0
       AND (rate_php IS NULL OR rate_php >= 0)
       AND (payout_amount IS NULL OR payout_amount >= 0)
       AND (worked_hours IS NULL OR worked_hours >= 0)

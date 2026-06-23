@@ -462,7 +462,7 @@ begin
   if new.pdd_lunch_php        is distinct from old.pdd_lunch_php        then changed_cols := array_append(changed_cols,'pdd_lunch_php'); end if;
   if new.bonus_php            is distinct from old.bonus_php            then changed_cols := array_append(changed_cols,'bonus_php'); end if;
   if new.thirteenth_month_php is distinct from old.thirteenth_month_php then changed_cols := array_append(changed_cols,'thirteenth_month_php'); end if;
-  if new.shortfall_php        is distinct from old.shortfall_php        then changed_cols := array_append(changed_cols,'shortfall_php'); end if;
+  if new.deduction_php        is distinct from old.deduction_php        then changed_cols := array_append(changed_cols,'deduction_php'); end if;
   if new.net_php              is distinct from old.net_php              then changed_cols := array_append(changed_cols,'net_php'); end if;
   if new.original_net_php     is distinct from old.original_net_php     then changed_cols := array_append(changed_cols,'original_net_php'); end if;
   if new.payout_currency      is distinct from old.payout_currency      then changed_cols := array_append(changed_cols,'payout_currency'); end if;
@@ -871,7 +871,7 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
     "gross_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "health_allowance_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "thirteenth_month_php" numeric(12,2) DEFAULT 0 NOT NULL,
-    "shortfall_php" numeric(12,2) DEFAULT 0 NOT NULL,
+    "deduction_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "net_php" numeric(12,2) DEFAULT 0 NOT NULL,
     "fx_rate" numeric(14,6),
     "payout_currency" "text" DEFAULT 'USD'::"text" NOT NULL,
@@ -895,7 +895,7 @@ CREATE TABLE IF NOT EXISTS "public"."payments" (
 ALTER TABLE "public"."payments" OWNER TO "postgres";
 
 
-COMMENT ON COLUMN "public"."payments"."shortfall_php" IS 'Performance shortfall (rate − gross). INFORMATIONAL ONLY — never subtracted from net_php. Renamed from the legacy "deduction_php", whose name wrongly implied money was withheld. Real, subtracted deductions live in misc_items (kind=deduction).';
+COMMENT ON COLUMN "public"."payments"."deduction_php" IS 'Performance shortfall (rate − gross). INFORMATIONAL ONLY — never subtracted from net_php. Despite the legacy name "deduction_php" (kept to match the shared prod DB the original apps own), this is NOT a withholding. Surfaced internally/UI as "performance shortfall". Real, subtracted deductions live in misc_items (kind=deduction).';
 
 
 CREATE TABLE IF NOT EXISTS "public"."pending_admins" (
@@ -1027,9 +1027,9 @@ CREATE TABLE IF NOT EXISTS "public"."worker_tools" (
 ALTER TABLE "public"."worker_tools" OWNER TO "postgres";
 
 
-COMMENT ON COLUMN "public"."worker_tools"."enc" IS 'Encrypted 3rd-party tool credentials, recoverable EXACTLY ONCE. The first reveal — worker via get_my_tools() or admin via reveal_worker_tools() — decrypts then immediately nulls this column. Re-provision with set_worker_tools() to re-arm. No code path re-reads a credential after reveal.';
+COMMENT ON COLUMN "public"."worker_tools"."enc" IS 'Encrypted 3rd-party tool credentials. PERSISTENT (re-readable): get_my_tools()/decrypt_worker_tools() decrypt without purging — see migration 020, which supersedes this baseline''s former one-time reveal-and-purge model to conform to the shared-prod DB the original apps own. Re-provision with set_worker_tools().';
 
-COMMENT ON COLUMN "public"."worker_tools"."revealed_at" IS 'When enc was revealed-and-purged (one-time reveal). NULL = not yet revealed.';
+COMMENT ON COLUMN "public"."worker_tools"."revealed_at" IS 'Legacy/informational only. The one-time reveal-and-purge model was retired (migration 020, persistent model); this column is no longer written by the reveal path. NULL on rows provisioned under the persistent model.';
 
 
 CREATE TABLE IF NOT EXISTS "public"."workers" (

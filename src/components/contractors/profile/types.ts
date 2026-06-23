@@ -1,4 +1,4 @@
-import type { ContractType } from '@/types/schemas/contractors';
+import type { ContractType, PayBasis } from '@/types/schemas/contractors';
 
 /** The contractor profile edit form (all string-backed for controlled inputs). */
 export type FormState = {
@@ -20,6 +20,7 @@ export type FormState = {
   healthAllowanceEligible: boolean;
   thirteenthMonthEligible: boolean;
   contract: ContractType;
+  payBasis: PayBasis | null;
   role: string;
   hubstaffName: string;
   weeklyHours: string;

@@ -13,6 +13,7 @@
 import { addMinor, type Centavos, majorToMinor, mulRatioMinor, zeroCentavos } from '@/lib/money';
 import { healthAllowance } from '@/lib/pay/allowances';
 import { type ContractorRowResult, calcContractorRow, type MiscItem } from '@/lib/pay/calc';
+import { payModelFor } from '@/lib/pay/expected-hours';
 import type { Holiday } from '@/lib/pay/holidays';
 import { type RateRow, resolveRate } from '@/lib/pay/rates';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
@@ -33,6 +34,9 @@ export type TimeEntryRow = {
 export type RosterRow = {
   workerId: string;
   contract: string;
+  /** worker_companies.pay_basis — 'hourly' | 'per_session' for a PHS engagement,
+   *  else null. Drives per-unit pay for the shared-prod PHS contract type. */
+  payBasis: string | null;
   hubstaffName: string | null;
   linkStatus: string | null;
   worker: {
@@ -162,6 +166,8 @@ export type StatementRow = {
   workerId: string;
   name: string;
   contract: string;
+  /** PHS pay_basis ('hourly' | 'per_session') or null — carried to the payment snapshot. */
+  payBasis: string | null;
   payoutMethod: string | null;
   /** True when the worker or company link is no longer active (lock-time warning). */
   inactive: boolean;
@@ -197,16 +203,18 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     const link = byId.get(workerId);
     if (!link) return; // already surfaced as unlinked by attribution
     const w = link.worker;
-    // F4: for PH/PS, compute a date-aware gross when the rate changed mid-period
-    // (otherwise undefined → engine uses the single-rate product, parity).
+    // F4: for per-unit work, compute a date-aware gross when the rate changed
+    // mid-period (otherwise undefined → engine uses the single-rate product,
+    // parity). per_hour uses hours-by-date; per_session uses session-units-by-date.
+    const model = payModelFor(link.contract, link.payBasis);
     let perUnitGrossOverride: Centavos | undefined;
-    if (link.contract === 'PH') {
+    if (model === 'per_hour') {
       const secsByDate = args.attribution.secondsByWorkerByDate.get(workerId);
       const hoursByDate = secsByDate
         ? new Map([...secsByDate].map(([d, s]) => [d, s / 3600]))
         : undefined;
       perUnitGrossOverride = dateAwarePerUnitGross(args.rates, workerId, hoursByDate);
-    } else if (link.contract === 'PS') {
+    } else if (model === 'per_session') {
       perUnitGrossOverride = dateAwarePerUnitGross(
         args.rates,
         workerId,
@@ -217,6 +225,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
       contract: link.contract,
+      payBasis: link.payBasis,
       periodStart: args.periodStart,
       periodEnd: args.periodEnd,
       rate: resolveRate(args.rates, workerId, args.periodStart, args.periodEnd),
@@ -235,6 +244,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       workerId,
       name: fullName(w) || workerId,
       contract: link.contract,
+      payBasis: link.payBasis,
       payoutMethod: w.payoutMethod ?? args.lastPayoutMethod?.get(workerId) ?? null,
       inactive,
       result,
@@ -242,16 +252,19 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     processed.add(workerId);
   };
 
-  // Time-driven workers (FT/PT/PH, and any PS who also tracked time) — unchanged.
+  // Time-driven workers (salaried + per_hour, and any per_session who also
+  // tracked time) — unchanged.
   for (const [workerId, workedSeconds] of args.attribution.secondsByWorker) {
     build(workerId, workedSeconds);
   }
-  // PS (per-session) workers are paid from sessions even with no tracked time,
-  // so pull them in by their session activity. Only PS — never alters FT/PT/PH.
+  // Per-session workers (legacy PS, or PHS + pay_basis='per_session') are paid
+  // from sessions even with no tracked time, so pull them in by their session
+  // activity. Only per_session — never alters salaried/per_hour.
   if (args.sessionsByWorker) {
     for (const [workerId, units] of args.sessionsByWorker) {
       if (processed.has(workerId) || units <= 0) continue;
-      if (byId.get(workerId)?.contract !== 'PS') continue;
+      const lk = byId.get(workerId);
+      if (!lk || payModelFor(lk.contract, lk.payBasis) !== 'per_session') continue;
       build(workerId, 0);
     }
   }
@@ -276,6 +289,14 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
 
 export type PaymentDraft = {
   worker_id: string;
+  /** Contract + pay_basis written onto the payment row (shared-prod columns) to
+   *  record the pay basis at the time of the recalc. NOTE: unlike the money
+   *  columns, these are NOT in the lock-enforce trigger's protected set, so they
+   *  are not frozen on a locked row — treat them as last-recalc, not immutable. */
+  contract: string;
+  pay_basis: string | null;
+  /** Approved session count for a per_session row (prod parity), null otherwise. */
+  units: number | null;
   expected_hours: number;
   worked_hours: number;
   performance_ratio: number;
@@ -285,8 +306,12 @@ export type PaymentDraft = {
   thirteenth_month_php: number;
   pdd_lunch_php: number;
   bonus_php: number;
-  /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
-  shortfall_php: number;
+  /**
+   * Informational performance shortfall (rate − gross); NOT subtracted from net.
+   * DB column is `deduction_php` (shared-prod name); surfaced internally/UI as
+   * "performance shortfall". Real, subtracted deductions live in misc_items.
+   */
+  deduction_php: number;
   net_php: number;
   misc_items: MiscItem[];
   fx_rate: number | null;
@@ -308,11 +333,14 @@ export const toPaymentDraft = (
   const r = row.result;
   if (r.net === null || r.gross === null) return null;
   // The resolved rate is carried on the result: per-period (FT/PT) or per-unit
-  // (PH/PS). For FT/PT it equals gross + shortfall, so stored rate_php is
-  // unchanged (parity); for PH/PS it's the per-hour / per-session rate.
+  // (per_hour/per_session). For FT/PT it equals gross + shortfall, so stored
+  // rate_php is unchanged (parity); for per-unit it's the per-hour/session rate.
   const ratePhp = r.rate === null ? null : centavosToPhp(r.rate);
   return {
     worker_id: row.workerId,
+    contract: row.contract,
+    pay_basis: row.payBasis,
+    units: r.units,
     expected_hours: r.expectedHours,
     worked_hours: Number(r.workedHours.toFixed(2)),
     performance_ratio: Number(r.ratio.toFixed(4)),
@@ -322,7 +350,7 @@ export const toPaymentDraft = (
     thirteenth_month_php: centavosToPhp(r.thirteenth),
     pdd_lunch_php: centavosToPhp(r.pddLunch),
     bonus_php: centavosToPhp(r.bonus),
-    shortfall_php: centavosToPhp(r.shortfall),
+    deduction_php: centavosToPhp(r.shortfall),
     net_php: centavosToPhp(r.net),
     misc_items: [],
     fx_rate: opts.fxRate ?? null,

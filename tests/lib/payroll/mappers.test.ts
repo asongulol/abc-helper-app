@@ -11,6 +11,7 @@ import {
 
 const roster = (over: Partial<RosterRow> & { workerId: string }): RosterRow => ({
   contract: 'FT',
+  payBasis: null,
   hubstaffName: null,
   linkStatus: 'active',
   worker: {
@@ -301,6 +302,48 @@ describe('F4: date-aware PH/PS gross on a mid-period rate change', () => {
     });
     // 300×2 + 400×3 = 1800, NOT latest 400×5 = 2000.
     expect(rows[0]?.result.gross).toBe(180_000);
+  });
+
+  it('PHS + per_session worker with sessions but no tracked time is pulled in and paid', () => {
+    const rates = [
+      { workerId: 'w1', amountPhp: '400.00', effectiveStart: '2026-06-01', effectiveEnd: null },
+    ];
+    const phs = roster({ workerId: 'w1', contract: 'PHS', payBasis: 'per_session' });
+    const attribution = attributeTimeEntries([], [phs]);
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [phs],
+      rates,
+      sessionsByWorker: new Map([['w1', 5]]),
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.result.gross).toBe(200_000); // 5 × ₱400
+    expect(rows[0]?.payBasis).toBe('per_session');
+  });
+
+  it('PHS with an unset pay_basis is never silently paid (gross null, unpersistable)', () => {
+    const rates = [
+      { workerId: 'w1', amountPhp: '400.00', effectiveStart: '2026-06-01', effectiveEnd: null },
+    ];
+    const phs = roster({ workerId: 'w1', contract: 'PHS', payBasis: null });
+    const attribution = attributeTimeEntries(
+      [entry({ workerId: 'w1', trackedSeconds: 40 * 3600, workDate: '2026-06-05' })],
+      [phs],
+    );
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [phs],
+      rates,
+    });
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row?.result.gross).toBeNull();
+    expect(row?.result.payBasisUnset).toBe(true);
+    if (row) expect(toPaymentDraft(row, {})).toBeNull(); // not persistable
   });
 });
 

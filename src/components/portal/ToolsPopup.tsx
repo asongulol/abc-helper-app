@@ -5,9 +5,10 @@ import { Modal, useToast } from '@/components/ui';
 import { ackMyTools, revealMyTools } from '@/server/actions/portal';
 
 /**
- * One-time tools reveal (§10.6). Shown when worker_tools.popup_pending. Calls
- * get_my_tools exactly once (it decrypts then permanently purges), so the reveal
- * is ref-guarded; "Got it" acknowledges and clears the pending flag.
+ * Tools reveal (§10.6). Shown when worker_tools.popup_pending. Calls get_my_tools,
+ * which decrypts and returns the credentials persistently (shared-prod model — it
+ * does NOT purge enc). The fetch is ref-guarded only to avoid a double-call on
+ * mount; "Got it" acknowledges (ackMyTools clears the pending flag).
  */
 export const ToolsPopup = ({ pending }: { pending: boolean }) => {
   const { notify } = useToast();
