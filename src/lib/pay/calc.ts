@@ -20,7 +20,7 @@ import {
   zeroCentavos,
 } from '@/lib/money';
 import { healthAllowance, thirteenthAccrual } from '@/lib/pay/allowances';
-import { type Contract, expectedHours } from '@/lib/pay/expected-hours';
+import { type Contract, expectedHours, payModelFor } from '@/lib/pay/expected-hours';
 import type { Holiday } from '@/lib/pay/holidays';
 
 /** Performance-ratio cap ("matches workbook V"). */
@@ -51,9 +51,16 @@ export const miscTotal = (items: readonly MiscItem[] | null | undefined): Centav
 export type ContractorRowInput = {
   /** Σ (tracked_seconds + pto_seconds) over approved entries in the period. */
   workedSeconds: number;
-  /** Σ approved session units in the period — used only for PS (per-session) pay. */
+  /** Σ approved session units in the period — used for per-session pay. */
   sessionUnits?: number;
   contract: Contract;
+  /**
+   * worker_companies.pay_basis — the per-unit discriminator for a `PHS`
+   * engagement ('hourly' | 'per_session'). Ignored for FT/PT and the legacy
+   * PH/PS contracts (whose unit is implied by the contract itself). A PHS
+   * engagement with a missing/invalid basis is paid nothing (see PayModel).
+   */
+  payBasis?: string | null;
   periodStart: string;
   periodEnd: string;
   /** Resolved per-period rate (see resolveRate), or null when the worker has none. */
@@ -103,6 +110,12 @@ export type ContractorRowResult = {
   bonus: Centavos;
   misc: Centavos;
   net: Centavos | null;
+  /**
+   * True when this is a `PHS` engagement with a missing/invalid pay_basis, so
+   * gross/net were forced null (unpayable) rather than guessed. Lets the UI flag
+   * "set the pay basis" instead of silently dropping the row.
+   */
+  payBasisUnset: boolean;
 };
 
 /** One contractor's pay statement for a period. */
@@ -110,20 +123,28 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
   const worked = input.workedSeconds / 3600;
   const rate = input.rate;
 
-  // PH (per hour) / PS (per session): no expected hours, no performance ratio.
-  // Gross is the per-unit rate × the number of units worked in the period —
-  // hours for PH, approved session units for PS. FT/PT keep the ratio model
-  // below, byte-for-byte (parity).
-  const perUnit = input.contract === 'PH' || input.contract === 'PS';
+  // Per-unit (no expected hours, no performance ratio): gross is the per-unit
+  // rate × units in the period — hours for per_hour, approved sessions for
+  // per_session. FT/PT keep the ratio model below, byte-for-byte (parity).
+  // `unset` is a PHS engagement with no/invalid pay_basis: pay NOTHING (gross
+  // null) rather than risk paying a per-session rate by the hour.
+  const model = payModelFor(input.contract, input.payBasis);
+  const perUnit = model === 'per_hour' || model === 'per_session';
+  const payBasisUnset = model === 'unset';
 
   let expected: number;
   let ratio: number;
   let gross: Centavos | null;
   let shortfall: Centavos;
-  if (perUnit) {
+  if (payBasisUnset) {
     expected = 0;
     ratio = 0;
-    const units = input.contract === 'PH' ? worked : (input.sessionUnits ?? 0);
+    gross = null; // safety: a PHS row with no pay_basis is never payable
+    shortfall = zeroCentavos();
+  } else if (perUnit) {
+    expected = 0;
+    ratio = 0;
+    const units = model === 'per_hour' ? worked : (input.sessionUnits ?? 0);
     // F4: prefer the date-aware gross when the data layer supplied one (a
     // mid-period rate change); otherwise the naive single-rate product (parity).
     gross =
@@ -148,8 +169,13 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
       : zeroCentavos();
   // 13th-month is a salaried accrual on the period rate — skip for PH/PS, whose
   // rate is per-unit (accruing on it would be meaningless).
+  // 13th-month accrues on a salaried period rate only — never for a per-unit
+  // (or unset) PHS/PH/PS engagement, whose rate is not a monthly salary.
   const t13 =
-    (input.includeThirteenth ?? true) && input.thirteenthMonthEligible && rate !== null && !perUnit
+    (input.includeThirteenth ?? true) &&
+    input.thirteenthMonthEligible &&
+    rate !== null &&
+    model === 'salaried'
       ? thirteenthAccrual(rate, input.hireDate, input.periodEnd)
       : zeroCentavos();
 
@@ -175,6 +201,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     bonus,
     misc,
     net,
+    payBasisUnset,
   };
 };
 

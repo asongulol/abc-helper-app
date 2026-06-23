@@ -66,7 +66,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
   const { data, error } = await db
     .from('worker_companies')
     .select(
-      'worker_id, contract, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)',
+      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)',
     )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
@@ -75,6 +75,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
     return {
       workerId: l.worker_id,
       contract: l.contract,
+      payBasis: l.pay_basis ?? null,
       hubstaffName: l.hubstaff_name,
       linkStatus: l.status,
       worker: {

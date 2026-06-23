@@ -11,13 +11,11 @@
 -- Editor after grepping all sibling apps. See docs/PROD-CONFORMANCE-PLAN.md.
 -- ---------------------------------------------------------------------------
 
--- NOTE on 'PHS': prod's contract_type enum also carries 'PHS' (the originals'
--- *current* per-hour/session model: contract='PHS' + worker_companies.pay_basis
--- ∈ {hourly, per_session}). abc-helper-app still uses separate 'PH'/'PS' and does
--- NOT yet read pay_basis, so it cannot pay a PHS worker correctly (calc would
--- treat them as salaried → overpayment). 'PHS' is therefore intentionally NOT
--- added here; it lands together with the calc/mapper handling in the dedicated
--- "contract-model conformance" PR. See docs/PROD-CONFORMANCE-PLAN.md §C.
+-- contract_type gains 'PHS' (the originals' current per-hour/session model:
+-- contract='PHS' + worker_companies.pay_basis ∈ {hourly, per_session}). The
+-- payroll engine now reads pay_basis and pays PHS correctly (per_hour ≡ legacy
+-- PH, per_session ≡ legacy PS; an unset pay_basis is paid NOTHING, never guessed).
+ALTER TYPE "public"."contract_type" ADD VALUE IF NOT EXISTS 'PHS';
 
 -- payments: prod's funding-workflow + pay-basis columns (all nullable, app does
 -- not yet read them; present so local rows round-trip identically to prod).

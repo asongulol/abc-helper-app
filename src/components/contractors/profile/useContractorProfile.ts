@@ -13,7 +13,7 @@ import {
   setWorkerPhoto,
   type WorkerEngagement,
 } from '@/server/actions/contractors';
-import type { ContractType } from '@/types/schemas/contractors';
+import { type ContractType, contractForEdit, type PayBasis } from '@/types/schemas/contractors';
 import type { FormState } from './types';
 
 type TabKey = 'profile' | 'pay' | 'personal' | 'portal';
@@ -23,6 +23,8 @@ type ValidPayoutMethod = 'wise' | 'bpi' | 'gcash' | 'paymaya' | 'paypal';
 type ValidWorkerStatus = 'active' | 'inactive' | 'ended';
 
 export function toForm(w: RosterWorker): FormState {
+  // Legacy PH/PS map to the shared-prod PHS + pay_basis model for editing.
+  const eng = contractForEdit(w.contract, w.payBasis);
   return {
     firstName: w.firstName,
     middleName: w.middleName ?? '',
@@ -41,7 +43,8 @@ export function toForm(w: RosterWorker): FormState {
     payoutMethod: w.payoutMethod ?? '',
     healthAllowanceEligible: w.healthAllowanceEligible,
     thirteenthMonthEligible: w.thirteenthMonthEligible,
-    contract: w.contract,
+    contract: eng.contract,
+    payBasis: eng.payBasis,
     role: w.role ?? '',
     hubstaffName: w.hubstaffName ?? '',
     weeklyHours: w.weeklyHours != null ? String(w.weeklyHours) : '',
@@ -171,6 +174,7 @@ export function useContractorProfile(
         billRateUsd: e.billRateUsd,
         sessionRateUsd: e.sessionRateUsd,
         contract: e.contract as ContractType,
+        payBasis: (e.payBasis ?? null) as PayBasis | null,
         status: e.status === 'inactive' ? 'inactive' : e.status === 'ended' ? 'ended' : 'active',
       });
       notify(res.ok ? 'Engagement saved.' : res.error, {
@@ -299,6 +303,7 @@ export function useContractorProfile(
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
         contract: form.contract,
+        payBasis: form.payBasis,
         role: str(form.role),
         hubstaffName: str(form.hubstaffName),
         weeklyHours,
@@ -347,6 +352,7 @@ export function useContractorProfile(
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
         contract: form.contract,
+        payBasis: form.payBasis,
         role: str(form.role),
         hubstaffName: str(form.hubstaffName),
         weeklyHours,

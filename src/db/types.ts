@@ -1643,7 +1643,7 @@ export type Database = {
         | "baa"
       approval_status: "pending" | "approved" | "rejected"
       company_status: "active" | "inactive"
-      contract_type: "FT" | "PT" | "PH" | "PS"
+      contract_type: "FT" | "PT" | "PH" | "PS" | "PHS"
       document_kind:
         | "ic_agreement"
         | "w8ben"
@@ -1814,7 +1814,7 @@ export const Constants = {
       ],
       approval_status: ["pending", "approved", "rejected"],
       company_status: ["active", "inactive"],
-      contract_type: ["FT", "PT", "PH", "PS"],
+      contract_type: ["FT", "PT", "PH", "PS", "PHS"],
       document_kind: [
         "ic_agreement",
         "w8ben",

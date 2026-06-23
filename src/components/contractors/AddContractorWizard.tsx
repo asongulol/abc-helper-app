@@ -7,6 +7,8 @@ import {
   CONTRACT_OPTIONS,
   type ContractType,
   isPerUnitContract,
+  PAY_BASIS_OPTIONS,
+  type PayBasis,
 } from '@/types/schemas/contractors';
 import { draftClear, draftLoad, type HireDraft, useAutoDraft } from './hire-draft';
 
@@ -25,6 +27,7 @@ interface FormState {
   sameAsCurrent: boolean;
   dateOfBirth: string;
   contract: ContractType;
+  payBasis: PayBasis | null;
   weeklyHours: string;
   role: string;
   ratePhp: string;
@@ -59,6 +62,7 @@ const EMPTY: FormState = {
   sameAsCurrent: false,
   dateOfBirth: '',
   contract: 'FT',
+  payBasis: null,
   weeklyHours: '40',
   role: '',
   ratePhp: '',
@@ -163,6 +167,7 @@ export function AddContractorWizard({
     permanentAddress: (form.sameAsCurrent ? form.phAddress : form.permanentAddress).trim() || null,
     dateOfBirth: form.dateOfBirth || null,
     contract: form.contract,
+    payBasis: form.payBasis,
     weeklyHours: form.weeklyHours ? Number(form.weeklyHours) : null,
     role: form.role.trim(),
     ratePhp: form.ratePhp ? Number(form.ratePhp) : 0,
@@ -376,8 +381,9 @@ export function AddContractorWizard({
                 setForm((f) => ({
                   ...f,
                   contract: c,
-                  // PH/PS have no expected hours.
+                  // PHS (per hour/session) has no expected hours.
                   weeklyHours: c === 'FT' ? '40' : c === 'PT' ? '20' : '',
+                  payBasis: c === 'PHS' ? f.payBasis : null,
                 }));
               }}
             >
@@ -388,6 +394,21 @@ export function AddContractorWizard({
               ))}
             </select>
           </Field>
+          {form.contract === 'PHS' && (
+            <Field label="Pay basis *">
+              <select
+                value={form.payBasis ?? ''}
+                onChange={(e) => set('payBasis', (e.target.value || null) as PayBasis | null)}
+              >
+                <option value="">Select…</option>
+                {PAY_BASIS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           {!isPerUnitContract(form.contract) && (
             <Field label="Expected hours / week">
               <input
@@ -404,9 +425,10 @@ export function AddContractorWizard({
           </Field>
           <Field
             label={
-              form.contract === 'PH'
+              form.contract === 'PH' || (form.contract === 'PHS' && form.payBasis === 'hourly')
                 ? 'Rate (PHP / hour)'
-                : form.contract === 'PS'
+                : form.contract === 'PS' ||
+                    (form.contract === 'PHS' && form.payBasis === 'per_session')
                   ? 'Rate (PHP / session)'
                   : 'Rate (PHP per period)'
             }

@@ -92,6 +92,7 @@ describe('batch parity — buildStatements pipeline vs stored payments', () => {
         {
           workerId: r.worker_id,
           contract,
+          payBasis: null,
           hubstaffName: null,
           linkStatus: 'active',
           worker: {

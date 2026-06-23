@@ -4,7 +4,12 @@ import { type FormEvent, useState, useTransition } from 'react';
 import { Modal, Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
 import { addContractor } from '@/server/actions/contractors';
-import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
+import {
+  CONTRACT_OPTIONS,
+  type ContractType,
+  PAY_BASIS_OPTIONS,
+  type PayBasis,
+} from '@/types/schemas/contractors';
 
 type Props = {
   companyId: string;
@@ -16,6 +21,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [contract, setContract] = useState<ContractType>('FT');
+  const [payBasis, setPayBasis] = useState<PayBasis | null>(null);
   const [error, setError] = useState('');
   const [isPending, startTransition] = useTransition();
 
@@ -29,6 +35,10 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
       setError('Last name is required.');
       return;
     }
+    if (contract === 'PHS' && !payBasis) {
+      setError('Choose a pay basis (per hour or per session) for a per-hour/session contract.');
+      return;
+    }
     setError('');
 
     startTransition(async () => {
@@ -37,6 +47,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         contract,
+        payBasis,
       });
       if (!result.ok) {
         setError(result.error);
@@ -82,6 +93,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         linkId: '',
         companyId,
         contract,
+        payBasis,
         role: null,
         hubstaffName: null,
         weeklyHours: null,
@@ -130,7 +142,11 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
           <select
             id="ac-contract"
             value={contract}
-            onChange={(e) => setContract(e.target.value as ContractType)}
+            onChange={(e) => {
+              const next = e.target.value as ContractType;
+              setContract(next);
+              if (next !== 'PHS') setPayBasis(null);
+            }}
             disabled={isPending}
           >
             {CONTRACT_OPTIONS.map((o) => (
@@ -140,6 +156,26 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
             ))}
           </select>
         </div>
+        {contract === 'PHS' && (
+          <div className="field">
+            <label htmlFor="ac-basis">
+              Pay basis <span className="req">*</span>
+            </label>
+            <select
+              id="ac-basis"
+              value={payBasis ?? ''}
+              onChange={(e) => setPayBasis((e.target.value || null) as PayBasis | null)}
+              disabled={isPending}
+            >
+              <option value="">Select…</option>
+              {PAY_BASIS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         {error && (
           <div className="field-err" style={{ marginBottom: 8 }}>
             {error}

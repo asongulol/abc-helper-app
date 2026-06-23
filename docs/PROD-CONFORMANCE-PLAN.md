@@ -222,20 +222,25 @@ for dev. The invariant is that the app's schema expectations are a **subset of p
 - **Validated:** `supabase db reset` (001→019 clean), `supabase gen types` regenerated `src/db/types.ts`,
   `tsc --noEmit` clean, **406/406 vitest pass**, biome clean.
 
-### 🚩 NEXT PR — "contract-model conformance" (PHS) — has a real mis-pay risk, needs a decision
+### ✅ PR 2 SHIPPED — "contract-model conformance" (PHS) — Option 1 (adopt PHS)
 The originals consolidated per-hour/per-session into **one** `contract='PHS'` + `pay_basis` discriminator;
-abc-helper-app still uses **two** types `PH`/`PS` and ignores `pay_basis`. On the shared DB, contractors the
-originals create are stored as `PHS`, which abc-helper-app **cannot pay correctly today**. Closing this
-requires plumbing `pay_basis` DB→roster→mapper→calc (`calc.ts:117,126`, `mappers.ts:203-256`,
-`expected-hours.ts:24`, `ContractTypeSchema`, contractor create/edit UI) + tests, AND a design call:
+abc-helper-app used **two** types `PH`/`PS` and ignored `pay_basis`. **Chosen: Option 1** — abc-helper-app
+now reads *and writes* `PHS` + `pay_basis`, keeping `PH`/`PS` only for paying legacy rows. Delivered:
 
-- **Option 1 — adopt PHS-only** (match the originals exactly): abc-helper-app reads *and writes* `PHS` +
-  `pay_basis`; `PH`/`PS` kept only for reading legacy rows. Cleanest long-term once originals are retired.
-- **Option 2 — read PHS, keep writing PH/PS**: abc-helper-app maps `PHS`+`pay_basis` → its `PH`/`PS` logic
-  on read, but still creates `PH`/`PS`. Less churn now; leaves two models coexisting on prod.
-
-Until this lands, abc-helper-app must not run payroll for `PHS` workers. That's why `PHS` is **excluded**
-from the local enum (no false confidence / no silent salaried mis-pay).
+- **Engine** (`expected-hours.ts` `payModelFor` + `dayHoursFor`; `calc.ts`; `mappers.ts`): a single
+  `PayModel` normalises (contract, pay_basis) → `salaried | per_hour | per_session | unset`.
+  `per_hour` ≡ legacy PH, `per_session` ≡ legacy PS. **Safety:** an `unset` PHS (missing/invalid
+  pay_basis) forces gross/net **null** + a `payBasisUnset` flag — never paid worked×rate, never lockable.
+  PHS → expected 0, ratio 0, no 13th-month accrual. Contract + pay_basis are snapshotted onto the payment.
+- **Plumbing**: `pay_basis` selected in the roster query → `RosterRow` → mapper → calc; per-session
+  pull-in now includes PHS+per_session; F4 date-aware gross branches on the model.
+- **Schema/UI**: `ContractTypeSchema` gains `PHS`; `PayBasisSchema`; `CONTRACT_OPTIONS` → FT/PT/PHS;
+  Add/Save/Hire schemas require a pay_basis when PHS (superRefine). All three contractor forms
+  (quick-add modal, hire wizard, profile tab) show a pay-basis selector for PHS; legacy `PH`/`PS` map to
+  `PHS`+basis on edit-load so saving migrates the row. Write actions persist `pay_basis`.
+- **Local enum**: migration 019 now re-adds `PHS` (safe — the engine pays it correctly).
+- **Validated**: `supabase db reset` 001→019 clean · `tsc` clean · **413/413 vitest** (incl. PHS=PH/PS
+  parity, unset-basis safety, pull-in, no-13th) · biome clean.
 
 ### ⏭ Also still pending (from §4C, unchanged): add the 3 repo-only objects the app uses
 (`coverage_targets`, `invoices.{amount_received_usd,payment_ref,received_on}`, `worker_tools.revealed_at`)

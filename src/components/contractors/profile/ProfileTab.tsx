@@ -1,6 +1,11 @@
 import { EmailInput } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
-import { CONTRACT_OPTIONS, type ContractType } from '@/types/schemas/contractors';
+import {
+  CONTRACT_OPTIONS,
+  type ContractType,
+  PAY_BASIS_OPTIONS,
+  type PayBasis,
+} from '@/types/schemas/contractors';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
 import type { ProfileTabProps } from './types';
@@ -109,7 +114,11 @@ export function ProfileTab({
           <select
             id="pp-contract"
             value={form.contract}
-            onChange={(e) => set('contract', e.target.value as ContractType)}
+            onChange={(e) => {
+              const next = e.target.value as ContractType;
+              set('contract', next);
+              if (next !== 'PHS') set('payBasis', null);
+            }}
             disabled={isPending}
           >
             {CONTRACT_OPTIONS.map((o) => (
@@ -119,6 +128,23 @@ export function ProfileTab({
             ))}
           </select>
         </Field>
+        {form.contract === 'PHS' && (
+          <Field id="pp-basis" label="Pay basis" required>
+            <select
+              id="pp-basis"
+              value={form.payBasis ?? ''}
+              onChange={(e) => set('payBasis', (e.target.value || null) as PayBasis | null)}
+              disabled={isPending}
+            >
+              <option value="">Select…</option>
+              {PAY_BASIS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
         <Field id="pp-role" label="Role">
           <input
             id="pp-role"
