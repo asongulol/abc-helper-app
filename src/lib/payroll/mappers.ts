@@ -289,8 +289,10 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
 
 export type PaymentDraft = {
   worker_id: string;
-  /** Contract + pay_basis snapshotted onto the payment (shared-prod columns) so
-   *  a locked row records how it was paid even if the engagement later changes. */
+  /** Contract + pay_basis written onto the payment row (shared-prod columns) to
+   *  record the pay basis at the time of the recalc. NOTE: unlike the money
+   *  columns, these are NOT in the lock-enforce trigger's protected set, so they
+   *  are not frozen on a locked row — treat them as last-recalc, not immutable. */
   contract: string;
   pay_basis: string | null;
   expected_hours: number;

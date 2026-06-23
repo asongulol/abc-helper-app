@@ -6,6 +6,9 @@
 -- Second, smaller additive step (the first was prod-additive-conformance.sql).
 -- Apply the same way: Dashboard → SQL Editor → Run the whole file. Idempotent.
 --
+-- STATUS: APPLIED + VERIFIED on prod 2026-06-23 (my_tools_pending() now present;
+-- before this, prod lacked it per the 2026-06-22 db diff). Re-running is a no-op.
+--
 -- WHAT THIS ADDS: my_tools_pending() — a read-only, self-scoped boolean the
 -- contractor portal calls to decide whether to show the "tools provisioned"
 -- popup, WITHOUT decrypting the credentials. The original apps don't have or

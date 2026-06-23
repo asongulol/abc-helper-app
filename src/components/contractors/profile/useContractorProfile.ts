@@ -166,6 +166,12 @@ export function useContractorProfile(
     setEngagements((arr) => arr.map((e, idx) => (idx === i ? { ...e, ...patch } : e)));
 
   const saveEng = (e: WorkerEngagement) => {
+    if (e.contract === 'PHS' && e.payBasis == null) {
+      notify('Choose a pay basis (per hour or per session) for a per-hour/session contract.', {
+        type: 'error',
+      });
+      return;
+    }
     startTransition(async () => {
       const res = await saveWorkerCompanyLink({
         workerId: worker.workerId,

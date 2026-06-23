@@ -19,8 +19,11 @@ export const getAppSecret = async (svc: ServiceClient, key: string): Promise<str
 };
 
 /**
- * Admin decrypt of a worker's stored tool credentials via the
- * `decrypt_worker_tools` RPC (admin-authorized, service-role). PERSISTENT — the
+ * Decrypt a worker's stored tool credentials via the `decrypt_worker_tools` RPC.
+ * NOTE: the RPC runs as service-role and is UNSCOPED (no in-DB authorization —
+ * this matches shared prod, where decrypt_worker_tools has no admin_can_see_worker
+ * check). The CALLER must authorize (e.g. company-scope) before invoking this.
+ * PERSISTENT — the
  * ciphertext is NOT purged, so the same credentials can be re-read. This matches
  * the shared-prod / live-app model: abc-helper-app's former one-time-purge
  * `reveal_worker_tools` would have deleted credentials that the original apps

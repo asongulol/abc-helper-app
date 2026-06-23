@@ -696,6 +696,22 @@ export async function saveWorkerCompanyLink(args: {
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  // This action writes via the service-role client (RLS bypassed), so the
+  // per-company scope must be enforced here — same guard as addContractor /
+  // saveWorkerProfile / hireContractor.
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+  // A PHS engagement with no pay_basis is unpayable (payModelFor → 'unset' →
+  // the worker is silently dropped from payroll). The Add/Hire/Profile paths
+  // enforce this via the requirePayBasisForPhs zod refinement; this plain-typed
+  // action needs the equivalent runtime guard.
+  if (args.contract === 'PHS' && args.payBasis == null) {
+    return {
+      ok: false,
+      error: 'Choose a pay basis (per hour or per session) for a per-hour/session contract.',
+    };
+  }
   try {
     const svc = createServiceClient();
     const { error } = await svc
@@ -733,6 +749,10 @@ export async function assignWorkerCompany(args: {
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  // Service-role write (RLS bypassed) — enforce per-company scope here.
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
   try {
     const svc = createServiceClient();
     const { data: existing } = await svc

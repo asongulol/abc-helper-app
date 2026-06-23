@@ -1027,9 +1027,9 @@ CREATE TABLE IF NOT EXISTS "public"."worker_tools" (
 ALTER TABLE "public"."worker_tools" OWNER TO "postgres";
 
 
-COMMENT ON COLUMN "public"."worker_tools"."enc" IS 'Encrypted 3rd-party tool credentials, recoverable EXACTLY ONCE. The first reveal — worker via get_my_tools() or admin via reveal_worker_tools() — decrypts then immediately nulls this column. Re-provision with set_worker_tools() to re-arm. No code path re-reads a credential after reveal.';
+COMMENT ON COLUMN "public"."worker_tools"."enc" IS 'Encrypted 3rd-party tool credentials. PERSISTENT (re-readable): get_my_tools()/decrypt_worker_tools() decrypt without purging — see migration 020, which supersedes this baseline''s former one-time reveal-and-purge model to conform to the shared-prod DB the original apps own. Re-provision with set_worker_tools().';
 
-COMMENT ON COLUMN "public"."worker_tools"."revealed_at" IS 'When enc was revealed-and-purged (one-time reveal). NULL = not yet revealed.';
+COMMENT ON COLUMN "public"."worker_tools"."revealed_at" IS 'Legacy/informational only. The one-time reveal-and-purge model was retired (migration 020, persistent model); this column is no longer written by the reveal path. NULL on rows provisioned under the persistent model.';
 
 
 CREATE TABLE IF NOT EXISTS "public"."workers" (

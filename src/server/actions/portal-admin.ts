@@ -401,9 +401,10 @@ export async function resendHireEmails(args: {
 }
 
 /**
- * Send tools credentials email — performs the contractor's ONE-TIME reveal via
- * the `decrypt_worker_tools` RPC (persistent decrypt — shared-prod model) and
- * emails the credentials. Re-readable: the admin can resend without re-provisioning.
+ * Send tools credentials email — decrypts via the `decrypt_worker_tools` RPC
+ * (persistent — shared-prod model) and emails the credentials. Re-readable: the
+ * admin can resend without re-provisioning. Authorization is enforced here
+ * (company scope), since the RPC itself is unscoped service-role.
  */
 export async function sendToolsEmail(args: { workerId: string }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
@@ -411,6 +412,19 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
 
   try {
     const db = await createServerSupabase();
+    // Authorize per-company: the decrypt RPC is service-role + unscoped (matches
+    // shared prod, where decrypt_worker_tools has no in-DB authz), so a non-owner
+    // admin must be confirmed to share a company with this worker BEFORE the
+    // decrypt — otherwise any admin could read any worker's tool credentials.
+    if (!admin.isOwner) {
+      const { data: links } = await db
+        .from('worker_companies')
+        .select('company_id')
+        .eq('worker_id', args.workerId);
+      const inScope = (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+      if (!inScope) return { ok: false, error: 'Not authorized for this contractor.' };
+    }
+
     const { data: login } = await db
       .from('contractor_logins')
       .select('email')

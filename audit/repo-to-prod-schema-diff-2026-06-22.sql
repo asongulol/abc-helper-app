@@ -1,3 +1,13 @@
+-- ⚠️ DESCRIPTIVE SNAPSHOT ONLY — DO NOT APPLY (to prod or anywhere).
+-- Generated 2026-06-22 by `supabase db diff --linked` against a PRE-RENAME repo
+-- state, so it still shows payments.shortfall_php and a payments_lock_enforce()
+-- body referencing shortfall_php (line ~324). PROD's real column is deduction_php
+-- and prod's payments_lock_enforce() uses deduction_php. The branch's migrations
+-- (baseline/014/018) were since reverted to deduction_php and DO match prod.
+-- Apply-to-prod SQL lives ONLY in audit/prod-additive-conformance.sql and
+-- audit/prod-additive-tools-functions.sql (additive, line-reviewed). Kept here as
+-- a point-in-time divergence record; see docs/PROD-CONFORMANCE-PLAN.md.
+
 create extension if not exists "pg_net" with schema "public";
 
 drop trigger if exists "audit_log_no_mutate" on "public"."audit_log";
