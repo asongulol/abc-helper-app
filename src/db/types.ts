@@ -1613,6 +1613,7 @@ export type Database = {
       admin_can_see_worker: { Args: { wid: string }; Returns: boolean }
       admin_lookup_auth_user: { Args: { p_email: string }; Returns: string }
       allocate_invoice_no: { Args: { p_year: number }; Returns: string }
+      decrypt_worker_tools: { Args: { p_worker_id: string }; Returns: Json }
       get_my_tools: { Args: never; Returns: Json }
       get_tools_status: { Args: { p_worker_id: string }; Returns: Json }
       is_admin: { Args: never; Returns: boolean }
@@ -1623,7 +1624,6 @@ export type Database = {
       my_tools_pending: { Args: never; Returns: boolean }
       my_worker_id: { Args: never; Returns: string }
       payments_misc_items_ok: { Args: { items: Json }; Returns: boolean }
-      reveal_worker_tools: { Args: { p_worker_id: string }; Returns: Json }
       set_time_entry_activity: { Args: { p: Json }; Returns: number }
       set_tools_requested: {
         Args: { p_requested: Json; p_worker_id: string }

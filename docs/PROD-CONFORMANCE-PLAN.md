@@ -254,3 +254,25 @@ so only the additive `revealed_at` COLUMN is added; the functions need separate 
 ### ✅ Engagements editor — pay-basis selector added
 The PayTab "Client engagements" editor now shows a pay-basis selector for any PHS engagement (it edits
 role/rate/status, not contract, so this lets a PHS engagement's basis be set/corrected there too).
+
+### ✅ Worker-tools reveal — adopted prod's PERSISTENT model
+abc-helper-app had hardened tool-credential reveal into a one-time reveal-and-purge model
+(`get_my_tools`/`reveal_worker_tools` NULL `worker_tools.enc`). On the shared DB that would delete
+credentials the live apps still re-read, so abc-helper-app **adopts prod's persistent model** (decision:
+"Adopt persistent model"):
+- **Repo:** admin reveal now calls prod's existing `decrypt_worker_tools(uuid)` (persistent, re-readable)
+  instead of `reveal_worker_tools` (`secrets.ts` `revealWorkerToolsOnce` → `decryptWorkerTools`; callers +
+  comments updated). Worker self-view (`get_my_tools`) already read `{creds, popup_pending}` — prod's exact
+  shape — so it works unchanged; the popup is dismissed via `ack_my_tools`, not by purging.
+- **Local parity migration 020:** adds `decrypt_worker_tools`, makes `get_my_tools` persistent (no purge),
+  drops `reveal_worker_tools`.
+- **Prod (additive, staged):** `audit/prod-additive-tools-functions.sql` adds the read-only
+  `my_tools_pending()` (the only tools object prod lacks — `decrypt_worker_tools` already exists on prod).
+  Sibling-grep: 0 references, safe. **NOT deployed:** abc-helper-app's purge functions — they'd wipe `enc`
+  for the live apps.
+- **Trade-off accepted:** abc-helper-app loses the one-time-purge hardening (creds become re-readable, like
+  the originals) — required to share `worker_tools.enc` with the persistent-model live apps.
+- Validated: `supabase db reset` 001→020 clean · `tsc` clean · 413/413 vitest · biome clean.
+
+**Conformance is now complete on every axis the app touches** — pending only the manual apply of
+`audit/prod-additive-tools-functions.sql` to prod.

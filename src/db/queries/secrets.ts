@@ -19,18 +19,20 @@ export const getAppSecret = async (svc: ServiceClient, key: string): Promise<str
 };
 
 /**
- * ONE-TIME reveal of a worker's stored tool credentials via the
- * `reveal_worker_tools` RPC (admin-authorized, service-role). The RPC decrypts
- * and then permanently purges the stored ciphertext, so this succeeds at most
- * once per provisioning. Returns null when nothing is stored, it was already
- * revealed, or the call fails. To re-deliver, re-provision via `set_worker_tools`.
+ * Admin decrypt of a worker's stored tool credentials via the
+ * `decrypt_worker_tools` RPC (admin-authorized, service-role). PERSISTENT — the
+ * ciphertext is NOT purged, so the same credentials can be re-read. This matches
+ * the shared-prod / live-app model: abc-helper-app's former one-time-purge
+ * `reveal_worker_tools` would have deleted credentials that the original apps
+ * (sharing this DB and `worker_tools.enc`) still need to re-read. Returns null
+ * when nothing is provisioned or the call fails.
  */
-export const revealWorkerToolsOnce = async (
+export const decryptWorkerTools = async (
   svc: ServiceClient,
   workerId: string,
 ): Promise<Json | null> => {
   try {
-    const { data, error } = await svc.rpc('reveal_worker_tools', {
+    const { data, error } = await svc.rpc('decrypt_worker_tools', {
       p_worker_id: workerId,
     });
     if (error || data === null || data === undefined) return null;
