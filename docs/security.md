@@ -162,9 +162,9 @@ ABC Helper shares its production Supabase project (`cgsidolrauzsowqlllsz`) with 
 original apps, so **this repo's migration lineage must never be pushed to prod**. Two backstops
 enforce that:
 
-- **`pnpm db:guard`** (`scripts/assert-local-supabase-target.mjs`) runs before
-  `supabase db push` (the `db:push` script is `npm run db:guard && supabase db push`). If the
-  checkout is linked to the shared prod ref, it exits `1` loudly:
+- **`db:guard`** (`scripts/assert-local-supabase-target.mjs`) runs before `supabase db push` —
+  the `db:push` script is literally `npm run db:guard && supabase db push` (so the guard can't be
+  skipped via the script). If the checkout is linked to the shared prod ref, it exits `1` loudly:
 
   ```js
   const PROD_REF = 'cgsidolrauzsowqlllsz'; // shared prod — never a repo-migration target

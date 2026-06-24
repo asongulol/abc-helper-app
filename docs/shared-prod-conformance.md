@@ -62,8 +62,9 @@ a local DB that mirrors prod. **Never pushed.**
 | `documents.defer_until` | |
 | index `payments_unfunded_drafts` | Partial index over unfunded wise-initiated drafts. |
 
-(The diff `audit/repo-to-prod-schema-diff-2026-06-22.sql` also lists index
-`service_sessions_external_ref_unq` in this direction.)
+(The diff `audit/repo-to-prod-schema-diff-2026-06-22.sql` also shows the unique index
+`service_sessions_external_ref_uniq` → `service_sessions_external_ref_unq` — a **name divergence**
+between two equivalent indexes, not a missing object; it is not part of migration `019`.)
 
 ### Repo has it, prod lacked it — added to **prod** additively, by hand
 

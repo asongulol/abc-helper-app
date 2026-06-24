@@ -24,7 +24,9 @@ Every action follows the same contract:
   the service-role client (RLS bypassed) repeat this check in code.
 - **Returns a typed `ActionResult`** — `{ ok: true, data }` on success or
   `{ ok: false, error }` on failure (the no-payload form is just `{ ok: true }`).
-  A few read-only files use the equivalent `SimpleResult` / `OnboardingDetailResult`.
+  Some files use structurally-equivalent aliases — `SimpleResult` / `OnboardingDetailResult`
+  (`onboarding.ts`), `WiseActionResult<T>` (`wise.ts`), `ImportActionResult<T>` (`import.ts`),
+  `DocumentsActionResult<T>` (`documents.ts`).
 
 For how these fit into the wider system (RLS, service-role client, the audit
 log, `revalidatePath` cache invalidation), see the architecture overview at
