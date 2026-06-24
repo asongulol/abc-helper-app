@@ -25,6 +25,9 @@
     "changelog": "node scripts/gen-changelog.mjs",
     "dev:bootstrap": "node scripts/dev-bootstrap.mjs",
     "parity:verify": "node scripts/parity-verify.mjs",
+    "docs": "pnpm -C website start",
+    "docs:build": "pnpm -C website build",
+    "docs:serve": "pnpm -C website serve",
     "prepare": "lefthook install"
   },
   "devDependencies": {

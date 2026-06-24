@@ -1,0 +1,52 @@
+openapi: 3.0.3
+info:
+  title: ABC Helper API
+  version: 0.1.0
+  description: >-
+    Seed/example spec so the OpenAPI docs pipeline is wired and demonstrable.
+    Replace with the app's real OpenAPI definition and re-run
+    `pnpm docs:build` (or `pnpm -C website docusaurus gen-api-docs all`).
+servers:
+  - url: https://abc-helper-app.example.com
+    description: Production
+tags:
+  - name: Health
+    description: Liveness / readiness.
+  - name: Cron
+    description: Scheduled jobs, gated by the shared cron secret.
+paths:
+  /api/health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /api/cron/doc-expiry:
+    post:
+      tags: [Cron]
+      summary: Run the document-expiry digest
+      operationId: runDocExpiry
+      description: Sends the contractor document-expiry digest. Requires the cron secret.
+      security:
+        - cronSecret: []
+      responses:
+        '200':
+          description: Digest processed.
+        '401':
+          description: Missing or invalid cron secret.
+components:
+  securitySchemes:
+    cronSecret:
+      type: apiKey
+      in: header
+      name: x-cron-secret

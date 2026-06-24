@@ -19,7 +19,8 @@
       "!supabase/functions",
       "!.claude",
       "!.github/skills",
-      "!.impeccable"
+      "!.impeccable",
+      "!website"
     ]
   },
   "formatter": {
