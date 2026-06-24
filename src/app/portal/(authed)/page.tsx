@@ -50,12 +50,14 @@ export default async function PortalHomePage() {
     fetchOwnProfile(supabase, worker.workerId),
   ]);
 
-  // Greeting name: nickname (profile_extras) → first name.
+  // Greeting name: first name → nickname (profile_extras). First name wins so the
+  // greeting reads "Maria", not a nickname that looks like a clipped first name;
+  // the nickname is still kept and shown on the profile's "About me" tab.
   const extras =
     profile?.profile_extras && typeof profile.profile_extras === 'object'
       ? (profile.profile_extras as Record<string, unknown>)
       : {};
-  const greetName = (String(extras.nickname ?? '').trim() || worker.firstName || '').trim();
+  const greetName = (worker.firstName || String(extras.nickname ?? '').trim() || '').trim();
 
   // Required onboarding docs the contractor still owes (reminder overlay).
   const onbConfig = (settings?.onboarding_config ?? {}) as {
@@ -68,7 +70,8 @@ export default async function PortalHomePage() {
         .filter((d) => d.required !== false && !haveKinds.has(d.kind))
         .map((d) => d.title);
 
-  // Activity %: tracked-weighted per worked day (has activity), most recent 18.
+  // Activity %: tracked-weighted per worked day (has activity), full history —
+  // the portal chart scrolls left/right through every available day (no cap).
   const agg = new Map<string, { s: number; w: number }>();
   for (const t of timeEntries) {
     if (t.activityPct == null) continue;
@@ -78,13 +81,10 @@ export default async function PortalHomePage() {
     a.w += w;
     agg.set(t.workDate, a);
   }
-  const activity = [...agg.keys()]
-    .sort()
-    .map((date) => {
-      const a = agg.get(date);
-      return { date, activity: a ? Math.round(a.s / a.w) : 0 };
-    })
-    .slice(-18);
+  const activity = [...agg.keys()].sort().map((date) => {
+    const a = agg.get(date);
+    return { date, activity: a ? Math.round(a.s / a.w) : 0 };
+  });
 
   // Pay timeline.
   const todayManila = new Intl.DateTimeFormat('en-CA', {

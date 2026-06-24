@@ -12,7 +12,10 @@ type Profile = {
   last_name: string;
   middle_name: string | null;
   email: string | null;
+  work_email: string | null;
   mobile: string | null;
+  work_number: string | null;
+  work_extension: string | null;
   ph_address: string | null;
   permanent_address: string | null;
   address_landmark: string | null;
@@ -39,6 +42,8 @@ type Profile = {
 interface Props {
   profile: Profile;
   editableFields: string[];
+  /** Auth/login email — display fallback when workers.email is blank (mirrors the original). */
+  authEmail?: string | null;
 }
 
 type FieldType = 'text' | 'tel' | 'date';
@@ -152,7 +157,7 @@ const SEC_KEYS = SECS.map(([k]) => k);
 const fullName = (p: NonNullable<Profile>) =>
   [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(' ');
 
-export const PortalProfile = ({ profile, editableFields }: Props) => {
+export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -323,27 +328,28 @@ export const PortalProfile = ({ profile, editableFields }: Props) => {
           </div>
         </div>
         <p className="sub" style={{ margin: '2px 0 0' }}>
-          Personal email {profile.email ?? '—'}
+          Personal email {profile.email || authEmail || '—'}
         </p>
+        {profile.work_email && (
+          <p className="sub" style={{ margin: '2px 0 0' }}>
+            Work email {profile.work_email}
+          </p>
+        )}
+        {profile.work_number && (
+          <p className="sub" style={{ margin: '2px 0 0' }}>
+            Work number {formatPhone(profile.work_number)}
+            {profile.work_extension ? ` ext. ${profile.work_extension}` : ''}
+          </p>
+        )}
         <p className="sub" style={{ margin: '2px 0 0' }}>
           Paid via {profile.payout_method ?? '—'}
         </p>
       </div>
 
       {/* Tabbed profile */}
-      <div
-        role="tablist"
-        aria-label="Profile sections"
-        className="no-print"
-        style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}
-      >
+      <div role="tablist" aria-label="Profile sections" className="ptabs no-print">
         {SECS.map(([k, lbl]) => (
-          <button
-            key={k}
-            type="button"
-            {...tablist.tabProps(k)}
-            className={k === psec ? 'btn sm' : 'btn ghost sm'}
-          >
+          <button key={k} type="button" {...tablist.tabProps(k)} className={k === psec ? 'on' : ''}>
             {lbl}
           </button>
         ))}

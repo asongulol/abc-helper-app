@@ -154,7 +154,7 @@ export const fetchOwnProfile = async (db: Db, workerId: string) => {
   const { data, error } = await db
     .from('workers')
     .select(
-      'id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, date_of_birth, gcash, paymaya, paypal, wise_tag, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, profile_extras, payout_method, status, hire_date',
+      'id, first_name, middle_name, last_name, email, work_email, mobile, work_number, work_extension, ph_address, permanent_address, address_landmark, postal_code, date_of_birth, gcash, paymaya, paypal, wise_tag, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, profile_extras, payout_method, status, hire_date',
     )
     .eq('id', workerId)
     .maybeSingle();

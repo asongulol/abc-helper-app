@@ -9,14 +9,21 @@ export default async function PortalProfilePage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [profile, settings] = await Promise.all([
+  const [profile, settings, { data: auth }] = await Promise.all([
     fetchOwnProfile(supabase, worker.workerId),
     fetchPortalSettings(supabase),
+    supabase.auth.getUser(),
   ]);
 
   const editableFields: string[] = Array.isArray(settings?.editable_fields)
     ? (settings.editable_fields as string[])
     : [];
 
-  return <PortalProfile profile={profile} editableFields={editableFields} />;
+  return (
+    <PortalProfile
+      profile={profile}
+      editableFields={editableFields}
+      authEmail={auth.user?.email ?? null}
+    />
+  );
 }

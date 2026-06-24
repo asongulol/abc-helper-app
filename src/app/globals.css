@@ -2483,9 +2483,13 @@ dialog.modal::backdrop {
   .portal.portal-shell .wrap {
     --cw: 720px;
     max-width: var(--cw);
+    /* Anchor the content just after the sidebar (small fixed gutter) rather than
+       centering it in the leftover width — on wide/ultrawide screens centering
+       opened a large empty gap between the nav and the content. Extra space now
+       spills to the right edge instead. */
+    margin-left: var(--pnav-w);
     margin-right: auto;
-    margin-left: calc(var(--pnav-w) + max(0px, (100% - var(--pnav-w) - var(--cw)) / 2));
-    padding: 24px 28px 44px;
+    padding: 24px 12px 44px;
     transition: margin-left 0.15s ease;
   }
   .portal.portal-shell .pbuild {
@@ -2761,7 +2765,10 @@ dialog.modal::backdrop {
     transform: translateX(14%);
   }
 }
-.wxfx-fog {
+/* On the oversized ::before (inset:-25%), not the exact-fit .wxfx — otherwise the
+   translateX(±18px) drift slides the layer off and exposes bare strips on the
+   left/right edges of the hero (reads as a glitch). */
+.wxfx-fog::before {
   background: linear-gradient(
     180deg,
     rgba(220, 225, 235, 0.12),
@@ -2780,21 +2787,50 @@ dialog.modal::backdrop {
     transform: translateX(18px);
   }
 }
-.wxfx-rain::before,
-.wxfx-storm::before {
-  background-image: repeating-linear-gradient(
-    108deg,
-    transparent 0 5px,
-    rgba(255, 255, 255, 0.4) 5px 7px
-  );
-  animation: wxRain 0.5s linear infinite;
+/* Droplet streaks shared by rain + storm: tiled short ellipses with gaps, on a
+   slight wind-blown tilt (the rotation lives in @keyframes wxRain). Enlarged inset
+   so the tilt never exposes a hero corner; the fall distance equals the tile
+   height → seamless loop. DENSITY (streaks per tile) is set per-variant below so
+   rain and storm can differ. */
+.nyhero .wxfx-rain::before,
+.nyhero .wxfx-storm::before {
+  inset: -70%;
+  background-size: 72px 64px;
+  will-change: transform;
+  backface-visibility: hidden;
+  animation: wxRain 0.6s linear infinite;
+}
+/* Rain — light shower (5 streaks per tile). */
+.nyhero .wxfx-rain::before {
+  background-image:
+    radial-gradient(1.5px 12px at 10% 12%, rgba(255, 255, 255, 0.48), transparent),
+    radial-gradient(1.5px 11px at 34% 56%, rgba(255, 255, 255, 0.42), transparent),
+    radial-gradient(1.5px 13px at 55% 28%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1.5px 10px at 76% 70%, rgba(255, 255, 255, 0.43), transparent),
+    radial-gradient(1.5px 12px at 92% 40%, rgba(255, 255, 255, 0.48), transparent);
+}
+/* Storm — heavy downpour (10 streaks per tile, slightly brighter). */
+.nyhero .wxfx-storm::before {
+  background-image:
+    radial-gradient(1.6px 13px at 6% 8%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.6px 11px at 17% 50%, rgba(255, 255, 255, 0.46), transparent),
+    radial-gradient(1.6px 13px at 28% 24%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.6px 11px at 39% 68%, rgba(255, 255, 255, 0.48), transparent),
+    radial-gradient(1.6px 13px at 50% 14%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.6px 11px at 60% 58%, rgba(255, 255, 255, 0.46), transparent),
+    radial-gradient(1.6px 13px at 71% 32%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1.6px 11px at 82% 74%, rgba(255, 255, 255, 0.47), transparent),
+    radial-gradient(1.6px 13px at 90% 44%, rgba(255, 255, 255, 0.52), transparent),
+    radial-gradient(1.6px 11px at 97% 18%, rgba(255, 255, 255, 0.5), transparent);
 }
 @keyframes wxRain {
+  /* Fall one tile height (background-size Y) → seamless loop; the constant
+     rotate() gives the wind-blown tilt + down-left diagonal fall. */
   from {
-    transform: translate(0, 0);
+    transform: rotate(-12deg) translate3d(0, 0, 0);
   }
   to {
-    transform: translate(-20px, 56px);
+    transform: rotate(-12deg) translate3d(0, 64px, 0);
   }
 }
 .wxfx-snow::before {

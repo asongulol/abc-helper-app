@@ -113,7 +113,7 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
           </button>
         </div>
 
-        <main className="wrap" id="main">
+        <main className={`wrap${pathname === '/portal' ? ' home' : ''}`} id="main">
           {children}
         </main>
 

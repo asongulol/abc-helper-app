@@ -43,12 +43,14 @@ on conflict do nothing;
 -- ---------- approved time for the 2026-06-01..15 period (Ability Builders) ----------
 -- A spread of days so Calculate produces a realistic prorated batch.
 insert into public.time_entries
-  (id, company_id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id)
+  (id, company_id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id, activity_pct)
 select
   gen_random_uuid(),
   'c0000000-0000-0000-0000-000000000001',
   w.id, w.nm, d::date, w.secs, 0, 'approved',
-  'b0000000-0000-0000-0000-000000000001'
+  'b0000000-0000-0000-0000-000000000001',
+  -- deterministic day-varied activity %, ~60–95, so the portal Activity chart has a real trend
+  60 + ((extract(doy from d)::int * 13) % 36)
 from (values
   ('a0000000-0000-0000-0000-000000000001'::uuid, 'Maria Santos',     28800),
   ('a0000000-0000-0000-0000-000000000002'::uuid, 'Jose Rizal',       28800),
@@ -57,3 +59,44 @@ from (values
 cross join generate_series('2026-06-01'::date, '2026-06-12'::date, interval '1 day') as d
 where extract(isodow from d) < 6  -- weekdays only
 on conflict (company_id, source_name, work_date) do nothing;
+
+-- ---------- portal settings: self-service editable allow-list ----------
+-- Mirrors shared prod's portal_settings.editable_fields exactly (the FULL
+-- self-service set, incl. names + date_of_birth + all "About me" fields). Without
+-- this row, editable_fields defaults to '[]' so the contractor portal renders
+-- every profile field read-only ("editing turned off") — which reads as an
+-- "incomplete" profile. Server-side writes are still hard-capped to SAFE_FIELDS.
+insert into public.portal_settings (id, editable_fields) values (1, '[
+  "first_name","middle_name","last_name",
+  "mobile","ph_address","permanent_address","address_landmark","postal_code","date_of_birth",
+  "emergency_name","emergency_relationship","emergency_mobile",
+  "marital_status","education_level","course","year_graduated","school",
+  "gcash","paymaya","paypal","wise_tag",
+  "nickname","favorite_color","favorite_food","tshirt_size","shoe_size","hobbies","motto"
+]'::jsonb)
+on conflict (id) do update set editable_fields = excluded.editable_fields;
+
+-- ---------- prior activity history (Maria) so the portal Activity chart scrolls ----------
+-- ~2 months of approved weekday entries with day-varied activity %, before the active
+-- period above. The portal Home Activity chart renders the FULL history (no cap) and
+-- scrolls left/right, so this gives it something real to scroll through.
+insert into public.time_entries
+  (id, company_id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id, activity_pct)
+select
+  gen_random_uuid(), 'c0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001',
+  'Maria Santos', d::date, 28800, 0, 'approved', 'b0000000-0000-0000-0000-000000000001',
+  60 + ((extract(doy from d)::int * 13) % 36)
+from generate_series('2026-04-01'::date, '2026-05-29'::date, interval '1 day') as d
+where extract(isodow from d) < 6  -- weekdays only
+on conflict (company_id, source_name, work_date) do nothing;
+
+-- Lower a few recent days into the navy (35–59) and amber (<35) activity bands so
+-- the chart's color coding (≥60 green · 35–59 navy · <35 amber) is all visible.
+update public.time_entries t set activity_pct = v.pct
+from (values
+  ('2026-06-03'::date, 54),  -- navy
+  ('2026-06-09'::date, 46),  -- navy
+  ('2026-06-10'::date, 30),  -- amber
+  ('2026-06-11'::date, 23)   -- amber
+) as v(d, pct)
+where t.worker_id = 'a0000000-0000-0000-0000-000000000001' and t.work_date = v.d;

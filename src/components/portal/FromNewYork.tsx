@@ -138,6 +138,18 @@ const WIN: [number, number, number][] = [
   [344, 52, 1.9],
 ];
 
+// Dev-only: force a weather category via ?wx=rain|snow|storm|fog|cloudy|clear to
+// preview the hero FX without waiting for real NYC weather. Gated to
+// non-production below, so it never affects real contractors.
+const FORCE_WX: Record<string, { code: number; temp: number }> = {
+  clear: { code: 0, temp: 72 },
+  cloudy: { code: 3, temp: 66 },
+  fog: { code: 45, temp: 54 },
+  rain: { code: 63, temp: 58 },
+  snow: { code: 73, temp: 30 },
+  storm: { code: 95, temp: 61 },
+};
+
 export const FromNewYork = () => {
   const [mounted, setMounted] = useState(false);
   const [, tick] = useState(0);
@@ -145,6 +157,7 @@ export const FromNewYork = () => {
     temperature_2m: number;
     weather_code: number;
   } | null>(null);
+  const [forcedWx, setForcedWx] = useState<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -161,6 +174,13 @@ export const FromNewYork = () => {
         if (d?.current) setWx(d.current);
       })
       .catch(() => {});
+  }, []);
+
+  // Dev-only weather override from the URL (?wx=rain|snow|storm|fog|cloudy|clear).
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return;
+    const p = new URLSearchParams(window.location.search).get('wx');
+    if (p && FORCE_WX[p]) setForcedWx(p);
   }, []);
 
   const fmt = (tz: string) =>
@@ -190,9 +210,12 @@ export const FromNewYork = () => {
     (Date.UTC(yy ?? 2026, (mm ?? 1) - 1, dd ?? 1) - Date.UTC(yy ?? 2026, 0, 1)) / 86400000,
   );
   const fact = NYC_TRIVIA[doy % NYC_TRIVIA.length];
-  const [, wicon] = (wx && WCODE[wx.weather_code]) || ['', ''];
-  const wxStr = wx ? ` · ${wicon || '🌡️'} ${Math.round(wx.temperature_2m)}°F` : '';
-  const wxcat = wx ? wxCategory(wx.weather_code) : null;
+  const forced = forcedWx ? FORCE_WX[forcedWx] : null;
+  const fcode = forced ? forced.code : wx?.weather_code;
+  const ftemp = forced ? forced.temp : wx?.temperature_2m;
+  const [, wicon] = (fcode != null && WCODE[fcode]) || ['', ''];
+  const wxStr = fcode != null ? ` · ${wicon || '🌡️'} ${Math.round(ftemp ?? 0)}°F` : '';
+  const wxcat = forcedWx ?? (wx ? wxCategory(wx.weather_code) : null);
 
   return (
     <div className="nyhero" style={{ background: ph.grad }}>
