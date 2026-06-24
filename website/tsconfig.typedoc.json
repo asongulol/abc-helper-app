@@ -1,0 +1,12 @@
+{
+  "//": "Minimal tsconfig for TypeDoc — scoped to the documented entry points ONLY, not the app's root tsconfig (which includes every .tsx and needs the app's React deps that aren't installed in the docs-only build).",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": []
+  },
+  "include": ["../src/lib/format.ts"]
+}

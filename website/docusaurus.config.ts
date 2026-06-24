@@ -101,9 +101,12 @@ const config: Config = {
       'docusaurus-plugin-typedoc',
       {
         entryPoints: ['../src/lib/format.ts'],
-        tsconfig: '../tsconfig.json',
+        // Scoped tsconfig (not the app root) so TypeDoc only compiles the entry
+        // points — the docs build doesn't install the app's React deps.
+        tsconfig: './tsconfig.typedoc.json',
         out: 'reference/code',
         readme: 'none',
+        skipErrorChecking: true,
       },
     ],
     // API reference generated from the OpenAPI spec into the reference tree.
