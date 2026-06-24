@@ -1,8 +1,14 @@
+import fs from 'node:fs';
 import type * as Preset from '@docusaurus/preset-classic';
 import type { Config } from '@docusaurus/types';
 import { themes as prismThemes } from 'prism-react-renderer';
 
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
+
+// `showLastUpdate*` reads git history per file; build hosts that deploy without a
+// .git worktree (e.g. Vercel CLI uploads) throw "outside any Git worktree". Enable
+// it only when a .git dir is present (local + git-based deploys). cwd is website/.
+const repoHasGit = fs.existsSync('../.git');
 
 const config: Config = {
   title: 'ABC Helper Docs',
@@ -50,8 +56,8 @@ const config: Config = {
           routeBasePath: '/',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/asongulol/abc-helper-app/tree/main/docs/',
-          showLastUpdateTime: true,
-          showLastUpdateAuthor: true,
+          showLastUpdateTime: repoHasGit,
+          showLastUpdateAuthor: repoHasGit,
         },
         blog: false,
         theme: {
