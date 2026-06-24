@@ -51,10 +51,11 @@ complete column list, constraints, indexes, and foreign keys.
 
 | Table | Key columns | Purpose |
 |---|---|---|
-| `worker_companies` | `worker_id`, `company_id`, `contract` (`FT`/`PT`/`PHS`), `pay_basis`, `bill_rate_usd`, `session_rate_usd`, `hubstaff_user_id`, `status`, `weekly_hours` | The engagement: links a worker to a company with contract type, billing/pay basis, and the Hubstaff id used for time matching. |
+| `worker_companies` | `worker_id`, `company_id`, `contract` (`FT`/`PT`/`PH`/`PS`/`PHS`), `pay_basis`, `bill_rate_usd`, `session_rate_usd`, `hubstaff_user_id`, `status`, `weekly_hours` | The engagement: links a worker to a company with contract type, billing/pay basis, and the Hubstaff id used for time matching. |
 | `rates` | `worker_id`, `company_id`, `amount_php`, `effective_start`, `effective_end`, `period_basis` | Effective-dated PHP pay rate. `effective_end` NULL = open; resolved against the period (see [Money core spec](./money-core-spec.md)). |
 
-The `contract_type` enum is `FT`, `PT`, `PHS` (per migration `00000000000019_prod_parity_columns.sql`).
+The `contract_type` enum is `FT`, `PT` (baseline), `PH`, `PS` (migration `00000000000013`), and
+`PHS` (migration `00000000000019_prod_parity_columns.sql`).
 For `PHS`, `worker_companies.pay_basis` (`hourly` / `per_session`) decides how pay is computed;
 an unset `pay_basis` is paid nothing (never guessed).
 

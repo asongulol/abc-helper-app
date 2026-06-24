@@ -38,7 +38,10 @@ event. The `/coverage` page uses `fetchCoverageRoster()` to drive the management
 
 ## Reports
 
-Four report shapes, all PHP money carried as **integer centavos** until the display/CSV boundary.
+Four report shapes. Money representation differs by path: the **CSV-export** queries
+(`src/db/queries/reports.ts`) carry PHP as **integer centavos**, while the main Reports data and
+overview queries (`src/server/actions/reports-detail.ts`) carry PHP as **major units** — integer
+centavos are used for accumulation in the CSV and sparkline math, not across the whole feature.
 
 | Report | Entry | Grain |
 |---|---|---|
@@ -47,11 +50,11 @@ Four report shapes, all PHP money carried as **integer centavos** until the disp
 | **Contractor history** | `getContractorHistory()` | per-worker pay statements merged with time entries, by period |
 | **Utilization** | `getUtilization()` | per-worker, per week (Mon–Sun): avg `activity_pct` + tracked hours |
 
-`getReportsData()` pages the full payments set (working around PostgREST's 1000-row limit),
-groups by period, and aggregates per contractor — a faithful port of the legacy
-`Reports()` / `PerContractorSummary()`. The underlying queries
-(`fetchReportPeriods`, `fetchContractorYtd`, `fetchReportPayments` in `src/db/queries/reports.ts`)
-return centavos.
+`getReportsData()` (in `reports-detail.ts`) pages the full payments set (working around
+PostgREST's 1000-row limit), groups by period, and aggregates per contractor — a faithful port of
+the legacy `Reports()` / `PerContractorSummary()`. The separate CSV-export query module
+(`fetchReportPeriods`, `fetchContractorYtd`, `fetchReportPayments` in `src/db/queries/reports.ts`),
+used by `getReportDetail()`, returns centavos.
 
 **CSV export** is pure (`src/lib/reports/csv.ts`): `buildPeriodSummaryCsv()` and
 `buildPaymentDetailCsv()` format money as PHP 2 dp with CSV-safe escaping; `downloadCsv()`

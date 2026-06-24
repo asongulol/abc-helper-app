@@ -75,9 +75,14 @@ fund it.
 ## Payment lifecycle (Wise columns)
 
 ```
-open  →  draft           wiseDraft / wiseBatch: wise_transfer_id + fx_rate written
-      →  sent            wisePoll / wiseMatch: terminal Wise status → paid_at, wise_dates, wise_locked_at
+draft   from Calculate (see Pay pipeline)
+draft   wiseDraft / wiseBatch: write wise_transfer_id + fx_rate  (status UNCHANGED)
+sent    wisePoll / wiseMatch: terminal Wise status → status=sent, paid_at, wise_dates, wise_locked_at
 ```
+
+A payment is born `draft`; `wiseDraft`/`wiseBatch` only annotate it (`wise_transfer_id`,
+`fx_rate`) — they do **not** change `status`. Only the reconcile step flips `draft → sent`.
+(`open`/`paid` are *pay-period* states, not payment statuses — see [Pay pipeline](./pay-pipeline.md).)
 
 Relevant `payments` columns: `wise_transfer_id`, `fx_rate`, `wise_dates` (jsonb
 `{created, dateFunded, dateSent}`), `wise_locked_at` (once set, locks payout fields), `paid_at`,

@@ -11,9 +11,10 @@ stage 4 of the [Pay pipeline](./pay-pipeline.md).
 
 ## Employer vs. client
 
-- The **employer** company (`companies.kind = 'employer'`) owns all `time_entries`. It's resolved
-  by `fetchEmployerCompanyId()` (`src/db/queries/invoicing.ts`), with `EMPLOYER_COMPANY_ID` as an
-  optional override.
+- The **employer** company (`companies.kind = 'employer'`) owns all `time_entries`. On the
+  invoicing path it's resolved purely by `fetchEmployerCompanyId()` (`src/db/queries/invoicing.ts`)
+  from `companies.kind = 'employer'` — no env override. (The `EMPLOYER_COMPANY_ID` override lives
+  in `getEmployerCompanyId()` in `src/server/company.ts`, used by the Hubstaff-sync path, not here.)
 - **Client** companies (`companies.kind = 'client'`, `status = 'active'`) are who you invoice.
   `fetchActiveClients()` lists them for the picker.
 - Per-client billing rates live on the `worker_companies` link: **`bill_rate_usd`** (hourly) and
@@ -50,8 +51,8 @@ admin's company scope). Inputs are Zod-validated `{ clientId, from, to, markupPc
   (`zeroRateNames`, `zeroSessionRateNames`).
 - **`generateInvoice()`** — recomputes fresh, rejects if there are no billable lines, allocates an
   invoice number, and inserts the header + lines atomically. Returns the `invoiceNo`.
-- **`setInvoiceStatus()`** — `draft` / `sent` / `void` (status only; `paid` is **not** allowed
-  here — use `markInvoicePaid`).
+- **`setInvoiceStatus()`** — `draft` / `sent` / `void` (status only; `paid` is rejected by the
+  action's own guard — not the input schema — so use `markInvoicePaid` instead).
 - **`markInvoicePaid()`** — sets `status = 'paid'` and records the AR receipt
   (`amount_received_usd`, `received_on`, `payment_ref`).
 

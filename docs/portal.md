@@ -31,7 +31,8 @@ the `FromNewYork` hero, the docs-reminder overlay, and the tools popup.
 
 - **Login** (`/portal/login`): email + password via `supabase.auth.signInWithPassword()`
   (optional Cloudflare Turnstile), with self-serve password reset. No SSO domain gate (contractors
-  use personal emails).
+  use personal emails). The form is `src/components/auth/PortalLoginForm.tsx` (under `auth/`, not
+  `portal/`).
 - **Session**: `getCurrentWorker()` (`src/server/auth/worker.ts`) resolves the Supabase user →
   `contractor_logins` (where `status = 'active'`) → `workers`, and calls `is_onboarded()`. The
   `(authed)` layout redirects to `/portal/login` if there's no worker.
@@ -64,6 +65,10 @@ Via `src/db/queries/portal.ts`, all RLS-scoped to the worker:
 `is_onboarded()`), `fetchOwnOnboarding` (progress + signatures + agreements), `fetchOwnNotifications`
 / `dismissNotification`, `fetchAnnouncements`, `fetchLatestMoodCheckin` / `insertMoodCheckin`, and
 `fetchPortalSettings`.
+
+> The **Sessions** tab is the exception: its reads (`fetchWorkerClients` / `fetchWorkerSessions` in
+> `src/db/queries/sessions.ts`) go through a worker-filtered **service** client, because
+> `worker_companies` / `companies` are admin-only under RLS.
 
 ## Contractor actions
 

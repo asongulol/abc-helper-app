@@ -13,8 +13,10 @@ calculation. This is stage 2 of the [Pay pipeline](./pay-pipeline.md).
 The client (`src/server/hubstaff/client.ts`) authenticates with a **rotating refresh token**:
 
 - `HUBSTAFF_REFRESH_TOKEN` (server-only) is exchanged at `https://account.hubstaff.com/access_tokens`
-  for an access token. `HUBSTAFF_API_BASE` overrides the API base (default
-  `https://api.hubstaff.com/v2`; used to point at a mock in tests).
+  for an access token. The API base is a hardcoded constant `HUBSTAFF_API_BASE`
+  (`https://api.hubstaff.com/v2`) in `src/server/hubstaff/client.ts`; a same-named
+  `HUBSTAFF_API_BASE` env var is declared in `src/server/env.ts` but is **not** currently wired
+  into the client.
 - `getAccessToken()` caches the access token in the `api_tokens` table and reuses it while it has
   > 5 min of life. **Hubstaff rotates the refresh token on every exchange**, so the new one is
   persisted back (best-effort — a failed save doesn't abort the sync).
@@ -37,8 +39,8 @@ Step by step:
 4. Build a **worker match index** (`buildWorkerMatchIndex()`) from employer-wide
    `worker_companies` links, with three priority tiers: numeric `hubstaff_user_id` → strict name
    key → loose name key (`nameKey`/`looseKey` from `src/lib/names`).
-5. Resolve a stable `source_name` per worker (`resolveSourceName()`, using
-   `fetchCanonicalSourceNames()`) so re-syncs hit the same upsert key.
+5. Build a canonical `source_name` map (`fetchCanonicalSourceNames()`) so re-syncs hit the same
+   upsert key — the `resolveSourceName()` lookup itself runs inside the transform (next step).
 6. Run the pure `transformActivities()`: match each user to a worker, skip unmatched (collected
    into `unmatched[]`), and emit rows.
 7. **Upsert** via `upsertTimeEntries()` on the conflict key **`(company_id, source_name, work_date)`** —

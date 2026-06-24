@@ -40,8 +40,10 @@ XSS-hardened in `src/lib/agreements/merge.ts`:
   (`src/server/actions/onboarding.ts`): `f_position`, `f_rate` (semi-monthly), `f_start_date`,
   `f_company_name`, `f_employment_type`, `f_hours_per_week`, `f_schedule`.
   `monthlyFromPeriod()` derives the monthly figure (× 2) for display.
-- Signatures are validated by `safeSigImg()` — a drawn signature must be a bounded
-  `data:image/(png|jpe?g|webp);base64,…` (no quotes/`<`, ≤ ~1.4 MB) or it's rejected.
+- Drawn signatures are validated on two paths: `signAgreement()` checks an inline
+  `data:image/(png|jpe?g|webp);base64,…` regex with a **1 MB** cap; `safeSigImg()`
+  (`src/lib/agreements/merge.ts`, ≤ ~1.4 MB, no quotes/`<`) is the **render-time** XSS guard used
+  by `renderAgreementParts()`.
 - `renderAgreementParts()` returns structured, escape-safe parts for JSX rendering.
 
 ### Signing + countersign
@@ -73,12 +75,13 @@ validates type (PDF/JPG/PNG) and size (≤ 10 MB), uploads to the **`contractor-
 storage bucket at `{userId}/{kind}/{timestamp}-{side?}-{name}`, and inserts a `documents` row at
 `review_status='pending'`. NBI clearance requires an `issuedOn` date.
 `fetchOutstandingDocSlots()` tells the contractor what's still owed, built from
-`portal_settings.onboarding_config.documents`.
+`portal_settings.onboarding_config.documents` (falling back to a default required-doc list when
+none are configured).
 
-**Review (admin)** — `reviewDocument()` approves or flags `needs_replacement` (with a reason);
-`resolveMissingDocument()` waives/defers a doc that was never uploaded (a "fileless" row with
-`storage_path = null`); `clearMissingDocumentResolution()` reverts that. Every change triggers
-`recomputeStage3()`. The checklist itself is computed purely by `deriveDocChecklist()`
+**Review (admin)** (`src/server/actions/portal.ts`) — `reviewDocument()` approves or flags
+`needs_replacement` (with a reason); `resolveMissingDocument()` waives/defers a doc that was never
+uploaded (a "fileless" row with `storage_path = null`); `clearMissingDocumentResolution()` reverts
+that. Each of these review actions triggers `recomputeStage3()` (the contractor upload does not). The checklist itself is computed purely by `deriveDocChecklist()`
 (`src/lib/onboarding/documents.ts`), which expands required docs into per-side slots and resolves
 the latest upload per slot.
 

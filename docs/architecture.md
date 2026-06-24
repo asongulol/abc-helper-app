@@ -99,7 +99,8 @@ Two database clients exist, chosen deliberately:
 
 - `createServerSupabase()` — **anon key + RLS**, cookie-backed. The default for user-scoped work.
 - `createServiceClient()` — **service-role**, bypasses RLS. Used only after an explicit admin
-  role check (e.g. creating an auth user). Never reaches the browser bundle (`server-only`).
+  role check (e.g. creating an auth user). Server-side only — it reads `SUPABASE_SERVICE_KEY` and
+  must never be imported into client code.
 
 ## Where things live
 
@@ -112,14 +113,14 @@ src/
     auth/callback/          OAuth callback (SSO domain gate)
     login/, portal/login/   Public sign-in pages
   server/
-    actions/                'use server' mutations — the app's "API" (22 files)
+    actions/                'use server' mutations — the app's "API" (23 files)
     auth/                   Session resolvers + SSO domain allowlist
     <domain>/               Service orchestration (payroll, hubstaff, wise, documents, …)
     crypto/                 PHI envelope encryption (local key or AWS KMS)
     env.ts                  Zod-validated environment (fail-fast at boot)
   db/
     clients/                createServerSupabase (RLS) / createServiceClient (service-role)
-    queries/                Typed read/write helpers (17 modules; db injected)
+    queries/                Typed read/write helpers (18 modules; db injected)
   lib/                      Pure, DB-free logic — money, dates, pay, payroll mappers, …
   proxy.ts                  Single-origin path + role gate
 ```

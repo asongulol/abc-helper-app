@@ -38,7 +38,7 @@ linking the worker to the employer company) and an effective-dated **rate**.
   model** (see stage 3).
 - Rates are effective-dated and written by `saveRate()` (`src/server/actions/payroll.ts` →
   `src/db/queries/rates.ts`): a same-day rate replaces in place; otherwise the prior open rate
-  is closed (`effective_end`) and a new row inserted. Resolution per period is `rateFor()` /
+  is closed (`effective_end`) and a new row inserted. Resolution per period is
   `resolveRate()` (`src/lib/pay/rates.ts`) — see [Money core spec §5](./money-core-spec.md).
 
 **Contract types** (`src/lib/pay/expected-hours.ts`):
@@ -127,15 +127,21 @@ Independent of payouts — this bills the **client** company for work, in USD.
   `src/server/wise/service.ts` and the `src/server/wise/client.ts` API client.
 - Per payment: resolve the worker's Wise recipient → get a quote (PHP → recipient currency) →
   create a **draft** transfer → write `wise_transfer_id` and `fx_rate` back to the payment row.
-- `wisePoll(paymentIds)` reconciles transfer status over time; `wiseMatch()` links a transfer
+- `wisePoll()` reconciles transfer status over time; `wiseMatch()` links a transfer
   to a payment when auto-match fails.
 
 ## 6. Payment records
 
-Payment lifecycle: **open** (from lock) → **draft** (Wise transfer created, unfunded) →
-**sent** (transfer moved, status polled) → **paid** (received; AR receipt optionally recorded).
-The same payment rows produced in stage 3 carry through stages 5–6; `src/db/queries/payroll.ts`
-holds the lock/unlock/mark-paid helpers and the snapshot row type used for undo.
+Two lifecycles run in parallel — don't conflate them:
+
+- A **payment**'s `status` is `draft` (from Calculate) → `sent` (Wise reconcile marks it);
+  `queued`, `failed`, and `reconciled` are the other `payment_status` values. Note
+  `markPaymentsPaid()` sets `status = 'sent'`, **not** a `paid` status.
+- A **pay period**'s `state` is `open → locked → paid`, reaching `paid` once all its payment rows
+  are `sent`/`reconciled`.
+
+The payment rows produced in stage 3 carry through stages 5–6; `src/db/queries/payroll.ts` holds
+the lock/unlock/mark-paid helpers and the snapshot row type used for undo.
 
 ---
 
