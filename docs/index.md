@@ -9,6 +9,12 @@ sidebar_position: 0
 Payroll pipeline — contractor onboarding → Hubstaff time tracking → pay calculation →
 invoicing → Wise payments — plus the self-serve contractor portal.
 
+## Start here
+
+- [Architecture overview](./architecture.md) — the two surfaces, the request lifecycle, where code lives
+- [Local development](./local-development.md) — clone → running app + admin & portal logins
+- [Pay pipeline](./pay-pipeline.md) — onboarding → time → pay → invoicing → Wise, end to end
+
 ## Runbooks & deploy
 
 - [Cutover runbook](./CUTOVER-RUNBOOK.md)
