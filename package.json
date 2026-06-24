@@ -28,7 +28,7 @@
     "docs": "pnpm -C website start",
     "docs:build": "pnpm -C website build",
     "docs:serve": "pnpm -C website serve",
-    "prepare": "lefthook install"
+    "prepare": "lefthook install || true"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
