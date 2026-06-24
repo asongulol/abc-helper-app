@@ -150,8 +150,8 @@ export const PortalPayActivity = ({ pay, activity }: Props) => {
         <div className="card">
           <div className="row" style={{ padding: 0, alignItems: 'baseline', gap: 8 }}>
             <p className="sub" style={{ marginTop: 0, marginBottom: 8, flex: 1 }}>
-              Your activity % on each logged day (last {activity.length}) — scroll for more · line =
-              3-day trend.
+              Your activity % per logged day ({activity.length} total) — scroll left/right for the
+              full history · line = 3-day trend.
             </p>
             {avg != null && (
               <span

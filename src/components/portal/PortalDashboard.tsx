@@ -137,7 +137,10 @@ export const PortalDashboard = ({
       .toUpperCase() || '?';
 
   return (
-    <div className="wrap home">
+    // Fragment, not a nested `.wrap home`: the shell's <main className="wrap home">
+    // already provides the grid + layout margin. A second .wrap here doubled the
+    // left margin (each .wrap re-applies margin-left), shoving content far right.
+    <>
       <ToolsPopup pending={toolsPending} />
       <DocReminderOverlay docs={pendingDocs} />
 
@@ -216,6 +219,6 @@ export const PortalDashboard = ({
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 };
