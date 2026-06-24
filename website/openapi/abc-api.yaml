@@ -3,50 +3,219 @@ info:
   title: ABC Helper API
   version: 0.1.0
   description: >-
-    Seed/example spec so the OpenAPI docs pipeline is wired and demonstrable.
-    Replace with the app's real OpenAPI definition and re-run
-    `pnpm docs:build` (or `pnpm -C website docusaurus gen-api-docs all`).
+    HTTP surface for the ABC Helper payroll app.
+
+
+    The application's data/mutation API is implemented as **Next.js Server
+    Actions** (`'use server'`), not REST — see the Server Actions reference
+    (`/reference/server-actions`) for the full mutation surface. This OpenAPI
+    spec documents only the **three real HTTP route handlers** that the app
+    exposes:
+
+      * `POST /api/cron/doc-expiry` — scheduled document-expiry digest.
+      * `POST /api/cron/hiring-review` — scheduled hiring-docs-review digest.
+      * `GET  /auth/callback` — Supabase OAuth / magic-link callback.
+
+    The two cron routes are gated by a shared `x-cron-secret` header. The auth
+    callback exchanges a Supabase auth code for a session cookie and then
+    redirects; it carries no security scheme of its own.
 servers:
   - url: https://abc-helper-app.example.com
     description: Production
 tags:
-  - name: Health
-    description: Liveness / readiness.
   - name: Cron
-    description: Scheduled jobs, gated by the shared cron secret.
+    description: Scheduled jobs, gated by the shared `x-cron-secret` header.
+  - name: Auth
+    description: Supabase OAuth / magic-link callback.
 paths:
-  /api/health:
-    get:
-      tags: [Health]
-      summary: Health check
-      operationId: getHealth
-      responses:
-        '200':
-          description: Service is healthy.
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ok
   /api/cron/doc-expiry:
     post:
       tags: [Cron]
       summary: Run the document-expiry digest
       operationId: runDocExpiry
-      description: Sends the contractor document-expiry digest. Requires the cron secret.
+      description: >-
+        Runs the contractor document-expiry check with email **enabled** and
+        sends the admin digest. Invoked by the scheduler; gated by
+        `x-cron-secret`. Returns counts of overdue and soon-to-expire documents
+        and whether the digest email was sent.
       security:
         - cronSecret: []
       responses:
         '200':
           description: Digest processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocExpiryResult'
         '401':
           description: Missing or invalid cron secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CronError'
+        '500':
+          description: The expiry check threw.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CronError'
+  /api/cron/hiring-review:
+    post:
+      tags: [Cron]
+      summary: Run the hiring-docs-review digest
+      operationId: runHiringReview
+      description: >-
+        Honors the admin's `reminders` config (enabled / frequency / send_to /
+        include_deferred). The scheduler fires this daily; the route decides
+        whether today actually emails and to whom. Gated by `x-cron-secret`.
+
+
+        When the configured cadence means today should not send, the response
+        is the *skipped* shape (`skipped: true`); otherwise it returns the
+        pending / deferred document counts and whether the digest was emailed.
+      security:
+        - cronSecret: []
+      responses:
+        '200':
+          description: Digest processed (either sent or deliberately skipped).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/HiringReviewResult'
+                  - $ref: '#/components/schemas/HiringReviewSkipped'
+        '401':
+          description: Missing or invalid cron secret.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CronError'
+        '500':
+          description: The hiring-review check threw.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CronError'
+  /auth/callback:
+    get:
+      tags: [Auth]
+      summary: Supabase OAuth / magic-link callback
+      operationId: authCallback
+      description: >-
+        Exchanges a Supabase auth `code` for a session cookie, then redirects.
+
+
+        Admin SSO domain gate: a federated (Google) sign-in is the admin SSO
+        path, so its email must be on an allowed work domain
+        (`ADMIN_SSO_ALLOWED_DOMAIN`). A non-workspace federated account is
+        signed out before it holds a usable session and bounced to
+        `/login?error=domain`. Contractor password-reset links also pass
+        through here on the `email` provider and are deliberately not gated.
+
+
+        On any path this handler responds with a 302 redirect — it never
+        returns a JSON body.
+      parameters:
+        - name: code
+          in: query
+          required: false
+          description: >-
+            Supabase auth code to exchange for a session. When absent, the
+            handler skips the exchange and redirects straight to `next`.
+          schema:
+            type: string
+        - name: next
+          in: query
+          required: false
+          description: >-
+            Post-login redirect target. Sanitized to a same-site, path-only
+            value (open-redirect guard); anything else collapses to `/`.
+          schema:
+            type: string
+            default: /
+      responses:
+        '302':
+          description: >-
+            Redirect. On success: to the sanitized `next` target. On a failed
+            code exchange: to `/login?error=oauth`. On an SSO-domain rejection:
+            to `/login?error=domain`.
+          headers:
+            Location:
+              description: The redirect target URL.
+              schema:
+                type: string
 components:
   securitySchemes:
     cronSecret:
       type: apiKey
       in: header
       name: x-cron-secret
+  schemas:
+    DocExpiryResult:
+      type: object
+      description: Successful document-expiry digest result.
+      required: [ok, overdue, expiringSoon, emailed]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        overdue:
+          type: integer
+          description: Number of documents already past their expiry date.
+        expiringSoon:
+          type: integer
+          description: Number of documents expiring within the classification window (default 30 days).
+        emailed:
+          type: boolean
+          description: Whether the digest email was sent successfully.
+        emailError:
+          type: string
+          description: Present only when an email send was attempted and failed.
+    HiringReviewResult:
+      type: object
+      description: Hiring-docs-review digest that actually ran (and may have emailed).
+      required: [ok, pendingDocs, deferredDocs, emailed]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        pendingDocs:
+          type: integer
+          description: Documents waiting for HR review.
+        deferredDocs:
+          type: integer
+          description: Deferred documents flagged for follow-up.
+        emailed:
+          type: boolean
+          description: Whether the review digest email was sent successfully.
+        emailError:
+          type: string
+          description: Present only when an email send was attempted and failed.
+    HiringReviewSkipped:
+      type: object
+      description: >-
+        Returned when the configured cadence means today should not send (e.g.
+        reminders disabled, or not the scheduled frequency day).
+      required: [ok, skipped]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        skipped:
+          type: boolean
+          enum: [true]
+        reason:
+          type: string
+          description: Why the run was skipped.
+          enum: [disabled, frequency]
+    CronError:
+      type: object
+      description: Error envelope returned by the cron routes on 401 / 500.
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          enum: [false]
+        error:
+          type: string
+          example: unauthorized
