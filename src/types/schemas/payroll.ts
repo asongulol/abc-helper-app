@@ -6,13 +6,14 @@
 
 import { z } from 'zod';
 import { periodFor } from '@/lib/dates/periods';
+import { uuid } from './uuid';
 
 export const IsoDateSchema = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
 export const PeriodKeySchema = z.object({
-  companyId: z.string().uuid(),
+  companyId: uuid(),
   periodStart: IsoDateSchema,
   periodEnd: IsoDateSchema,
 });
@@ -29,8 +30,8 @@ export const MiscItemSchema = z.object({
 
 /** Effective-dated rate save (legacy `saveRate`/`upsertRate`). PHP major units. */
 export const RateSaveSchema = z.object({
-  workerId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  workerId: uuid(),
+  companyId: uuid(),
   amountPhp: z.number().positive().multipleOf(0.01),
   effectiveStart: IsoDateSchema,
 });
@@ -79,8 +80,8 @@ export const UnlockPeriodSchema = PeriodKeySchema.extend({
 export type UnlockPeriodInput = z.infer<typeof UnlockPeriodSchema>;
 
 export const UpdatePaymentRowSchema = z.object({
-  paymentId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  paymentId: uuid(),
+  companyId: uuid(),
   /** PHP major units — null = clear the override */
   grossPhpOverride: z.number().positive().nullable().optional(),
   haPhp: z.number().min(0).optional(),
@@ -95,15 +96,15 @@ export type UpdatePaymentRowInput = z.infer<typeof UpdatePaymentRowSchema>;
 
 /** F6: restore a recalc undo snapshot (full payment rows captured pre-recalc). */
 export const RestoreSnapshotSchema = z.object({
-  companyId: z.string().uuid(),
-  periodId: z.string().uuid(),
+  companyId: uuid(),
+  periodId: uuid(),
   snapshot: z.array(z.record(z.string(), z.unknown())),
 });
 export type RestoreSnapshotInput = z.infer<typeof RestoreSnapshotSchema>;
 
 export const DeleteStatementSchema = z.object({
-  paymentId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  paymentId: uuid(),
+  companyId: uuid(),
 });
 export type DeleteStatementInput = z.infer<typeof DeleteStatementSchema>;
 
@@ -111,27 +112,27 @@ export const DeleteAllStatementsSchema = PeriodKeySchema;
 export type DeleteAllStatementsInput = z.infer<typeof DeleteAllStatementsSchema>;
 
 export const MarkPaidSchema = z.object({
-  paymentIds: z.array(z.string().uuid()).min(1),
-  companyId: z.string().uuid(),
+  paymentIds: z.array(uuid()).min(1),
+  companyId: uuid(),
   paidAt: z.string().datetime().optional(),
 });
 export type MarkPaidInput = z.infer<typeof MarkPaidSchema>;
 
 export const MarkUnpaidSchema = z.object({
-  paymentIds: z.array(z.string().uuid()).min(1),
-  companyId: z.string().uuid(),
+  paymentIds: z.array(uuid()).min(1),
+  companyId: uuid(),
 });
 export type MarkUnpaidInput = z.infer<typeof MarkUnpaidSchema>;
 
 export const MarkAllUnpaidSchema = z.object({
-  periodId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  periodId: uuid(),
+  companyId: uuid(),
 });
 export type MarkAllUnpaidInput = z.infer<typeof MarkAllUnpaidSchema>;
 
 export const ToggleWiseRowLockSchema = z.object({
-  paymentId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  paymentId: uuid(),
+  companyId: uuid(),
   /** Lock: provide a timestamp. Unlock: omit or null. */
   lockedAt: z.string().datetime().nullable().optional(),
   reason: z.string().min(1).optional(),

@@ -15,11 +15,12 @@ import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { syncHubstaffForCompany } from '@/server/hubstaff/service';
+import { uuid } from '@/types/schemas/uuid';
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
 
 const SyncHubstaffSchema = z.object({
-  companyId: z.string().uuid('companyId must be a UUID'),
+  companyId: uuid('companyId must be a UUID'),
   /** Explicit 'YYYY-MM-DD' start; omit to use the default lookback window. */
   periodStart: z
     .string()

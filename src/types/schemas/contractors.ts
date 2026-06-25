@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { uuid } from './uuid';
 
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
@@ -74,7 +75,7 @@ const requirePayBasisForPhs = (
 /** Create a minimal contractor (quick-add) and link to a company. */
 export const AddContractorSchema = z
   .object({
-    companyId: z.string().uuid(),
+    companyId: uuid(),
     firstName: z.string().min(1, 'First name required').max(80),
     lastName: z.string().min(1, 'Last name required').max(80),
     contract: ContractTypeSchema.default('FT'),
@@ -88,8 +89,8 @@ export type AddContractorInput = z.infer<typeof AddContractorSchema>;
 /** Worker profile fields the admin can edit. */
 export const SaveWorkerProfileSchema = z
   .object({
-    workerId: z.string().uuid(),
-    companyId: z.string().uuid(),
+    workerId: uuid(),
+    companyId: uuid(),
     // worker table fields
     firstName: z.string().min(1).max(80),
     middleName: z.string().max(80).nullable(),
@@ -149,8 +150,8 @@ export type SaveWorkerProfileInput = z.infer<typeof SaveWorkerProfileSchema>;
 
 /** Deactivate/reactivate a worker's link to a company. */
 export const SetLinkStatusSchema = z.object({
-  workerId: z.string().uuid(),
-  companyId: z.string().uuid(),
+  workerId: uuid(),
+  companyId: uuid(),
   active: z.boolean(),
 });
 export type SetLinkStatusInput = z.infer<typeof SetLinkStatusSchema>;
@@ -174,7 +175,7 @@ export const HireToolsSchema = z.object({
  */
 export const HireContractorSchema = z
   .object({
-    companyId: z.string().uuid(),
+    companyId: uuid(),
     // Step 1 — Identity
     firstName: z.string().min(1, 'First name required').max(80),
     middleName: z.string().max(80).nullable().default(null),
@@ -203,7 +204,7 @@ export const HireContractorSchema = z
     shiftEnd: z.string().max(5).nullable().default(null),
     /** Schedule label snapshot for the agreements (e.g. "8:00 AM – 5:00 PM Eastern Time"). */
     shiftLabel: z.string().max(120).nullable().default(null),
-    countersignerUserId: z.string().uuid().nullable().default(null),
+    countersignerUserId: uuid().nullable().default(null),
     countersignerName: z.string().max(120).nullable().default(null),
     icAddendumType: IcAddendumTypeSchema.default(''),
     icAddendumText: z.string().max(5000).nullable().default(null),
@@ -211,7 +212,7 @@ export const HireContractorSchema = z
     // Step 2 — client invoicing (optional): assign the provider to a client and
     // set that client's USD bill rate (+ a per-session rate when enabled). These
     // attach to the client's worker_companies link, not the (employer) pay link.
-    invoiceClientId: z.string().uuid().nullable().default(null),
+    invoiceClientId: uuid().nullable().default(null),
     billRateUsd: z.number().min(0).max(100000).nullable().default(null),
     perSession: z.boolean().default(false),
     sessionRateUsd: z.number().min(0).max(100000).nullable().default(null),
@@ -232,7 +233,7 @@ export type HireContractorInput = z.infer<typeof HireContractorSchema>;
 
 /** Full contractor deletion — `force` clears past the signatures/documents soft-block. */
 export const DeleteContractorSchema = z.object({
-  workerId: z.string().uuid(),
+  workerId: uuid(),
   force: z.boolean().default(false),
 });
 export type DeleteContractorInput = z.infer<typeof DeleteContractorSchema>;
