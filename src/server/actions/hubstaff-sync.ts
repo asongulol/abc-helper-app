@@ -21,6 +21,7 @@ import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getAccessToken, HUBSTAFF_API_BASE, pageAll } from '@/server/hubstaff/client';
 import { syncHubstaffForCompany } from '@/server/hubstaff/service';
+import { uuid } from '@/types/schemas/uuid';
 
 // ─── list orgs ─────────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ export async function listHubstaffOrgs(): Promise<ActionResult<ListHubstaffOrgsR
 // ─── import time ────────────────────────────────────────────────────────────────
 
 const ImportHubstaffTimeSchema = z.object({
-  companyId: z.string().uuid('companyId must be a UUID'),
+  companyId: uuid('companyId must be a UUID'),
   orgId: z.coerce.number().int().positive('orgId must be a positive integer'),
   start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'start must be YYYY-MM-DD'),
   stop: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'stop must be YYYY-MM-DD'),

@@ -6,12 +6,13 @@
  */
 
 import { z } from 'zod';
+import { uuid } from './uuid';
 
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
 /** Inputs to preview or generate a client invoice. */
 export const PreviewInvoiceSchema = z.object({
-  clientId: z.string().uuid(),
+  clientId: uuid(),
   from: IsoDateSchema,
   to: IsoDateSchema,
   markupPct: z.number().min(0).max(1000).default(0),
@@ -24,7 +25,7 @@ export const GenerateInvoiceSchema = PreviewInvoiceSchema;
 export const InvoiceStatusSchema = z.enum(['draft', 'sent', 'paid', 'void']);
 
 export const SetInvoiceStatusSchema = z.object({
-  invoiceId: z.string().uuid(),
+  invoiceId: uuid(),
   status: InvoiceStatusSchema,
 });
 export type SetInvoiceStatusInput = z.infer<typeof SetInvoiceStatusSchema>;
@@ -35,7 +36,7 @@ export type SetInvoiceStatusInput = z.infer<typeof SetInvoiceStatusSchema>;
  * match the rest of invoicing (numeric(14,2) columns), not centavos.
  */
 export const MarkInvoicePaidSchema = z.object({
-  invoiceId: z.string().uuid(),
+  invoiceId: uuid(),
   amountReceivedUsd: z.number().min(0, 'must be ≥ 0').max(1_000_000_000),
   receivedOn: IsoDateSchema,
   paymentRef: z.string().trim().max(120).optional(),

@@ -12,9 +12,10 @@ import { fetchReportPayments, type ReportPaymentRow } from '@/db/queries/reports
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { IsoDateSchema } from '@/types/schemas/payroll';
+import { uuid } from '@/types/schemas/uuid';
 
 const DetailExportSchema = z.object({
-  companyId: z.string().uuid(),
+  companyId: uuid(),
   fromDate: IsoDateSchema,
   toDate: IsoDateSchema,
 });

@@ -15,6 +15,7 @@ import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin, requireAdmin } from '@/server/auth/admin';
 import { serviceGetRecipient } from '@/server/wise/service';
+import { uuid } from '@/types/schemas/uuid';
 
 export type ImportActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -34,7 +35,7 @@ const RowSchema = z.object({
 });
 
 const InputSchema = z.object({
-  companyId: z.string().uuid(),
+  companyId: uuid(),
   /** When true, prefer the Wise account name (fetched per recipient id). */
   preferWiseName: z.boolean().optional().default(false),
   rows: z.array(RowSchema).min(1, 'No rows to import').max(1000, 'Too many rows (max 1000)'),
@@ -221,7 +222,7 @@ const deleteGuard = async (
 };
 
 const RangeSchema = z.object({
-  companyId: z.string().uuid(),
+  companyId: uuid(),
   start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a valid From date.'),
   stop: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a valid To date.'),
 });

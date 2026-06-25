@@ -4,10 +4,11 @@
  */
 
 import { z } from 'zod';
+import { uuid } from './uuid';
 
 /** Non-empty UUID list — used for draft / batch / status actions. */
 export const PaymentIdsSchema = z
-  .array(z.string().uuid('each paymentId must be a UUID'))
+  .array(uuid('each paymentId must be a UUID'))
   .min(1, 'at least one paymentId required');
 
 export const WiseDraftSchema = z.object({
@@ -29,7 +30,7 @@ export const WisePollSchema = z.object({
    */
   onlyDrafts: z.boolean().optional(),
   /** Scope reconcile to a single pay period. */
-  payPeriodId: z.string().uuid().optional(),
+  payPeriodId: uuid().optional(),
 });
 export type WisePollInput = z.infer<typeof WisePollSchema>;
 
@@ -45,7 +46,7 @@ export const WiseMatchSchema = z.object({
    */
   refresh: z.boolean().optional(),
   /** Scope to a single pay period. */
-  payPeriodId: z.string().uuid().optional(),
+  payPeriodId: uuid().optional(),
 });
 export type WiseMatchInput = z.infer<typeof WiseMatchSchema>;
 
