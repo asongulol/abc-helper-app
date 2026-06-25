@@ -30,7 +30,12 @@ import {
   updatePaymentRow,
 } from '@/db/queries/payroll';
 import type { RateHistoryRow } from '@/db/queries/rates';
-import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
+import {
+  deleteRateRow,
+  editRateEffectiveStart,
+  executeRateUpsert,
+  fetchRateHistory,
+} from '@/db/queries/rates';
 import { centavos, sumMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { miscTotal } from '@/lib/pay/calc';
@@ -47,6 +52,8 @@ import {
   MarkAllUnpaidSchema,
   MarkPaidSchema,
   MarkUnpaidSchema,
+  RateDeleteSchema,
+  RateEditSchema,
   RateSaveSchema,
   RestoreSnapshotSchema,
   ToggleWiseRowLockSchema,
@@ -117,6 +124,92 @@ export async function getRateHistory(args: {
       ok: false,
       error: err instanceof Error ? err.message : 'Lookup failed.',
     };
+  }
+}
+
+/**
+ * Edit one rate row's effective-from date (legacy `saveRateEffectiveEdit`).
+ * Re-closes neighbouring rows so the timeline stays contiguous; audit-logged.
+ */
+export async function editRateEffectiveDate(
+  args: unknown,
+): Promise<ActionResult<{ from: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = RateEditSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const { from } = await editRateEffectiveStart(db, {
+      workerId: input.workerId,
+      companyId: input.companyId,
+      rateId: input.rateId,
+      effectiveStart: input.effectiveStart,
+    });
+    await logEvent({
+      companyId: input.companyId,
+      action: 'set_rate',
+      entity: input.workerId,
+      detail: {
+        kind: 'edit_effective_start',
+        rate_id: input.rateId,
+        effective_start: { from, to: input.effectiveStart },
+      },
+    });
+    return { ok: true, data: { from } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Rate edit failed.' };
+  }
+}
+
+/**
+ * Delete one rate row (legacy `deleteRateRow`). Re-closes the timeline over the
+ * gap left by the deletion; audit-logged.
+ */
+export async function deleteRate(
+  args: unknown,
+): Promise<ActionResult<{ amountPhp: number; effectiveStart: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = RateDeleteSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const audit = await deleteRateRow(db, {
+      workerId: input.workerId,
+      companyId: input.companyId,
+      rateId: input.rateId,
+    });
+    await logEvent({
+      companyId: input.companyId,
+      action: 'set_rate',
+      entity: input.workerId,
+      detail: {
+        kind: 'delete_rate',
+        rate_id: input.rateId,
+        amount_php: audit.amountPhp,
+        effective_start: audit.effectiveStart,
+      },
+    });
+    return { ok: true, data: audit };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Rate delete failed.' };
   }
 }
 

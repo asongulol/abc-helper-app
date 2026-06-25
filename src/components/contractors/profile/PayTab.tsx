@@ -1,7 +1,9 @@
 import type { RosterWorker } from '@/db/queries/workers';
 import type { WorkerEngagement } from '@/server/actions/contractors';
 import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
+import { ExternalSourcesPanel } from '../ExternalSourcesPanel';
 import { RateCard } from '../RateCard';
+import { WiseRecipientsCard } from '../WiseRecipientsCard';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
 import { type ProfileTabProps, SECTION_H4 } from './types';
@@ -241,6 +243,24 @@ export function PayTab({
           </div>
         )}
       </section>
+      <section style={{ marginTop: 24 }}>
+        <WiseRecipientsCard key={worker.workerId} worker={worker} companyId={companyId} />
+      </section>
+      <section style={{ marginTop: 24 }}>
+        <ExternalSourcesPanel worker={worker} companyId={companyId} />
+      </section>
+      <p
+        className="muted"
+        style={{
+          marginTop: 24,
+          paddingTop: 16,
+          borderTop: '1px solid var(--border)',
+          fontSize: 12,
+        }}
+      >
+        Independent contractor record. No employee-style supervision data is stored, by design (PH
+        misclassification safeguard).
+      </p>
     </div>
   );
 }

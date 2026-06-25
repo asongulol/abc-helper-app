@@ -60,6 +60,12 @@ export const WiseGetRecipientSchema = z.object({
 });
 export type WiseGetRecipientInput = z.infer<typeof WiseGetRecipientSchema>;
 
+/** Search Wise contacts by Wisetag (legacy `search_contacts`). */
+export const WiseSearchContactsSchema = z.object({
+  searchTerm: z.string().trim().min(1, 'Enter a search term').max(100),
+});
+export type WiseSearchContactsInput = z.infer<typeof WiseSearchContactsSchema>;
+
 export const WiseFindTransfersSchema = z.object({
   recipientId: z.number().int().positive(),
   /** ISO date string (YYYY-MM-DD or full ISO). Defaults to 90 days ago. */

@@ -14,6 +14,7 @@ import { createServiceClient } from '@/db/clients/service';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
+import { getHubstaffUser, type HubstaffUser } from '@/server/hubstaff/client';
 import { syncHubstaffForCompany } from '@/server/hubstaff/service';
 import { uuid } from '@/types/schemas/uuid';
 
@@ -103,6 +104,36 @@ export async function syncHubstaffNow(args: unknown): Promise<ActionResult<SyncH
     return {
       ok: false,
       error: err instanceof Error ? err.message : 'Hubstaff sync failed.',
+    };
+  }
+}
+
+// ─── Read-only user lookup (External-sources drift panel) ──────────────────────
+
+const HubstaffGetUserSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
+/**
+ * Read-only Hubstaff user lookup for the contractor drift panel. Admin-gated
+ * (no per-company scope — it only reveals a name/email already on the worker's
+ * Hubstaff profile, mirroring the legacy drift-check). Returns null if unknown.
+ */
+export async function hubstaffGetUser(args: unknown): Promise<ActionResult<HubstaffUser | null>> {
+  const parsed = HubstaffGetUserSchema.safeParse(args);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  }
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  try {
+    const user = await getHubstaffUser(parsed.data.userId);
+    return { ok: true, data: user };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Hubstaff user lookup failed.',
     };
   }
 }

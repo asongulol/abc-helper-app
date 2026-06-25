@@ -37,6 +37,23 @@ export const RateSaveSchema = z.object({
 });
 export type RateSaveInput = z.infer<typeof RateSaveSchema>;
 
+/** Edit one rate row's effective-from date (legacy `saveRateEffectiveEdit`). */
+export const RateEditSchema = z.object({
+  workerId: uuid(),
+  companyId: uuid(),
+  rateId: uuid(),
+  effectiveStart: IsoDateSchema,
+});
+export type RateEditInput = z.infer<typeof RateEditSchema>;
+
+/** Delete one rate row (legacy `deleteRateRow`). */
+export const RateDeleteSchema = z.object({
+  workerId: uuid(),
+  companyId: uuid(),
+  rateId: uuid(),
+});
+export type RateDeleteInput = z.infer<typeof RateDeleteSchema>;
+
 /**
  * Batch calculate request (legacy `calculate`/`calcBatch`).
  *

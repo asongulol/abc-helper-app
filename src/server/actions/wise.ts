@@ -22,6 +22,7 @@ import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
+  type ContactResult,
   serviceBatch,
   serviceDraft,
   serviceFindTransfersByRecipient,
@@ -29,6 +30,7 @@ import {
   serviceMatch,
   servicePoll,
   serviceRecipients,
+  serviceSearchContacts,
   serviceStatus,
 } from '@/server/wise/service';
 import {
@@ -37,6 +39,7 @@ import {
   WiseFindTransfersSchema,
   WiseGetRecipientSchema,
   WiseMatchSchema,
+  WiseSearchContactsSchema,
   WiseStatusSchema,
 } from '@/types/schemas/wise';
 
@@ -357,6 +360,22 @@ export async function wiseGetRecipient(recipientId: number): Promise<WiseActionR
     const recipient = await serviceGetRecipient(parsed.data.recipientId);
     if (!recipient) return fail(`Recipient ${recipientId} not found`);
     return ok(recipient);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Admin: search Wise contacts by Wisetag (legacy `search_contacts`). */
+export async function wiseSearchContacts(
+  searchTerm: string,
+): Promise<WiseActionResult<ContactResult[]>> {
+  try {
+    await requireAdmin();
+    const parsed = WiseSearchContactsSchema.safeParse({ searchTerm });
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
+
+    const result = await serviceSearchContacts(parsed.data.searchTerm);
+    return ok(result.contacts);
   } catch (e) {
     return fail(e);
   }

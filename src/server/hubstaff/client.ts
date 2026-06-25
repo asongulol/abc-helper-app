@@ -186,6 +186,43 @@ export async function fetchHubstaffProjects(
     .map((p) => ({ id: p.id, name: p.name ?? `project ${p.id}` }));
 }
 
+// ─── Single user lookup (drift check) ──────────────────────────────────────────
+
+/** A Hubstaff user (subset used by the External-sources drift panel). */
+export interface HubstaffUser {
+  id: number;
+  name: string | null;
+  email: string | null;
+  status: string | null;
+  time_zone: string | null;
+}
+
+/**
+ * Fetch a single Hubstaff user by id (legacy hubstaff-sync `get_user`).
+ * Returns null on 404 (no such user). Other non-OK statuses throw.
+ * Hubstaff wraps the body as `{ user: {...} }` in some responses and returns
+ * the bare object in others, so we read `d.user ?? d`.
+ */
+export async function getHubstaffUser(userId: number): Promise<HubstaffUser | null> {
+  const token = await getAccessToken();
+  const res = await fetch(`${HUBSTAFF_API_BASE}/users/${userId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Hubstaff user fetch failed (${res.status}): ${await res.text()}`);
+  }
+  const d = (await res.json()) as { user?: Record<string, unknown> } & Record<string, unknown>;
+  const u = (d.user ?? d) as Record<string, unknown>;
+  return {
+    id: Number(u.id ?? userId),
+    name: (u.name as string | null | undefined) ?? null,
+    email: (u.email as string | null | undefined) ?? null,
+    status: (u.status as string | null | undefined) ?? null,
+    time_zone: (u.time_zone as string | null | undefined) ?? null,
+  };
+}
+
 // ─── Member/user name resolution ──────────────────────────────────────────────
 
 /**

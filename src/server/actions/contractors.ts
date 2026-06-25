@@ -11,12 +11,16 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
+  fetchWorkerWiseSnapshot,
   insertWorkerWithLink,
   setWorkerLinkStatus,
   updateWorkerLink,
   updateWorkerProfile,
+  updateWorkerWiseFields,
+  type WiseRecipientRef,
 } from '@/db/queries/workers';
 import type { Json } from '@/db/types';
+import { parseName } from '@/lib/name/parse';
 import { saveRate } from '@/server/actions/payroll';
 import { type ActionResult, createPortalLogin } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -29,6 +33,12 @@ import {
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
 } from '@/types/schemas/contractors';
+import {
+  LinkWiseRecipientSchema,
+  PullFromWiseSchema,
+  SaveWiseRecipientsSchema,
+  SaveWiseRecipientUuidSchema,
+} from '@/types/schemas/wise-recipients';
 
 /** Quick-add a blank contractor and link them to the selected company. */
 export async function addContractor(args: unknown): Promise<ActionResult<{ workerId: string }>> {
@@ -781,5 +791,195 @@ export async function assignWorkerCompany(args: {
       ok: false,
       error: err instanceof Error ? err.message : 'Assign failed.',
     };
+  }
+}
+
+// ─── Wise payout recipients / drift (legacy Pay & payout bottom-half) ───────────
+
+/**
+ * Persist the saved Wise recipients list + default ("last used") recipient id
+ * (legacy `persist` / `addRecip` / `removeRecip` / `makeDefault`). Identifiers
+ * only — never bank details.
+ */
+export async function saveWiseRecipients(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = SaveWiseRecipientsSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const prior = await fetchWorkerWiseSnapshot(db, input.workerId);
+    await updateWorkerWiseFields(db, input.workerId, {
+      wise_recipients: input.recipients,
+      wise_recipient_id: input.defaultId,
+    });
+    await logEvent({
+      companyId: input.companyId,
+      action: 'edit_contractor',
+      entity: input.workerId,
+      detail: {
+        kind: 'wise_recipient_default',
+        default_recipient_id: { from: prior.wiseRecipientId, to: input.defaultId },
+        count: input.recipients.length,
+      },
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Save failed.' };
+  }
+}
+
+/**
+ * Persist the Wise recipient UUID (legacy `persistUuid`). The Wise API never
+ * returns it — it's pasted from the Batch-payments CSV. Empty clears it.
+ */
+export async function saveWiseRecipientUuid(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = SaveWiseRecipientUuidSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  const value = input.recipientUuid && input.recipientUuid.length > 0 ? input.recipientUuid : null;
+
+  try {
+    const db = await createServerSupabase();
+    const prior = await fetchWorkerWiseSnapshot(db, input.workerId);
+    await updateWorkerWiseFields(db, input.workerId, { wise_recipient_uuid: value });
+    await logEvent({
+      companyId: input.companyId,
+      action: 'set_wise_recipient_uuid',
+      entity: input.workerId,
+      detail: { uuid: { from: prior.wiseRecipientUuid, to: value } },
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Save failed.' };
+  }
+}
+
+/**
+ * Pull a single field's value from Wise into the DB (legacy `pullFromWise`).
+ * Wise is the payment source of truth, so this overwrites the DB value. `name`
+ * is split into first/middle/last; `email` is written as-is.
+ */
+export async function pullFromWise(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = PullFromWiseSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    if (input.field === 'name') {
+      const parts = parseName(input.value);
+      await updateWorkerWiseFields(db, input.workerId, {
+        first_name: parts.first_name,
+        middle_name: parts.middle_name || null,
+        last_name: parts.last_name,
+      });
+    } else {
+      await updateWorkerWiseFields(db, input.workerId, { email: input.value });
+    }
+    await logEvent({
+      companyId: input.companyId,
+      action: 'edit_contractor',
+      entity: input.workerId,
+      detail: { kind: 'pull_from_wise', field: input.field, new_value: input.value },
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Pull failed.' };
+  }
+}
+
+/**
+ * Link a looked-up Wise recipient to the worker (legacy `linkLookupResult`):
+ * set the default recipient id, append it to the saved recipients list, and
+ * optionally apply its name/email to the DB.
+ */
+export async function linkWiseRecipient(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = LinkWiseRecipientSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const snapshot = await fetchWorkerWiseSnapshot(db, input.workerId);
+
+    const patch: Parameters<typeof updateWorkerWiseFields>[2] = {
+      wise_recipient_id: input.recipientId,
+    };
+
+    if (!snapshot.wiseRecipients.some((r) => r.id === input.recipientId)) {
+      const label = input.fromContact
+        ? input.name
+          ? `${input.name} (Wisetag)`
+          : 'Wisetag balance'
+        : input.name || `Recipient ${input.recipientId}`;
+      const next: WiseRecipientRef[] = [
+        ...snapshot.wiseRecipients,
+        { id: input.recipientId, label },
+      ];
+      patch.wise_recipients = next;
+    }
+
+    if (input.applyName && input.name) {
+      const parts = parseName(input.name);
+      if (parts.first_name) patch.first_name = parts.first_name;
+      patch.middle_name = parts.middle_name || null;
+      if (parts.last_name) patch.last_name = parts.last_name;
+    }
+    if (input.applyEmail && input.email) {
+      patch.email = input.email;
+    }
+
+    await updateWorkerWiseFields(db, input.workerId, patch);
+    await logEvent({
+      companyId: input.companyId,
+      action: 'edit_contractor',
+      entity: input.workerId,
+      detail: {
+        kind: 'link_wise_recipient',
+        recipient_id: input.recipientId,
+        applied_name: input.applyName,
+        applied_email: input.applyEmail,
+      },
+    });
+    return {
+      ok: true,
+      message: `Linked Wise recipient #${input.recipientId}. Re-open the profile to see the updated fields.`,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Link failed.' };
   }
 }

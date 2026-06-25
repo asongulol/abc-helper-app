@@ -5,9 +5,13 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '@/db/types';
+import type { Database, Json } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
+type WorkersUpdate = Database['public']['Tables']['workers']['Update'];
+
+/** One saved Wise payout recipient (identifier only — never bank details). */
+export type WiseRecipientRef = { id: number; label: string };
 
 export type RosterWorker = {
   workerId: string;
@@ -45,6 +49,12 @@ export type RosterWorker = {
   paypal: string | null;
   wiseTag: string | null;
   photoUrl: string | null;
+  /** Default Wise payout recipient id (also the "last used"). */
+  wiseRecipientId: number | null;
+  /** Wise recipient UUID — the Wise API never returns it; pasted from the Batch CSV. */
+  wiseRecipientUuid: string | null;
+  /** Saved Wise recipient ids + labels (identifiers only). */
+  wiseRecipients: WiseRecipientRef[] | null;
   // worker_companies link fields
   linkId: string;
   companyId: string;
@@ -53,6 +63,8 @@ export type RosterWorker = {
   payBasis: string | null;
   role: string | null;
   hubstaffName: string | null;
+  /** Hubstaff user id for this engagement (drift-check + sync matching). */
+  hubstaffUserId: number | null;
   weeklyHours: number | null;
   billRateUsd: number | null;
   sessionRateUsd: number | null;
@@ -65,7 +77,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, hubstaff_user_id, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, wise_recipients, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -114,6 +126,9 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         paymaya: w.paymaya,
         paypal: w.paypal,
         wiseTag: w.wise_tag,
+        wiseRecipientId: w.wise_recipient_id,
+        wiseRecipientUuid: w.wise_recipient_uuid,
+        wiseRecipients: w.wise_recipients as unknown as WiseRecipientRef[] | null,
         photoUrl: w.photo_url,
         linkId: l.id,
         companyId: l.company_id,
@@ -121,6 +136,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         payBasis: l.pay_basis ?? null,
         role: l.role,
         hubstaffName: l.hubstaff_name,
+        hubstaffUserId: l.hubstaff_user_id,
         weeklyHours: l.weekly_hours,
         billRateUsd: l.bill_rate_usd,
         sessionRateUsd: l.session_rate_usd,
@@ -136,7 +152,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, hubstaff_user_id, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, wise_recipients, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -181,6 +197,9 @@ export const fetchWorkerLink = async (
     paymaya: w.paymaya,
     paypal: w.paypal,
     wiseTag: w.wise_tag,
+    wiseRecipientId: w.wise_recipient_id,
+    wiseRecipientUuid: w.wise_recipient_uuid,
+    wiseRecipients: w.wise_recipients as unknown as WiseRecipientRef[] | null,
     photoUrl: w.photo_url,
     linkId: data.id,
     companyId: data.company_id,
@@ -188,6 +207,7 @@ export const fetchWorkerLink = async (
     payBasis: data.pay_basis ?? null,
     role: data.role,
     hubstaffName: data.hubstaff_name,
+    hubstaffUserId: data.hubstaff_user_id,
     weeklyHours: data.weekly_hours,
     billRateUsd: data.bill_rate_usd,
     sessionRateUsd: data.session_rate_usd,
@@ -352,4 +372,63 @@ export const setWorkerLinkStatus = async (
     .eq('worker_id', workerId)
     .eq('company_id', companyId);
   if (lErr) throw new Error(`worker_companies status update: ${lErr.message}`);
+};
+
+// ─── Wise recipient fields (legacy persist / persistUuid / pullFromWise / link) ──
+
+export type WorkerWiseSnapshot = {
+  wiseRecipientId: number | null;
+  wiseRecipientUuid: string | null;
+  wiseRecipients: WiseRecipientRef[];
+};
+
+/** Read a worker's current Wise recipient fields (for audit from→to + appends). */
+export const fetchWorkerWiseSnapshot = async (
+  db: Db,
+  workerId: string,
+): Promise<WorkerWiseSnapshot> => {
+  const { data, error } = await db
+    .from('workers')
+    .select('wise_recipient_id, wise_recipient_uuid, wise_recipients')
+    .eq('id', workerId)
+    .maybeSingle();
+  if (error) throw new Error(`workers wise read: ${error.message}`);
+  return {
+    wiseRecipientId: data?.wise_recipient_id ?? null,
+    wiseRecipientUuid: data?.wise_recipient_uuid ?? null,
+    wiseRecipients: (data?.wise_recipients as unknown as WiseRecipientRef[] | null) ?? [],
+  };
+};
+
+/**
+ * Patch a worker's Wise recipient identity fields. Callers build the partial
+ * (recipients list, default id, UUID, pulled name/email) and this persists it.
+ * `wise_recipients` is JSON, so it is cast through the column's Json type.
+ */
+export const updateWorkerWiseFields = async (
+  db: Db,
+  workerId: string,
+  patch: {
+    wise_recipient_id?: number | null;
+    wise_recipient_uuid?: string | null;
+    wise_recipients?: WiseRecipientRef[];
+    first_name?: string;
+    middle_name?: string | null;
+    last_name?: string;
+    email?: string;
+  },
+): Promise<void> => {
+  const payload: WorkersUpdate = {};
+  if ('wise_recipient_id' in patch) payload.wise_recipient_id = patch.wise_recipient_id ?? null;
+  if ('wise_recipient_uuid' in patch)
+    payload.wise_recipient_uuid = patch.wise_recipient_uuid ?? null;
+  if (patch.wise_recipients !== undefined)
+    payload.wise_recipients = patch.wise_recipients as unknown as Json;
+  if (patch.first_name !== undefined) payload.first_name = patch.first_name;
+  if (patch.middle_name !== undefined) payload.middle_name = patch.middle_name;
+  if (patch.last_name !== undefined) payload.last_name = patch.last_name;
+  if (patch.email !== undefined) payload.email = patch.email;
+
+  const { error } = await db.from('workers').update(payload).eq('id', workerId);
+  if (error) throw new Error(`workers wise update: ${error.message}`);
 };
