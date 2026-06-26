@@ -25,7 +25,11 @@ export default async function ProcessPage() {
   }
 
   const db = await createServerSupabase();
-  const allPeriods = await fetchPeriodSummaries(db, companyId);
+  // Independent reads — run concurrently instead of as a serial waterfall.
+  const [allPeriods, pending] = await Promise.all([
+    fetchPeriodSummaries(db, companyId),
+    countPendingTimeApprovals(db, companyId),
+  ]);
 
   // Legacy "Process payroll": a LIST of locked-but-not-yet-paid batches.
   const ready = allPeriods.filter((p) => p.state === 'locked');
@@ -37,7 +41,6 @@ export default async function ProcessPage() {
     .filter((p) => p.state === 'open' && p.contractorCount > 0)
     .map((p) => ({ start: p.periodStart, end: p.periodEnd }))
     .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
-  const pending = await countPendingTimeApprovals(db, companyId);
 
   return <ProcessShell ready={ready} drafts={drafts} pending={pending} />;
 }

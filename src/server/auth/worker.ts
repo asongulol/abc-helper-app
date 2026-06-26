@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { createServerSupabase } from '@/db/clients/server';
 
 export interface CurrentWorker {
@@ -6,7 +7,10 @@ export interface CurrentWorker {
   userId: string;
   firstName: string;
   lastName: string;
+  /** Email on the workers record (HR data; may differ from the login email). */
   email: string | null;
+  /** Supabase Auth login email — what the contractor signs in with. */
+  authEmail: string | null;
   status: string | null;
   onboarded: boolean;
 }
@@ -15,8 +19,14 @@ export interface CurrentWorker {
  * Resolve the authenticated contractor via contractor_logins → workers
  * (legacy `my_worker_id()` semantics). RLS-scoped: a contractor only ever
  * reads their own rows.
+ *
+ * Wrapped in React `cache()` (the portal mirror of getCurrentAdmin): the portal
+ * layout, the page, and any requireWorker call in one request now share a single
+ * getUser + contractor_logins + workers + is_onboarded chain instead of repeating
+ * all four round-trips 2-3× per portal navigation. Per-request scope re-verifies
+ * on every new request, so no auth state leaks across requests.
  */
-export const getCurrentWorker = async (): Promise<CurrentWorker | null> => {
+export const getCurrentWorker = cache(async (): Promise<CurrentWorker | null> => {
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -50,10 +60,11 @@ export const getCurrentWorker = async (): Promise<CurrentWorker | null> => {
     firstName: w.first_name,
     lastName: w.last_name,
     email: w.email,
+    authEmail: user.email ?? null,
     status: w.status,
     onboarded: onboarded === true,
   };
-};
+});
 
 /** Throwing variant for portal server actions. */
 export const requireWorker = async (): Promise<CurrentWorker> => {

@@ -214,6 +214,15 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
   if (!guard.ok) return guard;
   const { db } = guard;
 
+  // Kick off the full-roster query now so it overlaps the payments pagination
+  // below — they share no data (workerMap derives only from this result).
+  const wcsPromise = Promise.resolve(
+    db
+      .from('worker_companies')
+      .select('worker_id, workers(first_name, middle_name, last_name)')
+      .eq('company_id', companyId),
+  );
+
   let pays: PaymentJoin[];
   try {
     pays = await pageAll<PaymentJoin>(
@@ -363,11 +372,9 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // Full worker roster for this company (history picker lists everyone, not
-  // just paid contractors). Faithful to legacy ContractorHistory.
-  const { data: wcs, error: we } = await db
-    .from('worker_companies')
-    .select('worker_id, workers(first_name, middle_name, last_name)')
-    .eq('company_id', companyId);
+  // just paid contractors). Faithful to legacy ContractorHistory. Query was
+  // kicked off above; await its already-in-flight result here.
+  const { data: wcs, error: we } = await wcsPromise;
   if (we) return { ok: false, error: we.message };
   const workerMap = new Map<string, string>();
   for (const wc of wcs ?? []) {

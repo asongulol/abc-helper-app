@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import { DocumentsClient } from '@/components/documents/DocumentsClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchDocuments } from '@/db/queries/documents';
-import { fetchRoster } from '@/db/queries/workers';
+import { fetchRosterIndex } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 
@@ -28,7 +28,7 @@ export default async function DocumentsPage() {
   const supabase = await createServerSupabase();
   const [documents, roster] = await Promise.all([
     fetchDocuments(supabase, companyId),
-    fetchRoster(supabase, companyId),
+    fetchRosterIndex(supabase, companyId),
   ]);
 
   // Contractor dropdown options (de-duped by worker, sorted by name) — legacy
