@@ -4,7 +4,7 @@ import { AdminShell } from '@/components/shell/AdminShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { type AdminRow, listAdmins } from '@/db/queries/admins';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
-import { fetchRoster } from '@/db/queries/workers';
+import { fetchRosterIndex } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
 
@@ -30,7 +30,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (selectedCompanyId) {
     const db = await createServerSupabase();
     const [roster, periodRows, adminRows] = await Promise.all([
-      fetchRoster(db, selectedCompanyId),
+      fetchRosterIndex(db, selectedCompanyId),
       fetchPeriodSummaries(db, selectedCompanyId),
       admin.isOwner ? listAdmins(db) : Promise.resolve([] as AdminRow[]),
     ]);

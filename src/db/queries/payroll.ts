@@ -7,6 +7,7 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cache } from 'react';
 import type { Database, Json } from '@/db/types';
 import type { MiscItem } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
@@ -366,48 +367,53 @@ export type PeriodSummaryRow = {
   totalNetCentavos: number;
 };
 
-/** All pay periods for the company, newest first, with contractor count + net. */
-export const fetchPeriodSummaries = async (
-  db: Db,
-  companyId: string,
-): Promise<PeriodSummaryRow[]> => {
-  const { data: periods, error: e1 } = await db
-    .from('pay_periods')
-    .select('id, state, period_start, period_end, pay_date, locked_at')
-    .eq('company_id', companyId)
-    .order('period_start', { ascending: false });
-  if (e1) throw new Error(`pay_periods: ${e1.message}`);
-  if (!periods?.length) return [];
+/**
+ * All pay periods for the company, newest first, with contractor count + net.
+ *
+ * `cache()`-wrapped: the admin layout loads period summaries for the ⌘K palette
+ * on every page, and /overview, /payroll, /batches load them again. One cached
+ * Supabase client means a single query per request. Keyed on (db, companyId).
+ */
+export const fetchPeriodSummaries = cache(
+  async (db: Db, companyId: string): Promise<PeriodSummaryRow[]> => {
+    const { data: periods, error: e1 } = await db
+      .from('pay_periods')
+      .select('id, state, period_start, period_end, pay_date, locked_at')
+      .eq('company_id', companyId)
+      .order('period_start', { ascending: false });
+    if (e1) throw new Error(`pay_periods: ${e1.message}`);
+    if (!periods?.length) return [];
 
-  const periodIds = periods.map((p) => p.id);
-  const { data: pays, error: e2 } = await db
-    .from('payments')
-    .select('pay_period_id, net_php')
-    .in('pay_period_id', periodIds);
-  if (e2) throw new Error(`payments summary: ${e2.message}`);
+    const periodIds = periods.map((p) => p.id);
+    const { data: pays, error: e2 } = await db
+      .from('payments')
+      .select('pay_period_id, net_php')
+      .in('pay_period_id', periodIds);
+    if (e2) throw new Error(`payments summary: ${e2.message}`);
 
-  const byPeriod = new Map<string, { count: number; netCentavos: number }>();
-  for (const p of pays ?? []) {
-    const cur = byPeriod.get(p.pay_period_id) ?? { count: 0, netCentavos: 0 };
-    cur.count += 1;
-    cur.netCentavos += Math.round(Number(p.net_php ?? 0) * 100);
-    byPeriod.set(p.pay_period_id, cur);
-  }
+    const byPeriod = new Map<string, { count: number; netCentavos: number }>();
+    for (const p of pays ?? []) {
+      const cur = byPeriod.get(p.pay_period_id) ?? { count: 0, netCentavos: 0 };
+      cur.count += 1;
+      cur.netCentavos += Math.round(Number(p.net_php ?? 0) * 100);
+      byPeriod.set(p.pay_period_id, cur);
+    }
 
-  return (periods ?? []).map((p) => {
-    const agg = byPeriod.get(p.id) ?? { count: 0, netCentavos: 0 };
-    return {
-      id: p.id,
-      state: p.state,
-      periodStart: p.period_start,
-      periodEnd: p.period_end,
-      payDate: p.pay_date,
-      lockedAt: p.locked_at,
-      contractorCount: agg.count,
-      totalNetCentavos: agg.netCentavos,
-    };
-  });
-};
+    return (periods ?? []).map((p) => {
+      const agg = byPeriod.get(p.id) ?? { count: 0, netCentavos: 0 };
+      return {
+        id: p.id,
+        state: p.state,
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        payDate: p.pay_date,
+        lockedAt: p.locked_at,
+        contractorCount: agg.count,
+        totalNetCentavos: agg.netCentavos,
+      };
+    });
+  },
+);
 
 /* ---------- NEW: lock / unlock period ---------- */
 
