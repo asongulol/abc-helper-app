@@ -1,7 +1,7 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useState, useTransition } from 'react';
-import { SessionImportModal } from '@/components/sessions/SessionImportModal';
 import {
   Badge,
   type BadgeTone,
@@ -20,6 +20,12 @@ import {
   loadClientSessions,
   setSessionApproval,
 } from '@/server/actions/sessions';
+
+// Import modal loads on first open, gated behind showImport.
+const SessionImportModal = dynamic(
+  () => import('@/components/sessions/SessionImportModal').then((m) => m.SessionImportModal),
+  { ssr: false },
+);
 
 interface Props {
   clients: ClientOption[];

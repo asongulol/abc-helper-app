@@ -6,6 +6,7 @@
  * lock/unlock, delete, misc popup.
  */
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
@@ -32,7 +33,9 @@ import {
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
 import type { MiscModalPayload } from './MiscModal';
-import { MiscModal } from './MiscModal';
+
+// Misc-items editor (496 lines) loads on first open, gated behind miscRowId.
+const MiscModal = dynamic(() => import('./MiscModal').then((m) => m.MiscModal), { ssr: false });
 
 const PAYOUT_METHODS = ['wise', 'bpi', 'gcash', 'paymaya', 'paypal'] as const;
 const DEFAULT_FX = 58.0;
