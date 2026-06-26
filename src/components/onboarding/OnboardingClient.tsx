@@ -1,19 +1,23 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { AgreementTemplatesCard } from '@/components/config/AgreementTemplatesCard';
-import {
-  AddContractorWizard,
-  type Countersigner,
-} from '@/components/contractors/AddContractorWizard';
+import type { Countersigner } from '@/components/contractors/AddContractorWizard';
 import { EmptyState, Modal, type SortableColumn, SortableTable, useToast } from '@/components/ui';
 import type { AgreementTemplateRow } from '@/db/queries/config';
 import type { OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
+
+// Heavy wizard (692 lines) loads on first open, not with the onboarding list.
+const AddContractorWizard = dynamic(
+  () => import('@/components/contractors/AddContractorWizard').then((m) => m.AddContractorWizard),
+  { ssr: false },
+);
 
 interface Props {
   progress: OnboardingProgressRow[];

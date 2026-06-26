@@ -58,8 +58,17 @@ Already shipped last session (Phase 0, done): `cache()` on `createServerSupabase
 | # | Fix | Source | Why |
 |---|-----|--------|-----|
 | 7 | **Introduce `next/dynamic` for modal/wizard components** (`AddContractorWizard` 692 lines, `BulkImportModal`, `PullWiseRecipientsModal`, `MiscModal`, `SessionImportModal`). They already render only behind boolean state. The app uses `next/dynamic` **nowhere** today. | CB-1 **high** | The most-visited routes (contractors, payroll, sessions) eagerly download + parse + hydrate modal JS that most page views never open. |
-| 8 | **`experimental: { optimizePackageImports: ['@/components/ui'] }`** in `next.config.ts` + deep-import `ToastProvider` from `@/components/ui/Toast` in both shells (stop anchoring the whole UI kit, incl. PhoneInput's 200-row country table, into the per-nav layout chunk). | CB-3 **medium** | ~56KB (admin) / ~44KB (portal) of UI-kit JS eager on every route, much unused per-route. Import-rewrite only; rebuild to confirm. |
-| 9 | **Re-measure chunking after 7+8** — three+ unrelated page clients are currently merged into one 283KB chunk (`3rjflcvsinak6.js`); the dynamic-import split points should break the accidental co-location. | CB-2 **medium** | Verify with a fresh build + the per-route manifest size script (see "How to measure"). |
+| 8 | **`optimizePackageImports['@/components/ui']` + deep-import `ToastProvider`** | CB-3 | ❌ **Tried and dropped — measured no-op / regression** (see result below). |
+| 9 | **Re-measure chunking after 7+8** | CB-2 | ✅ Done — see result below. |
+
+**✅ SHIPPED & MEASURED (Phase 2, 2026-06-26).** Per-route eager client first-load JS (raw on-disk KB, from the manifest script in "How to measure"), before → after:
+
+- `/contractors` (list): **661 → 362 KB (−45%)** — `AddContractorWizard` (692 lines) + bulk/wise modals now lazy.
+- `/onboarding` (list): **656 → 364 KB (−45%)** — same wizard, lazy.
+- `/payroll`: 382 → 377 · `/sessions` (admin): 361 → 360 (`MiscModal`/`SessionImportModal` are small).
+- **No regressions** on any route (portal stayed flat at baseline).
+
+Empirically dropped (item 8): `optimizePackageImports: ['@/components/ui']` produced **byte-identical** builds — it does **not** apply to a local path-alias barrel in Turbopack (Next 16.2). And deep-importing `ToastProvider` *added* ~16.6 KB to portal routes (chunk reshuffle), so it was reverted. The CB-3 verifier had already flagged its evidence as wrong (the "238 KB UI-kit chunk" was actually an unrelated vendor chunk). **Lesson: the whole win is the `next/dynamic` modal split (CB-1); CB-3 was noise.** The contractors `[workerId]`/`@modal` *detail* routes still sit at ~662 KB — their weight is the profile editor, not modals; a future split target.
 
 ### Phase 3 — Proxy auth round-trips · M–L effort · medium risk · the structural nav floor
 
