@@ -3,14 +3,13 @@ import { ConfigClient } from '@/components/config/ConfigClient';
 import { createServerSupabase } from '@/db/clients/server';
 import {
   getEmployer,
-  getPortalSettings,
-  listAgreementTemplates,
   listClients,
   listHubstaffProjects,
   parseOnboardingConfig,
 } from '@/db/queries/config';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
+import { getCachedAgreementTemplates, getCachedPortalSettings } from '@/server/config-cache';
 
 export const metadata = { title: 'Configuration — Aaron Anderson E.H.S. LLC' };
 
@@ -34,8 +33,8 @@ export default async function ConfigPage() {
     getEmployer(supabase),
     listClients(supabase),
     listHubstaffProjects(supabase),
-    listAgreementTemplates(supabase),
-    getPortalSettings(supabase),
+    getCachedAgreementTemplates(),
+    getCachedPortalSettings(),
   ]);
 
   return (
