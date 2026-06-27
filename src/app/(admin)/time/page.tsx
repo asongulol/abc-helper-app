@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import { TimeShell } from '@/components/time/TimeShell';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
+import { fetchWorkerClientsBatch } from '@/db/queries/sessions';
 import {
   fetchContractorOptions,
   fetchPeriodEntries,
@@ -11,7 +13,7 @@ import { periodFor } from '@/lib/dates/periods';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId } from '@/server/company';
+import { getTrackerCompanyId } from '@/server/company';
 
 export const metadata = { title: 'Time Import — Aaron Anderson E.H.S. LLC' };
 
@@ -19,12 +21,14 @@ export default async function TimePage() {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const companyId = await getSelectedCompanyId();
+  const companyId = await getTrackerCompanyId();
   if (!companyId) {
     return (
       <div className="card">
         <h2>Time Import</h2>
-        <p className="sub">No company selected. Please contact the owner.</p>
+        <p className="sub">
+          No employer company is configured. Add one in Config (kind = employer).
+        </p>
       </div>
     );
   }
@@ -40,6 +44,15 @@ export default async function TimePage() {
     fetchContractorOptions(db, companyId),
     fetchSourceNames(db, companyId, period.start, period.end),
   ]);
+
+  // Each contractor's assigned CLIENT(s) — the invoicing target. Shown per row;
+  // none / multiple is flagged as ambiguous (per-project attribution needed).
+  const clientsByWorker = await fetchWorkerClientsBatch(
+    createServiceClient(),
+    roster.map((r) => r.workerId),
+  );
+  const assignedClients: Record<string, { id: string; name: string }[]> = {};
+  for (const [workerId, list] of clientsByWorker) assignedClients[workerId] = list;
 
   const rows = groupByContractor(entries);
   const stats = periodStats(period.start, period.end);
@@ -58,6 +71,7 @@ export default async function TimePage() {
       unmatchedNames={unmatchedNames}
       roster={roster}
       contractorOptions={contractorOptions}
+      assignedClients={assignedClients}
     />
   );
 }

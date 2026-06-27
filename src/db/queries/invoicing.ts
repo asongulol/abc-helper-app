@@ -188,30 +188,44 @@ export const fetchClientSessions = async (
   });
 };
 
-/** Employer tracked time (PTO excluded) for the given workers in [from, to]. */
+/**
+ * Employer tracked time (PTO excluded) attributed to ONE client, in [from, to].
+ * Hours count toward `clientId` when:
+ *   - `client_company_id = clientId` (explicitly attributed), OR
+ *   - `client_company_id IS NULL` AND the worker serves only this client
+ *     (`singleClientWorkerIds`) — today's single-client reality.
+ * A multi-client worker's NULL hours are NOT counted for any client (they're
+ * flagged for per-project attribution) so the same hours never bill twice.
+ */
 export const fetchEmployerTrackedSeconds = async (
   db: Db,
   employerId: string,
   workerIds: string[],
   from: string,
   to: string,
+  clientId: string,
+  singleClientWorkerIds: ReadonlySet<string>,
 ): Promise<WorkerSeconds[]> => {
   if (workerIds.length === 0) return [];
   const { data, error } = await db
     .from('time_entries')
-    .select('worker_id, tracked_seconds')
+    .select('worker_id, tracked_seconds, client_company_id')
     .eq('company_id', employerId)
     .in('worker_id', workerIds)
     .gte('work_date', from)
     .lte('work_date', to)
     .limit(100000);
   if (error) throw new Error(`time: ${error.message}`);
-  return (data ?? [])
-    .filter((t): t is typeof t & { worker_id: string } => Boolean(t.worker_id))
-    .map((t) => ({
-      workerId: t.worker_id,
-      trackedSeconds: Number(t.tracked_seconds) || 0,
-    }));
+  const byWorker = new Map<string, number>();
+  for (const t of data ?? []) {
+    if (!t.worker_id) continue;
+    const attributed =
+      t.client_company_id === clientId ||
+      (t.client_company_id === null && singleClientWorkerIds.has(t.worker_id));
+    if (!attributed) continue;
+    byWorker.set(t.worker_id, (byWorker.get(t.worker_id) ?? 0) + (Number(t.tracked_seconds) || 0));
+  }
+  return [...byWorker].map(([workerId, trackedSeconds]) => ({ workerId, trackedSeconds }));
 };
 
 /** Invoice history, newest first; optionally scoped to one client. */

@@ -99,6 +99,12 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
               <td style={cellRight}>{money(pay.bonusPhp)}</td>
             </tr>
           )}
+          {pay.offCyclePhp > 0 && (
+            <tr>
+              <td style={cell}>Off-cycle pay (per session / hour)</td>
+              <td style={cellRight}>{money(pay.offCyclePhp)}</td>
+            </tr>
+          )}
           {earnLines.map((m) => (
             <tr key={`earn-${m.kind}-${m.label ?? ''}-${m.amount ?? ''}`}>
               <td style={cell}>{labelFor(m.kind, m.label)}</td>

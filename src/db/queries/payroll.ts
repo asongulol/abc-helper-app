@@ -9,6 +9,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cache } from 'react';
 import type { Database, Json } from '@/db/types';
+import { type Centavos, centavos, majorToMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
 import type { PaymentDraft, RosterRow, TimeEntryRow } from '@/lib/payroll/mappers';
@@ -127,6 +128,7 @@ export const fetchSessionUnitsByWorker = async (
     .select('worker_id, units')
     .in('worker_id', workerIds)
     .eq('approval', 'approved')
+    .is('paid_at', null) // exclude sessions already paid off-cycle (or at a prior lock)
     .gte('session_date', from)
     .lte('session_date', to)
     .limit(100000);
@@ -157,6 +159,7 @@ export const fetchSessionUnitsByWorkerByDate = async (
     .select('worker_id, session_date, units')
     .in('worker_id', workerIds)
     .eq('approval', 'approved')
+    .is('paid_at', null) // exclude sessions already paid off-cycle (or at a prior lock)
     .gte('session_date', from)
     .lte('session_date', to)
     .limit(100000);
@@ -168,6 +171,296 @@ export const fetchSessionUnitsByWorkerByDate = async (
     out.set(r.worker_id, byDate);
   }
   return out;
+};
+
+/* ---------- Off-cycle pay ledger (per-session / per-hour) ---------- */
+
+export type OffCycleItemRow = {
+  id: string;
+  workerId: string;
+  payPeriodId: string;
+  basis: 'per_session' | 'per_hour';
+  sessionId: string | null;
+  workDate: string | null;
+  units: number | null;
+  ratePhp: number | null;
+  amountPhp: number;
+  description: string | null;
+  createdAt: string;
+};
+
+type RawOffCycleRow = {
+  id: string;
+  worker_id: string;
+  pay_period_id: string;
+  basis: string;
+  session_id: string | null;
+  work_date: string | null;
+  units: number | null;
+  rate_php: number | null;
+  amount_php: number;
+  description: string | null;
+  created_at: string;
+};
+
+const OFF_CYCLE_COLS =
+  'id, worker_id, pay_period_id, basis, session_id, work_date, units, rate_php, amount_php, description, created_at';
+
+const mapOffCycleRow = (r: RawOffCycleRow): OffCycleItemRow => ({
+  id: r.id,
+  workerId: r.worker_id,
+  payPeriodId: r.pay_period_id,
+  basis: r.basis === 'per_hour' ? 'per_hour' : 'per_session',
+  sessionId: r.session_id,
+  workDate: r.work_date,
+  units: r.units == null ? null : Number(r.units),
+  ratePhp: r.rate_php == null ? null : Number(r.rate_php),
+  amountPhp: Number(r.amount_php) || 0,
+  description: r.description,
+  createdAt: r.created_at,
+});
+
+/**
+ * All off-cycle ledger items for a period, with per-worker centavos totals and
+ * the per-hour work-dates per worker (so the engine can drop in-window hours
+ * that were already paid off-cycle). Employer-scoped — read with the RLS user
+ * client. The engine re-applies these on every calculate so the line survives
+ * recalc (misc_items would not — calculateDraft resets them).
+ */
+export const fetchOffCycleItemsForPeriod = async (
+  db: Db,
+  companyId: string,
+  payPeriodId: string,
+  workerIds: string[],
+): Promise<{
+  byWorkerCentavos: Map<string, Centavos>;
+  perHourDatesByWorker: Map<string, Set<string>>;
+  rows: OffCycleItemRow[];
+}> => {
+  const byWorkerCentavos = new Map<string, Centavos>();
+  const perHourDatesByWorker = new Map<string, Set<string>>();
+  const rows: OffCycleItemRow[] = [];
+  if (workerIds.length === 0) return { byWorkerCentavos, perHourDatesByWorker, rows };
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select(OFF_CYCLE_COLS)
+    .eq('company_id', companyId)
+    .eq('pay_period_id', payPeriodId)
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`off-cycle items: ${error.message}`);
+  for (const raw of (data ?? []) as RawOffCycleRow[]) {
+    const row = mapOffCycleRow(raw);
+    rows.push(row);
+    const prev = byWorkerCentavos.get(row.workerId) ?? 0;
+    byWorkerCentavos.set(row.workerId, centavos(prev + majorToMinor(row.amountPhp)));
+    if (row.basis === 'per_hour' && row.workDate) {
+      const set = perHourDatesByWorker.get(row.workerId) ?? new Set<string>();
+      set.add(row.workDate);
+      perHourDatesByWorker.set(row.workerId, set);
+    }
+  }
+  return { byWorkerCentavos, perHourDatesByWorker, rows };
+};
+
+/** Off-cycle items for one worker in a period (newest first) — for the UI list. */
+export const fetchOffCycleItemsForWorkerPeriod = async (
+  db: Db,
+  payPeriodId: string,
+  workerId: string,
+): Promise<OffCycleItemRow[]> => {
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select(OFF_CYCLE_COLS)
+    .eq('pay_period_id', payPeriodId)
+    .eq('worker_id', workerId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`off-cycle items (worker): ${error.message}`);
+  return ((data ?? []) as RawOffCycleRow[]).map(mapOffCycleRow);
+};
+
+/** Σ off-cycle amount for one worker in a period, in centavos. */
+export const fetchOffCycleTotalForWorker = async (
+  db: Db,
+  payPeriodId: string,
+  workerId: string,
+): Promise<Centavos> => {
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select('amount_php')
+    .eq('pay_period_id', payPeriodId)
+    .eq('worker_id', workerId);
+  if (error) throw new Error(`off-cycle total: ${error.message}`);
+  let total = 0;
+  for (const r of data ?? []) total += majorToMinor(Number(r.amount_php) || 0);
+  return centavos(total);
+};
+
+export type NewOffCycleItem = {
+  companyId: string;
+  workerId: string;
+  payPeriodId: string;
+  basis: 'per_session' | 'per_hour';
+  sessionId: string | null;
+  workDate: string | null;
+  units: number | null;
+  ratePhp: number | null;
+  amountPhp: number;
+  description: string | null;
+};
+
+/**
+ * Insert one or more off-cycle ledger rows (pick-mode creates one row per
+ * selected session so each session is uniquely guarded by the session_id unique
+ * index). Surfaces the Postgres unique-violation (23505) so the caller can map
+ * it to a friendly "already paid / already added" message.
+ */
+export const insertOffCycleItems = async (
+  db: Db,
+  rows: readonly NewOffCycleItem[],
+): Promise<OffCycleItemRow[]> => {
+  if (rows.length === 0) return [];
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .insert(
+      rows.map((r) => ({
+        company_id: r.companyId,
+        worker_id: r.workerId,
+        pay_period_id: r.payPeriodId,
+        basis: r.basis,
+        session_id: r.sessionId,
+        work_date: r.workDate,
+        units: r.units,
+        rate_php: r.ratePhp,
+        amount_php: r.amountPhp,
+        description: r.description,
+      })),
+    )
+    .select(OFF_CYCLE_COLS);
+  if (error) {
+    const e = error as { code?: string; message: string };
+    if (e.code === '23505') throw new Error('ALREADY_PAID');
+    throw new Error(`add off-cycle item: ${e.message}`);
+  }
+  return ((data ?? []) as RawOffCycleRow[]).map(mapOffCycleRow);
+};
+
+/** One off-cycle item (employer-scoped) — used to verify the period before a
+ *  remove, and to drive the follow-up recompute + session unmark. */
+export const fetchOffCycleItem = async (
+  db: Db,
+  companyId: string,
+  id: string,
+): Promise<{ workerId: string; payPeriodId: string; sessionId: string | null } | null> => {
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select('worker_id, pay_period_id, session_id')
+    .eq('company_id', companyId)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(`off-cycle item: ${error.message}`);
+  return data
+    ? { workerId: data.worker_id, payPeriodId: data.pay_period_id, sessionId: data.session_id }
+    : null;
+};
+
+/** Delete one off-cycle item (scoped to the employer company) and return the
+ *  removed row's worker/period/session for the follow-up recompute + unmark. */
+export const deleteOffCycleItem = async (
+  db: Db,
+  companyId: string,
+  id: string,
+): Promise<{ workerId: string; payPeriodId: string; sessionId: string | null } | null> => {
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .delete()
+    .eq('company_id', companyId)
+    .eq('id', id)
+    .select('worker_id, pay_period_id, session_id')
+    .maybeSingle();
+  if (error) throw new Error(`delete off-cycle item: ${error.message}`);
+  return data
+    ? { workerId: data.worker_id, payPeriodId: data.pay_period_id, sessionId: data.session_id }
+    : null;
+};
+
+/** Stamp the worker-pay paid marker on sessions (service client — sessions are
+ *  CLIENT-company scoped, invisible to the employer admin under RLS). */
+export const markSessionsPaid = async (
+  db: Db,
+  sessionIds: readonly string[],
+  payPeriodId: string,
+  paymentId: string | null,
+  paidAt: string,
+): Promise<void> => {
+  if (sessionIds.length === 0) return;
+  const { error } = await db
+    .from('service_sessions')
+    .update({ paid_at: paidAt, paid_pay_period_id: payPeriodId, paid_payment_id: paymentId })
+    .in('id', sessionIds);
+  if (error) throw new Error(`mark sessions paid: ${error.message}`);
+};
+
+/** Clear the worker-pay paid marker (off-cycle item removed). */
+export const clearSessionsPaid = async (db: Db, sessionIds: readonly string[]): Promise<void> => {
+  if (sessionIds.length === 0) return;
+  const { error } = await db
+    .from('service_sessions')
+    .update({ paid_at: null, paid_pay_period_id: null, paid_payment_id: null })
+    .in('id', sessionIds);
+  if (error) throw new Error(`clear sessions paid: ${error.message}`);
+};
+
+/** A payment row's money components for the surgical off-cycle net recompute. */
+export type PaymentComponents = {
+  paymentId: string;
+  grossPhp: number | null;
+  haPhp: number;
+  t13Php: number;
+  pddPhp: number;
+  bonusPhp: number;
+  miscItems: MiscItem[];
+};
+
+export const fetchPaymentForWorker = async (
+  db: Db,
+  payPeriodId: string,
+  workerId: string,
+): Promise<PaymentComponents | null> => {
+  const { data, error } = await db
+    .from('payments')
+    .select(
+      'id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items',
+    )
+    .eq('pay_period_id', payPeriodId)
+    .eq('worker_id', workerId)
+    .maybeSingle();
+  if (error) throw new Error(`payment for worker: ${error.message}`);
+  if (!data) return null;
+  return {
+    paymentId: data.id,
+    grossPhp: data.gross_php,
+    haPhp: Number(data.health_allowance_php ?? 0),
+    t13Php: Number(data.thirteenth_month_php ?? 0),
+    pddPhp: Number(data.pdd_lunch_php ?? 0),
+    bonusPhp: Number(data.bonus_php ?? 0),
+    miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
+  };
+};
+
+/** Surgical update of off_cycle_php + net_php on an existing (open) payment row.
+ *  Matches updatePaymentRow semantics: leaves payout_amount untouched (Wise pays
+ *  net_php; payout_amount is reference). */
+export const setPaymentOffCycle = async (
+  db: Db,
+  paymentId: string,
+  offCyclePhp: number,
+  netPhp: number,
+): Promise<void> => {
+  const { error } = await db
+    .from('payments')
+    .update({ off_cycle_php: offCyclePhp, net_php: netPhp })
+    .eq('id', paymentId);
+  if (error) throw new Error(`set off-cycle: ${error.message}`);
 };
 
 /** Most recent prior payout method per worker (legacy step 3 fallback). */
@@ -347,6 +640,8 @@ export type SavedPayment = {
   bonusPhp: number;
   /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
   shortfallPhp: number;
+  /** Off-cycle per-session/per-hour earnings on this row (ledger total). */
+  offCyclePhp: number;
   netPhp: number | null;
   miscItems: MiscItem[];
   payoutMethod: string | null;
@@ -489,6 +784,22 @@ export const updatePaymentRow = async (
 export const deleteStatement = async (db: Db, paymentId: string): Promise<void> => {
   const { error } = await db.from('payments').delete().eq('id', paymentId);
   if (error) throw new Error(`delete statement: ${error.message}`);
+};
+
+/** Delete one worker's payment row for a period (no-op if absent). Used by the
+ *  off-cycle single-worker recompute when the worker is left with no payable
+ *  activity (e.g. their last off-cycle item was removed). */
+export const deleteWorkerPayment = async (
+  db: Db,
+  payPeriodId: string,
+  workerId: string,
+): Promise<void> => {
+  const { error } = await db
+    .from('payments')
+    .delete()
+    .eq('pay_period_id', payPeriodId)
+    .eq('worker_id', workerId);
+  if (error) throw new Error(`delete worker payment: ${error.message}`);
 };
 
 export const deleteAllStatements = async (db: Db, payPeriodId: string): Promise<number> => {
@@ -652,6 +963,8 @@ export type PaymentDetail = {
   bonusPhp: number;
   /** Informational performance shortfall (rate − gross); NOT subtracted from net. */
   shortfallPhp: number;
+  /** Off-cycle per-session/per-hour earnings on this row (ledger total). */
+  offCyclePhp: number;
   /** Stored net snapshot — never recomputed for display. */
   netPhp: number | null;
   miscItems: MiscItem[];
@@ -678,7 +991,7 @@ export const fetchPaymentDetail = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
+      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -701,6 +1014,7 @@ export const fetchPaymentDetail = async (
     pddPhp: Number(data.pdd_lunch_php ?? 0),
     bonusPhp: Number(data.bonus_php ?? 0),
     shortfallPhp: Number(data.deduction_php ?? 0),
+    offCyclePhp: Number(data.off_cycle_php ?? 0),
     netPhp: data.net_php,
     miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
     payoutMethod: data.payout_method,
@@ -719,7 +1033,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -740,6 +1054,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     pddPhp: Number(p.pdd_lunch_php ?? 0),
     bonusPhp: Number(p.bonus_php ?? 0),
     shortfallPhp: Number(p.deduction_php ?? 0),
+    offCyclePhp: Number(p.off_cycle_php ?? 0),
     netPhp: p.net_php,
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,

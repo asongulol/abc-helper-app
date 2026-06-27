@@ -18,10 +18,15 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const [companies, selectedCompanyId] = await Promise.all([
+  const [allCompanies, selectedCompanyId] = await Promise.all([
     listCompanies(),
     getSelectedCompanyId(),
   ]);
+  // Single-employer deployment: the admin context is ALWAYS the employer
+  // (Aaron Anderson). Feed the header switcher only the employer so it shows the
+  // tenant name and greys out (no switching into a client). Clients live in
+  // Invoicing + per-entry pickers, not the global switcher.
+  const companies = allCompanies.filter((c) => c.id === selectedCompanyId);
 
   let contractors: { id: string; name: string }[] = [];
   let periods: { id: string; label: string; start: string }[] = [];

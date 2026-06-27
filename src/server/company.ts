@@ -1,6 +1,5 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
@@ -49,14 +48,21 @@ export const listCompanies = cache(async (): Promise<CompanyOption[]> => {
 });
 
 /**
- * The selected company id, defaulting to the first visible company. Server
- * Components read this; the switcher (server action) writes the cookie.
- * Memoized per request so the cookie read + `listCompanies` resolve once.
+ * The company every ADMIN page operates on — ALWAYS the single EMPLOYER
+ * (Aaron Anderson E.H.S. LLC). This is a single-employer deployment: contractors
+ * work for the employer; clients (Ability Builders, 123 Baby Talks, …) are
+ * billing tags surfaced only in Invoicing + per-entry pickers, never as a
+ * payroll/admin context. The switcher cookie is intentionally ignored so no
+ * admin page can land on a client. Falls back to the first company only on a
+ * fresh DB with no employer row yet. Memoized per request.
  */
 export const getSelectedCompanyId = cache(async (): Promise<string | null> => {
-  const cookieStore = await cookies();
-  const fromCookie = cookieStore.get(COMPANY_COOKIE)?.value;
+  const db = await createServerSupabase();
+  const employerId = await getEmployerCompanyId(db);
+  if (employerId) return employerId;
   const companies = await listCompanies();
-  if (fromCookie && companies.some((c) => c.id === fromCookie)) return fromCookie;
   return companies[0]?.id ?? null;
 });
+
+/** Alias kept for the payroll tracker call sites — same employer-only resolution. */
+export const getTrackerCompanyId = getSelectedCompanyId;

@@ -4,7 +4,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { countPendingTimeApprovals } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId } from '@/server/company';
+import { getTrackerCompanyId } from '@/server/company';
 
 export const metadata = {
   title: 'Process payroll — Aaron Anderson E.H.S. LLC',
@@ -14,12 +14,14 @@ export default async function ProcessPage() {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const companyId = await getSelectedCompanyId();
+  const companyId = await getTrackerCompanyId();
   if (!companyId) {
     return (
       <div className="card">
         <h2>Process payroll</h2>
-        <p className="sub">No company selected. Use the company switcher in the header.</p>
+        <p className="sub">
+          No employer company is configured. Add one in Config (kind = employer).
+        </p>
       </div>
     );
   }

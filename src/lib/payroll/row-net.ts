@@ -1,10 +1,11 @@
 /**
  * Client-side editable-row net recomposition — same formula as the engine:
- *   net = gross + ha + t13 + pdd + bonus + miscTotal(misc_items)
+ *   net = gross + ha + t13 + pdd + bonus + miscTotal(misc_items) + offCycle
  *
  * All values arrive as PHP major units (number), are converted to integer
  * centavos, summed, and returned as centavos. Callers display via
- * centavosToPhp + money().
+ * centavosToPhp + money(). `offCyclePhp` is the durable off-cycle ledger total
+ * carried on the row — included so editing misc never silently drops it.
  *
  * Pure: no DB, no React, no server-only.
  */
@@ -21,6 +22,8 @@ export type EditableRowValues = {
   pddPhp: number;
   bonusPhp: number;
   miscItems: readonly MiscItem[];
+  /** Durable off-cycle ledger total carried on the row (default 0). */
+  offCyclePhp?: number;
 };
 
 /**
@@ -35,5 +38,9 @@ export const recomputeNetCentavos = (row: EditableRowValues): Centavos | null =>
   const pddC = phpToCentavos(row.pddPhp) ?? (centavos(0) as Centavos);
   const bonusC = phpToCentavos(row.bonusPhp) ?? (centavos(0) as Centavos);
   const miscC = miscTotal(row.miscItems);
-  return addMinor(addMinor(addMinor(addMinor(addMinor(grossC, haC), t13C), pddC), bonusC), miscC);
+  const offC = phpToCentavos(row.offCyclePhp ?? 0) ?? (centavos(0) as Centavos);
+  return addMinor(
+    addMinor(addMinor(addMinor(addMinor(addMinor(grossC, haC), t13C), pddC), bonusC), miscC),
+    offC,
+  );
 };

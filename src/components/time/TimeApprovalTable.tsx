@@ -38,6 +38,8 @@ interface TimeApprovalTableProps {
   /** source_names that have no matching worker in the roster. */
   unmatchedNames: string[];
   contractorOptions: ContractorOption[];
+  /** worker_id → assigned active CLIENT companies (the invoicing target). */
+  assignedClients: Record<string, { id: string; name: string }[]>;
   onRefresh: () => void;
 }
 
@@ -50,6 +52,7 @@ export const TimeApprovalTable = ({
   rows,
   unmatchedNames,
   contractorOptions,
+  assignedClients,
   onRefresh,
 }: TimeApprovalTableProps) => {
   const { notify, dismiss } = useToast();
@@ -254,6 +257,24 @@ export const TimeApprovalTable = ({
                     <tr>
                       <td className="card-title">
                         <b>{row.sourceName}</b>
+                        {(() => {
+                          const clients = row.workerId ? (assignedClients[row.workerId] ?? []) : [];
+                          if (clients.length === 1) {
+                            return (
+                              <div className="muted" style={{ fontSize: 11 }}>
+                                → {clients[0]?.name}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div style={{ fontSize: 11, color: 'var(--warn)' }}>
+                              ⚠{' '}
+                              {clients.length === 0
+                                ? 'no client assigned'
+                                : `${clients.length} clients`}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td data-label="Days in period">{periodDays}</td>
                       <td data-label="Working days">{workingDays}</td>

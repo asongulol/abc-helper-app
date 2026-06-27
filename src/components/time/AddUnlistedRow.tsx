@@ -8,9 +8,11 @@
  * Faithful to the legacy addManualRow / bottom-row state.
  */
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
+import type { WorkerClient } from '@/db/queries/sessions';
 import { periodDates, periodFor } from '@/lib/dates/periods';
+import { getWorkerClients } from '@/server/actions/sessions';
 import { addHoursDaily, addHoursTotal } from '@/server/actions/time';
 
 interface ContractorOption {
@@ -40,6 +42,8 @@ export const AddUnlistedRow = ({
   const [mode, setMode] = useState<'total' | 'daily'>('total');
   const [totalStr, setTotalStr] = useState('');
   const [dailyMap, setDailyMap] = useState<Record<string, string>>({});
+  const [clients, setClients] = useState<WorkerClient[]>([]);
+  const [clientId, setClientId] = useState('');
   const [pending, startTransition] = useTransition();
 
   // Snap the chosen date to its semi-monthly period.
@@ -51,12 +55,34 @@ export const AddUnlistedRow = ({
 
   const selectedOption = contractorOptions.find((o) => o.workerId === selectedWorkerId);
 
+  // The chosen contractor's clients — these hours bill to the picked one. A
+  // single-client contractor defaults automatically.
+  useEffect(() => {
+    if (!selectedWorkerId) {
+      setClients([]);
+      setClientId('');
+      return;
+    }
+    let live = true;
+    getWorkerClients({ companyId, workerId: selectedWorkerId }).then((res) => {
+      if (!live) return;
+      const list = res.ok ? res.data.clients : [];
+      setClients(list);
+      setClientId(list.length === 1 ? (list[0]?.id ?? '') : '');
+    });
+    return () => {
+      live = false;
+    };
+  }, [companyId, selectedWorkerId]);
+
   const reset = () => {
     setSelectedWorkerId('');
     setMpDate('');
     setMode('total');
     setTotalStr('');
     setDailyMap({});
+    setClients([]);
+    setClientId('');
   };
 
   const handleSubmit = () => {
@@ -77,6 +103,7 @@ export const AddUnlistedRow = ({
           sourceName: selectedOption.sourceName,
           periodStart: effPeriod.start,
           hours: h,
+          clientId: clientId || null,
         });
         if (!res.ok) {
           notify(res.error, { type: 'error' });
@@ -98,6 +125,7 @@ export const AddUnlistedRow = ({
           workerId: selectedOption.workerId,
           sourceName: selectedOption.sourceName,
           days,
+          clientId: clientId || null,
         });
         if (!res.ok) {
           notify(res.error, { type: 'error' });
@@ -144,6 +172,31 @@ export const AddUnlistedRow = ({
 
           {selectedWorkerId && (
             <>
+              <div>
+                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                  Client (billed)
+                  <select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    style={{
+                      maxWidth: 180,
+                      borderColor: clientId ? undefined : 'var(--warn)',
+                      background: clientId ? undefined : 'var(--warn-soft)',
+                    }}
+                    disabled={pending}
+                    title="The client these hours bill to (invoicing). Required when the contractor serves more than one client."
+                  >
+                    <option value="">
+                      {clients.length === 0 ? 'no client' : '— unattributed —'}
+                    </option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div>
                 <label
                   style={{

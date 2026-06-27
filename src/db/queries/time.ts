@@ -73,6 +73,8 @@ export const upsertTimeEntries = async (
     approval: 'pending' | 'approved' | 'rejected';
     import_batch_id: string | null;
     activity_pct: number | null;
+    /** CLIENT these hours bill to (invoicing attribution); null = unattributed. */
+    client_company_id?: string | null;
   }>,
 ): Promise<void> => {
   if (rows.length === 0) return;

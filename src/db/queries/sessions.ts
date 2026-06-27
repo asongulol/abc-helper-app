@@ -77,10 +77,13 @@ export type NewSession = {
   eiid: string | null;
   caseRef: string | null;
   notes: string | null;
+  /** Defaults to 'pending' (portal/CSV). Admin entry may pass 'approved'. */
+  approval?: ApprovalStatus;
 };
 
-/** Insert one pending session/visit row. */
+/** Insert one session/visit row (pending unless `approval` says otherwise). */
 export const insertSession = async (db: Db, row: NewSession): Promise<void> => {
+  const approval = row.approval ?? 'pending';
   const { error } = await db.from('service_sessions').insert({
     company_id: row.companyId,
     worker_id: row.workerId,
@@ -91,7 +94,8 @@ export const insertSession = async (db: Db, row: NewSession): Promise<void> => {
     eiid: row.eiid,
     case_ref: row.caseRef,
     notes: row.notes,
-    approval: 'pending',
+    approval,
+    approved_at: approval === 'approved' ? new Date().toISOString() : null,
   });
   if (error) throw new Error(`add session: ${error.message}`);
 };
@@ -143,6 +147,35 @@ export const fetchWorkerClients = async (db: Db, workerId: string): Promise<Work
     .sort((a, b) => a.name.localeCompare(b.name));
 };
 
+/**
+ * Active CLIENT companies for many workers at once (worker → assigned client[]).
+ * The tracker uses this to show who each contractor bills to and to flag
+ * contractors with none / multiple clients (ambiguous attribution). Service
+ * client (worker_companies is admin-RLS).
+ */
+export const fetchWorkerClientsBatch = async (
+  db: Db,
+  workerIds: readonly string[],
+): Promise<Map<string, WorkerClient[]>> => {
+  const out = new Map<string, WorkerClient[]>();
+  if (workerIds.length === 0) return out;
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('worker_id, company_id, companies(name, kind, status)')
+    .in('worker_id', workerIds)
+    .eq('status', 'active');
+  if (error) throw new Error(`worker clients batch: ${error.message}`);
+  for (const r of data ?? []) {
+    if (!r.worker_id || r.companies?.kind !== 'client' || r.companies?.status !== 'active')
+      continue;
+    const list = out.get(r.worker_id) ?? [];
+    list.push({ id: r.company_id, name: r.companies?.name ?? '—' });
+    out.set(r.worker_id, list);
+  }
+  for (const list of out.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+};
+
 export type PortalSessionRow = {
   id: string;
   companyName: string;
@@ -174,6 +207,84 @@ export const fetchWorkerSessions = async (
     childInitials: r.child_initials,
     eiid: r.eiid,
     approval: r.approval,
+  }));
+};
+
+export type UnpaidSessionRow = {
+  id: string;
+  /** CLIENT company the session was recorded against. */
+  companyId: string;
+  companyName: string;
+  sessionDate: string;
+  sessionType: string | null;
+  units: number;
+  childInitials: string | null;
+  eiid: string | null;
+};
+
+/**
+ * A worker's APPROVED sessions not yet paid to them (paid_at IS NULL) — the
+ * off-cycle pay picker. Scoped by worker across all their clients (service
+ * client, since service_sessions is CLIENT-company RLS-scoped). A session that
+ * has been added to the off-cycle ledger has its paid_at stamped, so it never
+ * reappears here; sessions paid through a locked normal period are likewise
+ * excluded once their marker is set.
+ */
+export const fetchUnpaidApprovedSessions = async (
+  db: Db,
+  workerId: string,
+  limit = 200,
+): Promise<UnpaidSessionRow[]> => {
+  const { data, error } = await db
+    .from('service_sessions')
+    .select(
+      'id, company_id, session_date, session_type, units, child_initials, eiid, companies(name)',
+    )
+    .eq('worker_id', workerId)
+    .eq('approval', 'approved')
+    .is('paid_at', null)
+    .order('session_date', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`unpaid sessions: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    companyId: r.company_id,
+    companyName: r.companies?.name ?? '—',
+    sessionDate: r.session_date,
+    sessionType: r.session_type,
+    units: Number(r.units) || 0,
+    childInitials: r.child_initials,
+    eiid: r.eiid,
+  }));
+};
+
+export type SessionByIdRow = {
+  id: string;
+  workerId: string | null;
+  sessionDate: string;
+  units: number;
+  approval: ApprovalStatus;
+  paidAt: string | null;
+};
+
+/** Fetch sessions by id (service client) — for validating an off-cycle pick. */
+export const fetchSessionsByIds = async (
+  db: Db,
+  ids: readonly string[],
+): Promise<SessionByIdRow[]> => {
+  if (ids.length === 0) return [];
+  const { data, error } = await db
+    .from('service_sessions')
+    .select('id, worker_id, session_date, units, approval, paid_at')
+    .in('id', ids);
+  if (error) throw new Error(`sessions by id: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    workerId: r.worker_id,
+    sessionDate: r.session_date,
+    units: Number(r.units) || 0,
+    approval: r.approval,
+    paidAt: r.paid_at,
   }));
 };
 

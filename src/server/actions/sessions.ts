@@ -8,14 +8,19 @@
  */
 
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import { fetchClientRoster } from '@/db/queries/invoicing';
 import {
   deleteSession as deleteSessionRow,
   fetchSessionsList,
+  fetchWorkerClients,
+  fetchWorkerSessions,
   insertSession,
   insertSessions,
+  type PortalSessionRow,
   type SessionRow,
   updateSessionsApproval,
+  type WorkerClient,
 } from '@/db/queries/sessions';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -70,7 +75,7 @@ export async function loadClientSessions(
   }
 }
 
-/** Record one session/visit (pending). */
+/** Record one session/visit (pending, or approved when admin entry asserts it). */
 export async function createSession(args: unknown): Promise<ActionResult> {
   const parsed = CreateSessionSchema.safeParse(args);
   if (!parsed.success)
@@ -85,6 +90,7 @@ export async function createSession(args: unknown): Promise<ActionResult> {
     eiid,
     caseRef,
     notes,
+    approve,
   } = parsed.data;
 
   const guard = await authGuard(clientId);
@@ -102,16 +108,57 @@ export async function createSession(args: unknown): Promise<ActionResult> {
       eiid: eiid ?? null,
       caseRef: caseRef ?? null,
       notes: notes ?? null,
+      ...(approve ? { approval: 'approved' as const } : {}),
     });
     await logEvent({
       companyId: clientId,
       action: 'session_created',
       entity: workerId,
-      detail: { date: sessionDate, units, type: sessionType ?? null },
+      detail: { date: sessionDate, units, type: sessionType ?? null, approved: !!approve },
     });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Could not add session.' };
+  }
+}
+
+/** A worker's recent sessions (any status) — shown under the admin add form so
+ *  a just-added session is visible. Service client (sessions are client-scoped). */
+export async function getWorkerSessions(args: {
+  companyId: string;
+  workerId: string;
+}): Promise<ActionResult<{ sessions: PortalSessionRow[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+  try {
+    const sessions = await fetchWorkerSessions(createServiceClient(), args.workerId, 25);
+    return { ok: true, data: { sessions } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/** A per-session worker's active CLIENT companies — the client dropdown on the
+ *  admin session-entry form (same set the contractor sees in the portal). Read
+ *  via the service client behind the admin check, since a worker's client links
+ *  may sit outside the admin's own company scope. */
+export async function getWorkerClients(args: {
+  companyId: string;
+  workerId: string;
+}): Promise<ActionResult<{ clients: WorkerClient[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+  try {
+    const clients = await fetchWorkerClients(createServiceClient(), args.workerId);
+    return { ok: true, data: { clients } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
   }
 }
 
