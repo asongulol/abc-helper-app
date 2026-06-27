@@ -123,7 +123,7 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
       ok: false,
       error: parsed.error.issues[0]?.message ?? 'Invalid input.',
     };
-  const { companyId, workerId, sourceName, periodStart, hours } = parsed.data;
+  const { companyId, workerId, sourceName, periodStart, hours, clientId } = parsed.data;
 
   const guard = await authGuard(companyId);
   if (!guard.ok) return guard;
@@ -142,6 +142,7 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
         approval: 'pending',
         import_batch_id: batchId,
         activity_pct: null,
+        client_company_id: clientId ?? null,
       },
     ]);
     const period = periodFor(periodStart);
@@ -172,7 +173,7 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
       ok: false,
       error: parsed.error.issues[0]?.message ?? 'Invalid input.',
     };
-  const { companyId, workerId, sourceName, days } = parsed.data;
+  const { companyId, workerId, sourceName, days, clientId } = parsed.data;
 
   const guard = await authGuard(companyId);
   if (!guard.ok) return guard;
@@ -192,6 +193,7 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
         approval: 'pending',
         import_batch_id: batchId,
         activity_pct: null,
+        client_company_id: clientId ?? null,
       })),
     );
     const totalHours = days.reduce((s, d) => s + d.hours, 0);

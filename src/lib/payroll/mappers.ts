@@ -81,6 +81,9 @@ export type AttributionResult = {
 export const attributeTimeEntries = (
   entries: readonly TimeEntryRow[],
   roster: readonly RosterRow[],
+  /** (worker → work_dates) already paid via a per_hour off-cycle item — those
+   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum. */
+  excludeDatesByWorker?: ReadonlyMap<string, ReadonlySet<string>>,
 ): AttributionResult => {
   const idx = buildMatchIndex(
     roster.map((r) => ({
@@ -113,6 +116,8 @@ export const attributeTimeEntries = (
       unlinked.add(wid);
       continue;
     }
+    // Drop a day already paid via a per_hour off-cycle item (no double-pay).
+    if (excludeDatesByWorker?.get(wid)?.has(t.workDate)) continue;
     const secs = (Number(t.trackedSeconds) || 0) + (Number(t.ptoSeconds) || 0);
     secondsByWorker.set(wid, (secondsByWorker.get(wid) ?? 0) + secs);
     const byDate = secondsByWorkerByDate.get(wid) ?? new Map<string, number>();
@@ -191,6 +196,9 @@ export type BuildStatementsArgs = {
   /** Approved session units per worker broken down by session_date (PS) — used
    *  by the date-aware gross (F4) when a rate change lands mid-period. */
   sessionUnitsByWorkerByDate?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  /** Off-cycle per-session/per-hour earnings per worker (centavos), re-applied
+   *  from the durable off_cycle_pay_items ledger so the line survives recalc. */
+  offCycleByWorker?: ReadonlyMap<string, Centavos>;
 };
 
 /** One engine pass per attributed worker — the heart of legacy `calculate()`. */
@@ -221,6 +229,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
         args.sessionUnitsByWorkerByDate?.get(workerId),
       );
     }
+    const offCycleEarnings = args.offCycleByWorker?.get(workerId);
     const result = calcContractorRow({
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
@@ -236,6 +245,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       includeHealthAllowance: args.includeHealthAllowance ?? true,
       includeThirteenth: args.includeThirteenth ?? true,
       ...(args.holidays !== undefined ? { holidays: args.holidays } : {}),
+      ...(offCycleEarnings !== undefined ? { offCycleEarnings } : {}),
     });
     const inactive =
       (link.linkStatus !== null && link.linkStatus !== 'active') ||
@@ -265,6 +275,16 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       if (processed.has(workerId) || units <= 0) continue;
       const lk = byId.get(workerId);
       if (!lk || payModelFor(lk.contract, lk.payBasis) !== 'per_session') continue;
+      build(workerId, 0);
+    }
+  }
+  // A worker whose ONLY activity this period is an off-cycle pay item (no
+  // tracked time, no in-window sessions) still needs a statement row to carry
+  // the off-cycle earnings. Pull them in by their ledger presence.
+  if (args.offCycleByWorker) {
+    for (const [workerId, amount] of args.offCycleByWorker) {
+      if (processed.has(workerId) || amount <= 0) continue;
+      if (!byId.has(workerId)) continue; // not on this company's roster
       build(workerId, 0);
     }
   }
@@ -312,6 +332,8 @@ export type PaymentDraft = {
    * "performance shortfall". Real, subtracted deductions live in misc_items.
    */
   deduction_php: number;
+  /** Off-cycle per-session/per-hour earnings (ledger snapshot); 0 by default. */
+  off_cycle_php: number;
   net_php: number;
   misc_items: MiscItem[];
   fx_rate: number | null;
@@ -351,6 +373,7 @@ export const toPaymentDraft = (
     pdd_lunch_php: centavosToPhp(r.pddLunch),
     bonus_php: centavosToPhp(r.bonus),
     deduction_php: centavosToPhp(r.shortfall),
+    off_cycle_php: centavosToPhp(r.offCycle),
     net_php: centavosToPhp(r.net),
     misc_items: [],
     fx_rate: opts.fxRate ?? null,

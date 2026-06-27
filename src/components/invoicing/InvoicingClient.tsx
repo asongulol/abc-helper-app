@@ -110,6 +110,12 @@ export const InvoicingClient = ({
           { type: 'warn' },
         );
       }
+      if (res.data.multiClientNames.length > 0) {
+        notify(
+          `${res.data.multiClientNames.join(', ')} also serve other clients — their FULL hours bill here (and would bill again on the other client). Attribute per-project before sending.`,
+          { type: 'warn', persistent: true },
+        );
+      }
     });
   };
 

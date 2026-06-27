@@ -13,7 +13,7 @@ const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO da
  * Billable session items a contractor chooses from in the portal (stored in
  * service_sessions.session_type). Extend this list to add more meeting types.
  */
-export const EI_SESSION_ITEMS = ['IFSP Meeting', 'Amendment Meeting'] as const;
+export const EI_SESSION_ITEMS = ['Initial IFSP', 'Amendment IFSP'] as const;
 export type EiSessionItem = (typeof EI_SESSION_ITEMS)[number];
 
 /** Load a client's roster + sessions for a window (management screen). */
@@ -35,6 +35,9 @@ export const CreateSessionSchema = z.object({
   eiid: z.string().max(40).nullable().optional(),
   caseRef: z.string().max(100).nullable().optional(),
   notes: z.string().max(1000).nullable().optional(),
+  /** Admin entry is authoritative — mark approved immediately (so it pays/bills
+   *  without a separate review step). Omitted/false ⇒ pending (portal/CSV flow). */
+  approve: z.boolean().optional(),
 });
 export type CreateSessionInput = z.infer<typeof CreateSessionSchema>;
 

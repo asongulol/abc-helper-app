@@ -84,6 +84,14 @@ export type ContractorRowInput = {
   pddLunch?: Centavos;
   bonus?: Centavos;
   miscItems?: readonly MiscItem[];
+  /**
+   * Off-cycle per-session/per-hour earnings for this worker in the period — a
+   * snapshot total re-applied from the durable off_cycle_pay_items ledger (NOT
+   * re-priced here). Defaults to 0, so it is a no-op for every fresh calculate
+   * and every parity fixture. Added LAST to net (integer-centavos sum is
+   * associative, so parity is byte-for-byte unchanged when this is 0).
+   */
+  offCycleEarnings?: Centavos;
   /** Observed holidays; defaults to the standard list for the period's years. */
   holidays?: readonly Holiday[];
 };
@@ -109,6 +117,8 @@ export type ContractorRowResult = {
   pddLunch: Centavos;
   bonus: Centavos;
   misc: Centavos;
+  /** Off-cycle per-session/per-hour earnings (ledger snapshot); 0 by default. */
+  offCycle: Centavos;
   net: Centavos | null;
   /**
    * True when this is a `PHS` engagement with a missing/invalid pay_basis, so
@@ -185,11 +195,15 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
   const pdd = input.pddLunch ?? zeroCentavos();
   const bonus = input.bonus ?? zeroCentavos();
   const misc = miscTotal(input.miscItems);
+  const offCycle = input.offCycleEarnings ?? zeroCentavos();
 
   const net =
     gross === null
       ? null
-      : addMinor(addMinor(addMinor(addMinor(addMinor(gross, ha), t13), pdd), bonus), misc);
+      : addMinor(
+          addMinor(addMinor(addMinor(addMinor(addMinor(gross, ha), t13), pdd), bonus), misc),
+          offCycle,
+        );
 
   return {
     workedHours: worked,
@@ -203,6 +217,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     pddLunch: pdd,
     bonus,
     misc,
+    offCycle,
     net,
     payBasisUnset,
     // Parity with the originals' payments.units: the approved session COUNT for a

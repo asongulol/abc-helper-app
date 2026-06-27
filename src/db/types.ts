@@ -880,6 +880,83 @@ export type Database = {
           },
         ]
       }
+      off_cycle_pay_items: {
+        Row: {
+          amount_php: number
+          basis: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          pay_period_id: string
+          rate_php: number | null
+          session_id: string | null
+          units: number | null
+          work_date: string | null
+          worker_id: string
+        }
+        Insert: {
+          amount_php: number
+          basis: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          pay_period_id: string
+          rate_php?: number | null
+          session_id?: string | null
+          units?: number | null
+          work_date?: string | null
+          worker_id: string
+        }
+        Update: {
+          amount_php?: number
+          basis?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          pay_period_id?: string
+          rate_php?: number | null
+          session_id?: string | null
+          units?: number | null
+          work_date?: string | null
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "off_cycle_pay_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_pay_period_id_fkey"
+            columns: ["pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_periods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "service_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pay_periods: {
         Row: {
           company_id: string
@@ -945,6 +1022,7 @@ export type Database = {
           misc_items: Json
           net_php: number
           note: string | null
+          off_cycle_php: number
           original_net_php: number | null
           paid_at: string | null
           pay_basis: string | null
@@ -981,6 +1059,7 @@ export type Database = {
           misc_items?: Json
           net_php?: number
           note?: string | null
+          off_cycle_php?: number
           original_net_php?: number | null
           paid_at?: string | null
           pay_basis?: string | null
@@ -1017,6 +1096,7 @@ export type Database = {
           misc_items?: Json
           net_php?: number
           note?: string | null
+          off_cycle_php?: number
           original_net_php?: number | null
           paid_at?: string | null
           pay_basis?: string | null
@@ -1206,6 +1286,9 @@ export type Database = {
           id: string
           import_batch_id: string | null
           notes: string | null
+          paid_at: string | null
+          paid_pay_period_id: string | null
+          paid_payment_id: string | null
           session_date: string
           session_type: string | null
           units: number
@@ -1225,6 +1308,9 @@ export type Database = {
           id?: string
           import_batch_id?: string | null
           notes?: string | null
+          paid_at?: string | null
+          paid_pay_period_id?: string | null
+          paid_payment_id?: string | null
           session_date: string
           session_type?: string | null
           units?: number
@@ -1244,6 +1330,9 @@ export type Database = {
           id?: string
           import_batch_id?: string | null
           notes?: string | null
+          paid_at?: string | null
+          paid_pay_period_id?: string | null
+          paid_payment_id?: string | null
           session_date?: string
           session_type?: string | null
           units?: number
@@ -1272,6 +1361,7 @@ export type Database = {
           approval: Database["public"]["Enums"]["approval_status"]
           approved_at: string | null
           approved_by: string | null
+          client_company_id: string | null
           company_id: string
           created_at: string
           id: string
@@ -1289,6 +1379,7 @@ export type Database = {
           approval?: Database["public"]["Enums"]["approval_status"]
           approved_at?: string | null
           approved_by?: string | null
+          client_company_id?: string | null
           company_id: string
           created_at?: string
           id?: string
@@ -1306,6 +1397,7 @@ export type Database = {
           approval?: Database["public"]["Enums"]["approval_status"]
           approved_at?: string | null
           approved_by?: string | null
+          client_company_id?: string | null
           company_id?: string
           created_at?: string
           id?: string

@@ -106,7 +106,22 @@ const config: Config = {
     [
       'docusaurus-plugin-typedoc',
       {
-        entryPoints: ['../src/lib/format.ts'],
+        // Pure lib modules only (no React/server-only deps). status-pills.ts is
+        // excluded in tsconfig.typedoc.json because it imports a UI component.
+        entryPoints: [
+          '../src/lib/format.ts',
+          '../src/lib/names.ts',
+          '../src/lib/money/index.ts',
+          '../src/lib/dates/periods.ts',
+          '../src/lib/pay/calc.ts',
+          '../src/lib/pay/allowances.ts',
+          '../src/lib/pay/expected-hours.ts',
+          '../src/lib/pay/holidays.ts',
+          '../src/lib/pay/rates.ts',
+          '../src/lib/payroll/mappers.ts',
+          '../src/lib/payroll/row-net.ts',
+          '../src/lib/payroll/bank-export.ts',
+        ],
         // Scoped tsconfig (not the app root) so TypeDoc only compiles the entry
         // points — the docs build doesn't install the app's React deps.
         tsconfig: './tsconfig.typedoc.json',

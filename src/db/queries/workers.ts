@@ -5,6 +5,7 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cache } from 'react';
 import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
@@ -62,8 +63,13 @@ export type RosterWorker = {
 /**
  * Roster for a single company: worker_companies joined to workers, newest
  * created first. Current rate is resolved by the caller from the rates query.
+ *
+ * `cache()`-wrapped: the admin layout fetches the roster for the ⌘K palette on
+ * every page, and pages like /contractors fetch it again. With one cached
+ * Supabase client (same `db` reference), this collapses to a single query per
+ * request. Keyed on (db, companyId), so a different client/company never reuses.
  */
-export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWorker[]> => {
+export const fetchRoster = cache(async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
     'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
 
@@ -127,7 +133,42 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterWork
         linkStatus: l.status,
       };
     });
+});
+
+export type RosterIndexRow = {
+  workerId: string;
+  firstName: string | null;
+  middleName: string | null;
+  lastName: string | null;
 };
+
+/**
+ * Lightweight roster projection — just worker id + name parts, NOT the ~45-column
+ * HR record {@link fetchRoster} pulls. Powers the ⌘K command palette (admin
+ * layout, every route) and the /documents contractor dropdown, which need only
+ * `{id, name}`. `cache()`-wrapped on (db, companyId) so the layout + page share
+ * one query per request.
+ */
+export const fetchRosterIndex = cache(
+  async (db: Db, companyId: string): Promise<RosterIndexRow[]> => {
+    const { data, error } = await db
+      .from('worker_companies')
+      .select('worker_id, workers(first_name, middle_name, last_name)')
+      .eq('company_id', companyId)
+      .order('id', { ascending: false });
+    if (error) throw new Error(`worker_companies index: ${error.message}`);
+    return (data ?? [])
+      .filter(
+        (l): l is typeof l & { workers: NonNullable<(typeof l)['workers']> } => l.workers != null,
+      )
+      .map((l) => ({
+        workerId: l.worker_id,
+        firstName: l.workers.first_name,
+        middleName: l.workers.middle_name,
+        lastName: l.workers.last_name,
+      }));
+  },
+);
 
 /** Fetch a single worker_companies row joined to worker, or null. */
 export const fetchWorkerLink = async (

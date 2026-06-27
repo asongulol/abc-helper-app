@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { type NextRequest, NextResponse } from 'next/server';
 import type { Database } from '@/db/types';
+import { isPrefetchRequest } from '@/lib/http/prefetch';
 
 /**
  * Auth gate (Next.js proxy convention, formerly middleware).
@@ -23,6 +24,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   // Cron-invoked routes have no Supabase session; they self-gate via x-cron-secret
   // (see src/server/cron.ts), so skip the audience auth gate for them.
   if (pathname.startsWith('/api/cron/')) return response;
+
+  // Prefetch RSC requests don't need the audience gate. Next fires one per <Link>
+  // on the page (~15 admin / 6 portal on the first shell paint), and gating each
+  // one here means a full network auth.getUser() + an admin_users/contractor_logins
+  // lookup PER LINK — the dominant redundant auth cost per page view. The eventual
+  // real navigation re-runs this proxy, and every page re-verifies identity via
+  // getCurrentAdmin/getCurrentWorker (ADR-0004), which redirects an unauthorized
+  // user before any protected RSC renders — so skipping the gate here is safe.
+  if (isPrefetchRequest(request.headers)) return response;
 
   const supabase = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL ?? '',

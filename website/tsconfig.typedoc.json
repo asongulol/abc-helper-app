@@ -1,12 +1,27 @@
 {
-  "//": "Minimal tsconfig for TypeDoc — scoped to the documented entry points ONLY, not the app's root tsconfig (which includes every .tsx and needs the app's React deps that aren't installed in the docs-only build).",
+  "//": "Minimal tsconfig for TypeDoc — scoped to the documented PURE lib entry points only, NOT the app's root tsconfig (which includes every .tsx and needs React deps absent in the docs-only build). baseUrl+paths resolve the app's `@/` alias; status-pills.ts is excluded because it imports a React component.",
   "compilerOptions": {
     "target": "esnext",
     "module": "esnext",
     "moduleResolution": "bundler",
     "skipLibCheck": true,
     "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../src/*"]
+    },
     "types": []
   },
-  "include": ["../src/lib/format.ts"]
+  "include": [
+    "../src/lib/format.ts",
+    "../src/lib/names.ts",
+    "../src/lib/money/**/*.ts",
+    "../src/lib/dates/**/*.ts",
+    "../src/lib/pay/**/*.ts",
+    "../src/lib/payroll/mappers.ts",
+    "../src/lib/payroll/row-net.ts",
+    "../src/lib/payroll/bank-export.ts",
+    "../src/lib/time/attribution.ts"
+  ],
+  "exclude": ["../src/lib/payroll/status-pills.ts"]
 }

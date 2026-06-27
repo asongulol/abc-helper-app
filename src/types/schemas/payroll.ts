@@ -130,6 +130,70 @@ export const MarkAllUnpaidSchema = z.object({
 });
 export type MarkAllUnpaidInput = z.infer<typeof MarkAllUnpaidSchema>;
 
+/* ---------- off-cycle per-session / per-hour pay ---------- */
+
+export const OffCyclePayBasisSchema = z.enum(['per_session', 'per_hour']);
+export type OffCyclePayBasis = z.infer<typeof OffCyclePayBasisSchema>;
+
+/**
+ * Add an off-cycle pay entry to a worker's row on the (open) period.
+ *  - mode 'pick'  : pay existing approved, unpaid sessions by their ids
+ *                   (per_session only); amount = Σ units × rate.
+ *  - mode 'manual': type the entry (date + units/hours + description); amount =
+ *                   units × rate, or an explicit amountPhp.
+ * The period need not contain the session/work date — that is the whole point —
+ * but the action refuses a locked/paid period and the DB guards double-pay.
+ */
+export const AddOffCyclePaySchema = PeriodKeySchema.extend({
+  workerId: z.string().uuid(),
+  basis: OffCyclePayBasisSchema,
+  description: z.string().min(1, 'Description is required').max(200),
+  mode: z.enum(['pick', 'manual']),
+  /** pick mode: service_sessions ids to pay (per_session only). */
+  sessionIds: z.array(z.string().uuid()).optional(),
+  /** manual mode: the work/session date (may be outside the period window). */
+  workDate: IsoDateSchema.optional(),
+  /** manual mode: sessions (per_session) or hours (per_hour). */
+  units: z.number().positive().optional(),
+  /** Optional explicit amount (PHP major units); else computed units × rate. */
+  amountPhp: z.number().positive().multipleOf(0.01).optional(),
+}).superRefine((val, ctx) => {
+  if (val.mode === 'pick') {
+    if (val.basis !== 'per_session')
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Pick mode is for per-session pay.',
+        path: ['mode'],
+      });
+    if (!val.sessionIds || val.sessionIds.length === 0)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Select at least one session.',
+        path: ['sessionIds'],
+      });
+  } else {
+    if (!val.workDate)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'A date is required.',
+        path: ['workDate'],
+      });
+    if (val.units == null && val.amountPhp == null)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Enter units/hours or an amount.',
+        path: ['units'],
+      });
+  }
+});
+export type AddOffCyclePayInput = z.infer<typeof AddOffCyclePaySchema>;
+
+export const RemoveOffCyclePaySchema = z.object({
+  companyId: z.string().uuid(),
+  itemId: z.string().uuid(),
+});
+export type RemoveOffCyclePayInput = z.infer<typeof RemoveOffCyclePaySchema>;
+
 export const ToggleWiseRowLockSchema = z.object({
   paymentId: uuid(),
   companyId: uuid(),

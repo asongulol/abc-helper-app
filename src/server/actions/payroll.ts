@@ -8,38 +8,63 @@
  */
 
 import { createServerSupabase } from '@/db/clients/server';
-import type { PeriodSummaryRow, ProcessPayment, SavedPayment } from '@/db/queries/payroll';
+import { createServiceClient } from '@/db/clients/service';
+import type {
+  NewOffCycleItem,
+  OffCycleItemRow,
+  PeriodSummaryRow,
+  ProcessPayment,
+  SavedPayment,
+} from '@/db/queries/payroll';
 import {
+  clearSessionsPaid,
   countPendingTime,
   deleteAllStatements as dbDeleteAllStatements,
   deleteStatement as dbDeleteStatement,
   lockPeriod as dbLockPeriod,
   unlockPeriod as dbUnlockPeriod,
+  deleteOffCycleItem,
+  fetchOffCycleItem,
+  fetchOffCycleItemsForWorkerPeriod,
   fetchPeriodIdsForPayments,
   fetchPeriodSummaries,
   fetchProcessPayments,
+  fetchRates,
+  fetchRoster,
   fetchSavedPayments,
   findPeriod,
+  insertOffCycleItems,
   markPaymentsPaid,
   markPaymentsUnpaid,
+  markSessionsPaid,
   type PaymentSnapshotRow,
   restorePaymentRows,
   setWiseRowLock,
   stepPeriodToLocked,
   syncPeriodPaidState,
   updatePaymentRow,
+  upsertOpenPeriod,
 } from '@/db/queries/payroll';
 import type { RateHistoryRow } from '@/db/queries/rates';
 import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
-import { centavos, sumMinor } from '@/lib/money';
+import {
+  fetchSessionsByIds,
+  fetchUnpaidApprovedSessions,
+  type UnpaidSessionRow,
+} from '@/db/queries/sessions';
+import { periodFor } from '@/lib/dates/periods';
+import { centavos, mulRatioMinor, sumMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { miscTotal } from '@/lib/pay/calc';
+import { payModelFor } from '@/lib/pay/expected-hours';
+import { resolveRate } from '@/lib/pay/rates';
 import { centavosToPhp, phpToCentavos } from '@/lib/payroll/mappers';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { type CalculateDraftResult, calculateDraft } from '@/server/payroll';
+import { type CalculateDraftResult, calculateDraft, recomputeWorkerDraft } from '@/server/payroll';
 import {
+  AddOffCyclePaySchema,
   CalculateDraftSchema,
   DeleteAllStatementsSchema,
   DeleteStatementSchema,
@@ -48,6 +73,7 @@ import {
   MarkPaidSchema,
   MarkUnpaidSchema,
   RateSaveSchema,
+  RemoveOffCyclePaySchema,
   RestoreSnapshotSchema,
   ToggleWiseRowLockSchema,
   UnlockPeriodSchema,
@@ -419,7 +445,7 @@ export async function updatePaymentRowAction(
     const { data: cur, error: fe } = await db
       .from('payments')
       .select(
-        'gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, net_php, note, pay_period_id',
+        'gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, off_cycle_php, net_php, note, pay_period_id',
       )
       .eq('id', input.paymentId)
       .maybeSingle();
@@ -465,8 +491,11 @@ export async function updatePaymentRowAction(
         : [];
 
     // Recompute net via same composition as the engine (single-currency sum).
+    // off_cycle_php is durable (re-applied from the ledger on recalc) — include
+    // it so editing misc never silently drops it.
     const miscC = miscTotal(miscItemsNew);
-    const netC = sumMinor([grossNew, haNew, t13New, pddNew, bonusNew, miscC]);
+    const offCycleC = phpToCentavos(Number(cur.off_cycle_php ?? 0)) ?? centavos(0);
+    const netC = sumMinor([grossNew, haNew, t13New, pddNew, bonusNew, miscC, offCycleC]);
     const netPhp = centavosToPhp(netC);
 
     // Build note for gross override
@@ -770,6 +799,305 @@ export async function toggleWiseRowLock(
     return {
       ok: false,
       error: err instanceof Error ? err.message : 'Toggle lock failed.',
+    };
+  }
+}
+
+/* ---------- Off-cycle per-session / per-hour pay ---------- */
+
+export type OffCycleEligibleWorker = {
+  workerId: string;
+  name: string;
+  basis: 'per_session' | 'per_hour';
+};
+
+/** Per-session / per-hour contractors on the company roster (off-cycle picker). */
+export async function getOffCycleEligibleWorkers(args: {
+  companyId: string;
+}): Promise<ActionResult<{ workers: OffCycleEligibleWorker[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const roster = await fetchRoster(db, args.companyId);
+    const workers: OffCycleEligibleWorker[] = [];
+    for (const r of roster) {
+      const model = payModelFor(r.contract, r.payBasis);
+      if (model !== 'per_session' && model !== 'per_hour') continue;
+      const name = [r.worker.firstName, r.worker.middleName, r.worker.lastName]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      workers.push({ workerId: r.workerId, name: name || r.workerId, basis: model });
+    }
+    workers.sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, data: { workers } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/** A worker's approved, not-yet-paid sessions — the pick-mode checklist. */
+export async function getUnpaidSessions(args: {
+  companyId: string;
+  workerId: string;
+}): Promise<ActionResult<{ sessions: UnpaidSessionRow[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const sessions = await fetchUnpaidApprovedSessions(createServiceClient(), args.workerId);
+    return { ok: true, data: { sessions } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/** Existing off-cycle items for a worker on a period (modal list / remove). */
+export async function getOffCycleItems(args: {
+  companyId: string;
+  periodId: string;
+  workerId: string;
+}): Promise<ActionResult<{ items: OffCycleItemRow[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const items = await fetchOffCycleItemsForWorkerPeriod(db, args.periodId, args.workerId);
+    return { ok: true, data: { items } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/**
+ * Add an off-cycle pay entry (pick existing approved sessions, or a manual
+ * date+units+description) to a per-session/per-hour contractor's row on the
+ * (open) period. The session/work date need NOT fall in the period window. The
+ * DB unique indexes are the hard double-pay guard; picked sessions are marked
+ * paid so they leave the picker and the normal windowed sum. The worker's draft
+ * row is then recomputed (gross excludes the now-paid sessions; the off-cycle
+ * total is re-applied from the ledger so it survives later recalcs).
+ */
+export async function addOffCyclePayItem(
+  args: unknown,
+): Promise<ActionResult<{ netPhp: number | null; count: number }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = AddOffCyclePaySchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+
+    // Resolve the target period — must be open (money columns freeze otherwise).
+    let period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
+    if (period && period.state !== 'open')
+      return { ok: false, error: `Period is ${period.state} — unlock it to add off-cycle pay.` };
+    if (!period) {
+      period = await upsertOpenPeriod(
+        db,
+        input.companyId,
+        input.periodStart,
+        input.periodEnd,
+        periodFor(input.periodStart).payDate,
+      );
+    }
+
+    // Worker must be on the employer roster and paid per-session/per-hour.
+    const roster = await fetchRoster(db, input.companyId);
+    const link = roster.find((r) => r.workerId === input.workerId);
+    if (!link) return { ok: false, error: "Contractor is not on this company's roster." };
+    const model = payModelFor(link.contract, link.payBasis);
+    if (model === 'salaried')
+      return { ok: false, error: 'Off-cycle pay is only for per-session / per-hour contractors.' };
+    if (model === 'unset')
+      return { ok: false, error: "Set the contractor's pay basis (hourly / per session) first." };
+    if (model !== input.basis)
+      return {
+        ok: false,
+        error: `This contractor is paid ${model.replace('_', '-')}, not ${input.basis.replace('_', '-')}.`,
+      };
+
+    const rates = await fetchRates(db, input.companyId);
+    const rows: NewOffCycleItem[] = [];
+    const sessionIdsToMark: string[] = [];
+
+    if (input.mode === 'pick') {
+      const serviceDb = createServiceClient();
+      const ids = input.sessionIds ?? [];
+      const sessions = await fetchSessionsByIds(serviceDb, ids);
+      if (sessions.length !== ids.length)
+        return { ok: false, error: 'One or more sessions were not found.' };
+      for (const s of sessions) {
+        if (s.workerId !== input.workerId)
+          return { ok: false, error: 'A selected session belongs to another contractor.' };
+        if (s.approval !== 'approved')
+          return { ok: false, error: 'Only approved sessions can be paid.' };
+        if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
+        const rate = resolveRate(rates, input.workerId, s.sessionDate, s.sessionDate);
+        if (rate === null)
+          return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
+        rows.push({
+          companyId: input.companyId,
+          workerId: input.workerId,
+          payPeriodId: period.id,
+          basis: 'per_session',
+          sessionId: s.id,
+          workDate: s.sessionDate,
+          units: s.units,
+          ratePhp: centavosToPhp(rate),
+          amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
+          description: input.description,
+        });
+        sessionIdsToMark.push(s.id);
+      }
+    } else {
+      const workDate = input.workDate as string;
+      const rate = resolveRate(rates, input.workerId, workDate, workDate);
+      let amountPhp: number;
+      if (input.amountPhp != null) {
+        amountPhp = input.amountPhp;
+      } else {
+        if (rate === null)
+          return {
+            ok: false,
+            error: `No rate is set for ${workDate}. Set a rate or enter an amount.`,
+          };
+        amountPhp = centavosToPhp(mulRatioMinor(rate, input.units ?? 0));
+      }
+      rows.push({
+        companyId: input.companyId,
+        workerId: input.workerId,
+        payPeriodId: period.id,
+        basis: input.basis,
+        sessionId: null,
+        workDate,
+        units: input.units ?? null,
+        ratePhp: rate === null ? null : centavosToPhp(rate),
+        amountPhp,
+        description: input.description,
+      });
+    }
+
+    // Insert — the unique indexes reject a double-pay (session_id or worker+date).
+    try {
+      await insertOffCycleItems(db, rows);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'ALREADY_PAID')
+        return {
+          ok: false,
+          error:
+            input.mode === 'pick'
+              ? 'That session has already been paid.'
+              : 'An off-cycle entry already exists for this contractor on that date.',
+        };
+      throw e;
+    }
+
+    if (sessionIdsToMark.length > 0) {
+      await markSessionsPaid(
+        createServiceClient(),
+        sessionIdsToMark,
+        period.id,
+        null,
+        new Date().toISOString(),
+      );
+    }
+
+    const { netPhp } = await recomputeWorkerDraft({
+      companyId: input.companyId,
+      periodId: period.id,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      workerId: input.workerId,
+    });
+
+    await logEvent({
+      companyId: input.companyId,
+      action: 'add_off_cycle',
+      entity: input.workerId,
+      detail: {
+        basis: input.basis,
+        mode: input.mode,
+        count: rows.length,
+        amount_php: rows.reduce((s, r) => s + r.amountPhp, 0),
+        period: `${input.periodStart} → ${input.periodEnd}`,
+      },
+    });
+
+    return { ok: true, data: { netPhp, count: rows.length } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Add off-cycle pay failed.' };
+  }
+}
+
+/** Remove an off-cycle pay item (open periods only): deletes the ledger row,
+ *  unmarks any paid session, and recomputes the worker's draft net. */
+export async function removeOffCyclePayItem(
+  args: unknown,
+): Promise<ActionResult<{ netPhp: number | null }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = RemoveOffCyclePaySchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const item = await fetchOffCycleItem(db, input.companyId, input.itemId);
+    if (!item) return { ok: false, error: 'Off-cycle item not found.' };
+
+    const { data: period } = await db
+      .from('pay_periods')
+      .select('id, state, period_start, period_end')
+      .eq('id', item.payPeriodId)
+      .maybeSingle();
+    if (!period) return { ok: false, error: 'Period not found.' };
+    if (period.state !== 'open')
+      return { ok: false, error: `Period is ${period.state} — unlock it to remove off-cycle pay.` };
+
+    await deleteOffCycleItem(db, input.companyId, input.itemId);
+    if (item.sessionId) await clearSessionsPaid(createServiceClient(), [item.sessionId]);
+
+    const { netPhp } = await recomputeWorkerDraft({
+      companyId: input.companyId,
+      periodId: period.id,
+      periodStart: period.period_start,
+      periodEnd: period.period_end,
+      workerId: item.workerId,
+    });
+
+    await logEvent({
+      companyId: input.companyId,
+      action: 'remove_off_cycle',
+      entity: item.workerId,
+      detail: { item: input.itemId },
+    });
+
+    return { ok: true, data: { netPhp } };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Remove off-cycle pay failed.',
     };
   }
 }

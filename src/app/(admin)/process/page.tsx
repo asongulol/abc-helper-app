@@ -4,7 +4,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { countPendingTimeApprovals } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId } from '@/server/company';
+import { getTrackerCompanyId } from '@/server/company';
 
 export const metadata = {
   title: 'Process payroll — Aaron Anderson E.H.S. LLC',
@@ -14,18 +14,24 @@ export default async function ProcessPage() {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const companyId = await getSelectedCompanyId();
+  const companyId = await getTrackerCompanyId();
   if (!companyId) {
     return (
       <div className="card">
         <h2>Process payroll</h2>
-        <p className="sub">No company selected. Use the company switcher in the header.</p>
+        <p className="sub">
+          No employer company is configured. Add one in Config (kind = employer).
+        </p>
       </div>
     );
   }
 
   const db = await createServerSupabase();
-  const allPeriods = await fetchPeriodSummaries(db, companyId);
+  // Independent reads — run concurrently instead of as a serial waterfall.
+  const [allPeriods, pending] = await Promise.all([
+    fetchPeriodSummaries(db, companyId),
+    countPendingTimeApprovals(db, companyId),
+  ]);
 
   // Legacy "Process payroll": a LIST of locked-but-not-yet-paid batches.
   const ready = allPeriods.filter((p) => p.state === 'locked');
@@ -37,7 +43,6 @@ export default async function ProcessPage() {
     .filter((p) => p.state === 'open' && p.contractorCount > 0)
     .map((p) => ({ start: p.periodStart, end: p.periodEnd }))
     .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
-  const pending = await countPendingTimeApprovals(db, companyId);
 
   return <ProcessShell ready={ready} drafts={drafts} pending={pending} />;
 }

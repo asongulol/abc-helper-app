@@ -7,9 +7,9 @@ import {
   fetchOwnPayments,
   fetchOwnProfile,
   fetchOwnTimeEntries,
-  fetchPortalSettings,
 } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
+import { getCachedPortalSettings } from '@/server/config-cache';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -41,14 +41,26 @@ export default async function PortalHomePage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [announcements, payments, timeEntries, ownDocs, settings, profile] = await Promise.all([
+  const [
+    announcements,
+    payments,
+    timeEntries,
+    ownDocs,
+    settings,
+    profile,
+    { data: toolsPendingData },
+  ] = await Promise.all([
     fetchAnnouncements(supabase),
     fetchOwnPayments(supabase, worker.workerId),
     fetchOwnTimeEntries(supabase, worker.workerId),
     fetchOwnDocuments(supabase, worker.workerId),
-    fetchPortalSettings(supabase),
+    getCachedPortalSettings(),
     fetchOwnProfile(supabase, worker.workerId),
+    // Folded into the batch (was a separate serial round-trip): tools-pending
+    // overlay flag; independent of every other read here.
+    supabase.rpc('my_tools_pending'),
   ]);
+  const toolsPending = toolsPendingData === true;
 
   // Greeting name: first name → nickname (profile_extras). First name wins so the
   // greeting reads "Maria", not a nickname that looks like a clipped first name;
@@ -60,7 +72,7 @@ export default async function PortalHomePage() {
   const greetName = (worker.firstName || String(extras.nickname ?? '').trim() || '').trim();
 
   // Required onboarding docs the contractor still owes (reminder overlay).
-  const onbConfig = (settings?.onboarding_config ?? {}) as {
+  const onbConfig = (settings.onboardingConfigRaw ?? {}) as {
     documents?: { kind: string; title: string; required?: boolean }[];
   };
   const haveKinds = new Set(ownDocs.map((d) => d.kind as string));
@@ -109,9 +121,6 @@ export default async function PortalHomePage() {
     totalDays,
     pct,
   };
-
-  const { data: toolsPendingData } = await supabase.rpc('my_tools_pending');
-  const toolsPending = toolsPendingData === true;
 
   return (
     <PortalDashboard

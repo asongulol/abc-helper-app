@@ -4,7 +4,7 @@ import { AdminShell } from '@/components/shell/AdminShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { type AdminRow, listAdmins } from '@/db/queries/admins';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
-import { fetchRoster } from '@/db/queries/workers';
+import { fetchRosterIndex } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
 
@@ -18,10 +18,15 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const [companies, selectedCompanyId] = await Promise.all([
+  const [allCompanies, selectedCompanyId] = await Promise.all([
     listCompanies(),
     getSelectedCompanyId(),
   ]);
+  // Single-employer deployment: the admin context is ALWAYS the employer
+  // (Aaron Anderson). Feed the header switcher only the employer so it shows the
+  // tenant name and greys out (no switching into a client). Clients live in
+  // Invoicing + per-entry pickers, not the global switcher.
+  const companies = allCompanies.filter((c) => c.id === selectedCompanyId);
 
   let contractors: { id: string; name: string }[] = [];
   let periods: { id: string; label: string; start: string }[] = [];
@@ -30,7 +35,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (selectedCompanyId) {
     const db = await createServerSupabase();
     const [roster, periodRows, adminRows] = await Promise.all([
-      fetchRoster(db, selectedCompanyId),
+      fetchRosterIndex(db, selectedCompanyId),
       fetchPeriodSummaries(db, selectedCompanyId),
       admin.isOwner ? listAdmins(db) : Promise.resolve([] as AdminRow[]),
     ]);

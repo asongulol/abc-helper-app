@@ -9,6 +9,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import {
   allocateInvoiceNo,
   createInvoiceWithLines,
@@ -20,6 +21,7 @@ import {
   type NewInvoiceLine,
   updateInvoiceStatus,
 } from '@/db/queries/invoicing';
+import { fetchWorkerClientsBatch } from '@/db/queries/sessions';
 import { computeInvoice, type InvoiceComputation } from '@/lib/invoicing/compute';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -54,6 +56,13 @@ export type InvoicePreviewResult = {
   zeroRateNames: string[];
   /** Names of contractors with sessions but no USD session rate (their session lines bill $0). */
   zeroSessionRateNames: string[];
+  /**
+   * Contractors on this client's roster who ALSO serve other clients. Their hours
+   * aren't attributed per-client yet, so this invoice bills their FULL hours —
+   * which would also bill on the other client(s). Flag until per-project
+   * attribution exists (see audit/HOURS-CLIENT-ATTRIBUTION-PLAN.md).
+   */
+  multiClientNames: string[];
 };
 
 /** Recompute a client's invoice for a window from source data (roster × employer time). */
@@ -65,25 +74,46 @@ async function computeForClient(
 ): Promise<{
   db: Awaited<ReturnType<typeof createServerSupabase>>;
   comp: InvoiceComputation;
+  multiClientNames: string[];
 }> {
   const db = await createServerSupabase();
   const employerId = await fetchEmployerCompanyId(db);
   if (!employerId) throw new Error('No employer company is configured.');
   const roster = await fetchClientRoster(db, clientId);
+  const workerIds = roster.map((r) => r.workerId);
+
+  // Hours → client attribution. A roster worker with exactly one active client
+  // bills their NULL-client hours here; a multi-client worker bills only hours
+  // explicitly attributed to THIS client and is flagged (their other / NULL
+  // hours never bill here — the double-bill guard).
+  const clientsByWorker = await fetchWorkerClientsBatch(createServiceClient(), workerIds);
+  const singleClientWorkerIds = new Set(
+    workerIds.filter((id) => (clientsByWorker.get(id)?.length ?? 0) <= 1),
+  );
+  const multiClientNames = roster
+    .filter((r) => (clientsByWorker.get(r.workerId)?.length ?? 0) > 1)
+    .map((r) => r.workerName);
+
   const seconds = await fetchEmployerTrackedSeconds(
     db,
     employerId,
-    roster.map((r) => r.workerId),
+    workerIds,
     from,
     to,
+    clientId,
+    singleClientWorkerIds,
   );
   // Sessions are client-scoped (service_sessions.company_id = clientId), unlike
-  // time_entries which are employer-scoped and re-attributed via the roster.
+  // time_entries which are employer-scoped and attributed via client_company_id.
   const sessions = await fetchClientSessions(db, clientId, from, to);
-  return { db, comp: computeInvoice(roster, seconds, sessions, markupPct) };
+
+  return { db, comp: computeInvoice(roster, seconds, sessions, markupPct), multiClientNames };
 }
 
-function toPreviewResult(comp: InvoiceComputation): InvoicePreviewResult {
+function toPreviewResult(
+  comp: InvoiceComputation,
+  multiClientNames: string[],
+): InvoicePreviewResult {
   return {
     lines: comp.lines.map((l) => ({
       workerId: l.workerId,
@@ -107,6 +137,7 @@ function toPreviewResult(comp: InvoiceComputation): InvoicePreviewResult {
     zeroSessionRateNames: comp.lines
       .filter((l) => l.kind === 'session' && l.sessionRateUsd === 0)
       .map((l) => l.workerName),
+    multiClientNames,
   };
 }
 
@@ -128,8 +159,8 @@ export async function previewInvoice(args: unknown): Promise<ActionResult<Invoic
   if (from > to) return { ok: false, error: 'From date must be on or before To date.' };
 
   try {
-    const { comp } = await computeForClient(clientId, from, to, markupPct);
-    return { ok: true, data: toPreviewResult(comp) };
+    const { comp, multiClientNames } = await computeForClient(clientId, from, to, markupPct);
+    return { ok: true, data: toPreviewResult(comp, multiClientNames) };
   } catch (err) {
     return {
       ok: false,

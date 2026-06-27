@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
@@ -18,9 +19,20 @@ import type { RosterWorker } from '@/db/queries/workers';
 import type { RateRow } from '@/lib/pay/rates';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
-import { AddContractorWizard } from './AddContractorWizard';
-import { BulkImportModal } from './BulkImportModal';
-import { PullWiseRecipientsModal } from './PullWiseRecipientsModal';
+
+// Modal/wizard chunks load on first open (rendered only behind state flags),
+// not eagerly with the contractors list.
+const AddContractorWizard = dynamic(
+  () => import('./AddContractorWizard').then((m) => m.AddContractorWizard),
+  { ssr: false },
+);
+const BulkImportModal = dynamic(() => import('./BulkImportModal').then((m) => m.BulkImportModal), {
+  ssr: false,
+});
+const PullWiseRecipientsModal = dynamic(
+  () => import('./PullWiseRecipientsModal').then((m) => m.PullWiseRecipientsModal),
+  { ssr: false },
+);
 
 type Props = {
   companyId: string;

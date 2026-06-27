@@ -23,6 +23,8 @@ export const AddHoursTotalSchema = z.object({
   sourceName: z.string().min(1),
   periodStart: IsoDateSchema,
   hours: z.number().positive(),
+  /** CLIENT these hours bill to (invoicing attribution); omit for unattributed. */
+  clientId: z.string().uuid().nullable().optional(),
 });
 export type AddHoursTotalInput = z.infer<typeof AddHoursTotalSchema>;
 
@@ -31,6 +33,7 @@ export const AddHoursDailySchema = z.object({
   companyId: uuid(),
   workerId: uuid().nullable(),
   sourceName: z.string().min(1),
+  clientId: z.string().uuid().nullable().optional(),
   days: z
     .array(
       z.object({

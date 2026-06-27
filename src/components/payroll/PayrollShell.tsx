@@ -6,6 +6,7 @@
  * lock/unlock, delete, misc popup.
  */
 
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
@@ -32,7 +33,13 @@ import {
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
 import type { MiscModalPayload } from './MiscModal';
-import { MiscModal } from './MiscModal';
+
+// Misc-items editor (496 lines) loads on first open, gated behind miscRowId.
+const MiscModal = dynamic(() => import('./MiscModal').then((m) => m.MiscModal), { ssr: false });
+// Off-cycle per-session/per-hour pay editor, gated behind showOffCycle.
+const OffCycleModal = dynamic(() => import('./OffCycleModal').then((m) => m.OffCycleModal), {
+  ssr: false,
+});
 
 const PAYOUT_METHODS = ['wise', 'bpi', 'gcash', 'paymaya', 'paypal'] as const;
 const DEFAULT_FX = 58.0;
@@ -54,6 +61,7 @@ type EditableRow = {
   pddPhp: number;
   bonusPhp: number;
   miscItems: MiscItem[];
+  offCyclePhp: number;
   netPhp: number | null;
   payoutMethod: string | null;
   inactive: boolean;
@@ -84,6 +92,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   pddPhp: p.pddPhp,
   bonusPhp: p.bonusPhp,
   miscItems: p.miscItems,
+  offCyclePhp: p.offCyclePhp,
   netPhp: p.netPhp,
   payoutMethod: p.payoutMethod,
   inactive: false,
@@ -97,6 +106,7 @@ const recomputeRow = (r: EditableRow): EditableRow => {
     pddPhp: r.pddPhp,
     bonusPhp: r.bonusPhp,
     miscItems: r.miscItems,
+    offCyclePhp: r.offCyclePhp,
   });
   return { ...r, netPhp: netC != null ? centavosToPhp(netC) : null };
 };
@@ -146,6 +156,7 @@ export const PayrollShell = ({
 
   // Modals
   const [miscRowId, setMiscRowId] = useState<string | null>(null);
+  const [showOffCycle, setShowOffCycle] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
     kind: 'recalculate' | 'deleteAll' | 'unlock' | 'lock';
     message?: string;
@@ -776,6 +787,17 @@ export const PayrollShell = ({
           >
             {busy ? 'Working…' : 'Calculate / Recalculate'}
           </button>
+          {isOpen && (
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => setShowOffCycle(true)}
+              title="Add a session for a per-session contractor, or pay approved sessions dated outside this period"
+            >
+              + Sessions
+            </button>
+          )}
           {undoSnapshot && currentPeriod?.state === 'open' && (
             <button
               type="button"
@@ -967,6 +989,16 @@ export const PayrollShell = ({
                         </td>
                         <td data-label="Net ₱">
                           <b>{r.netPhp == null ? '—' : r.netPhp.toLocaleString('en-US')}</b>
+                          {r.offCyclePhp > 0 && (
+                            <div
+                              className="muted"
+                              style={{ fontSize: 11 }}
+                              title="Includes off-cycle per-session / per-hour pay"
+                            >
+                              incl. off-cycle ₱
+                              {r.offCyclePhp.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </div>
+                          )}
                         </td>
                         <td className="muted" data-label="≈ USD">
                           {usdRef == null
@@ -1073,6 +1105,19 @@ export const PayrollShell = ({
             />
           );
         })()}
+
+      {showOffCycle && (
+        <OffCycleModal
+          companyId={companyId}
+          periodStart={periodStart}
+          periodEnd={periodEnd}
+          periodId={currentPeriod?.id ?? null}
+          onClose={() => setShowOffCycle(false)}
+          onSaved={() => {
+            loadSaved();
+          }}
+        />
+      )}
 
       {confirmModal?.kind === 'recalculate' && (
         <ConfirmDangerModal

@@ -162,19 +162,8 @@ export interface AgreementTemplateRow {
   updatedAt: string;
 }
 
-export const listAgreementTemplates = async (db: Db): Promise<AgreementTemplateRow[]> => {
-  const { data, error } = await db
-    .from('agreement_templates')
-    .select('kind, title, body, version, updated_at');
-  if (error) throw new Error(`agreement_templates: ${error.message}`);
-  return (data ?? []).map((r) => ({
-    kind: r.kind,
-    title: r.title,
-    body: r.body,
-    version: r.version,
-    updatedAt: r.updated_at,
-  }));
-};
+// (Reads go through the cross-request cache: getCachedAgreementTemplates in
+// src/server/config-cache.ts — templates are app-global and edited rarely.)
 
 // ─── Hubstaff projects → client mapping ─────────────────────────────────────────
 

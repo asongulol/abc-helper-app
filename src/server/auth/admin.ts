@@ -1,4 +1,5 @@
 import 'server-only';
+import { cache } from 'react';
 import { createServerSupabase } from '@/db/clients/server';
 
 export interface CurrentAdmin {
@@ -17,8 +18,13 @@ export interface CurrentAdmin {
  * Resolve the authenticated admin (admin_users row + admin_companies scope), or
  * null. RLS-scoped client: an admin only reads their own row. The proxy gate is
  * the first line of defense; this is re-verification at point of use (ADR-0004).
+ *
+ * Wrapped in React `cache()`: the layout, the page, and every nested server
+ * component / `requireAdmin` call in one request now share a single
+ * `auth.getUser()` round-trip + `admin_users` lookup instead of repeating both
+ * 3+ times. Per-request scope means a new request always re-verifies.
  */
-export const getCurrentAdmin = async (): Promise<CurrentAdmin | null> => {
+export const getCurrentAdmin = cache(async (): Promise<CurrentAdmin | null> => {
   const supabase = await createServerSupabase();
   const {
     data: { user },
@@ -51,7 +57,7 @@ export const getCurrentAdmin = async (): Promise<CurrentAdmin | null> => {
     companyIds,
     isOwner,
   };
-};
+});
 
 /** Throwing variant for server actions: verified admin or an Error. */
 export const requireAdmin = async (): Promise<CurrentAdmin> => {
