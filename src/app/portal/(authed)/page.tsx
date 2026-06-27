@@ -7,9 +7,9 @@ import {
   fetchOwnPayments,
   fetchOwnProfile,
   fetchOwnTimeEntries,
-  fetchPortalSettings,
 } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
+import { getCachedPortalSettings } from '@/server/config-cache';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -54,7 +54,7 @@ export default async function PortalHomePage() {
     fetchOwnPayments(supabase, worker.workerId),
     fetchOwnTimeEntries(supabase, worker.workerId),
     fetchOwnDocuments(supabase, worker.workerId),
-    fetchPortalSettings(supabase),
+    getCachedPortalSettings(),
     fetchOwnProfile(supabase, worker.workerId),
     // Folded into the batch (was a separate serial round-trip): tools-pending
     // overlay flag; independent of every other read here.
@@ -72,7 +72,7 @@ export default async function PortalHomePage() {
   const greetName = (worker.firstName || String(extras.nickname ?? '').trim() || '').trim();
 
   // Required onboarding docs the contractor still owes (reminder overlay).
-  const onbConfig = (settings?.onboarding_config ?? {}) as {
+  const onbConfig = (settings.onboardingConfigRaw ?? {}) as {
     documents?: { kind: string; title: string; required?: boolean }[];
   };
   const haveKinds = new Set(ownDocs.map((d) => d.kind as string));

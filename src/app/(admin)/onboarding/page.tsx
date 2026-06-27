@@ -2,10 +2,11 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingClient } from '@/components/onboarding/OnboardingClient';
 import { createServerSupabase } from '@/db/clients/server';
-import { getEmployer, listAgreementTemplates } from '@/db/queries/config';
+import { getEmployer } from '@/db/queries/config';
 import { fetchOnboardingProgress } from '@/db/queries/onboarding';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
+import { getCachedAgreementTemplates } from '@/server/config-cache';
 
 export const metadata: Metadata = {
   title: 'Onboarding — Aaron Anderson E.H.S. LLC',
@@ -31,7 +32,7 @@ export default async function OnboardingPage() {
   // transient error there must not take down the whole onboarding screen.
   const [progress, templates, employer] = await Promise.all([
     fetchOnboardingProgress(supabase, companyId),
-    listAgreementTemplates(supabase).catch(() => []),
+    getCachedAgreementTemplates().catch(() => []),
     getEmployer(supabase).catch(() => null),
   ]);
 

@@ -11,7 +11,7 @@
  *   deleteClient       → requireOwner() + usage guard + typed-name confirm
  */
 
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, revalidateTag } from 'next/cache';
 import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
 import { companyUsageCounts, parseOnboardingConfig } from '@/db/queries/config';
@@ -19,6 +19,7 @@ import type { Json } from '@/db/types';
 import { EDITABLE_FIELD_KEYS } from '@/lib/config/fields';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
+import { AGREEMENT_TEMPLATES_TAG, PORTAL_SETTINGS_TAG } from '@/server/config-cache';
 import { fetchHubstaffProjects, getAccessToken } from '@/server/hubstaff/client';
 
 export type ActionResult<T = undefined> = [T] extends [undefined]
@@ -281,6 +282,7 @@ export async function setEditableFields(args: { fields: string[] }): Promise<Act
       detail: { count: fields.length, by: admin.email },
     });
     revalidatePath('/config');
+    revalidateTag(PORTAL_SETTINGS_TAG, 'max');
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -319,6 +321,7 @@ export async function saveAgreementTemplate(args: {
       detail: { by: admin.email },
     });
     revalidatePath('/config');
+    revalidateTag(AGREEMENT_TEMPLATES_TAG, 'max');
     return { ok: true };
   } catch (e) {
     return fail(e);
@@ -448,6 +451,7 @@ export async function saveOnboardingConfig(args: { config: unknown }): Promise<A
       detail: { enabled: next.onboarding_enabled, by: admin.email },
     });
     revalidatePath('/config');
+    revalidateTag(PORTAL_SETTINGS_TAG, 'max');
     return { ok: true };
   } catch (e) {
     return fail(e);
