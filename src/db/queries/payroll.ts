@@ -690,7 +690,10 @@ export type SavedPayment = {
   /** UUID of the payments row — required for updatePaymentRowAction / deleteStatement. */
   paymentId: string;
   workerId: string;
+  /** Full legal name (first middle last) — used by the payslip / Wise / exports. */
   name: string;
+  /** First + last only — table display (less clutter); never used for payout. */
+  displayName: string;
   expectedHours: number;
   workedHours: number;
   ratio: number;
@@ -1109,6 +1112,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
       .filter(Boolean)
       .join(' ')
       .trim(),
+    displayName: [p.workers?.first_name, p.workers?.last_name].filter(Boolean).join(' ').trim(),
     expectedHours: Number(p.expected_hours ?? 0),
     workedHours: Number(p.worked_hours ?? 0),
     ratio: Number(p.performance_ratio ?? 0),

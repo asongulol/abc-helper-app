@@ -47,7 +47,10 @@ const DEFAULT_FX = 58.0;
 type EditableRow = {
   paymentId: string;
   workerId: string;
+  /** Full legal name — used for the delete confirm / payslip / exports. */
   name: string;
+  /** First + last only — table display. */
+  displayName: string;
   workedHours: number;
   expectedHours: number;
   ratio: number;
@@ -81,6 +84,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   paymentId: p.paymentId,
   workerId: p.workerId,
   name: p.name,
+  displayName: p.displayName,
   workedHours: p.workedHours,
   expectedHours: p.expectedHours,
   ratio: p.ratio,
@@ -910,7 +914,7 @@ export const PayrollShell = ({
                       >
                         <td className="card-title">
                           <b style={r.inactive ? { textDecoration: 'line-through' } : undefined}>
-                            {r.name}
+                            {r.displayName || r.name}
                           </b>
                           {r.inactive && (
                             <Badge tone="bad" style={{ marginLeft: 6, fontSize: 10 }}>
