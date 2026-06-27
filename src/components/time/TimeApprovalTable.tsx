@@ -16,6 +16,7 @@
 
 import { Fragment, useState, useTransition } from 'react';
 import { Badge, EmptyState, useToast } from '@/components/ui';
+import { clientAlias } from '@/lib/clients';
 import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { editContractorTotal, setTimeApproval, undoApproval } from '@/server/actions/time';
@@ -262,7 +263,7 @@ export const TimeApprovalTable = ({
                           if (clients.length === 1) {
                             return (
                               <div className="muted" style={{ fontSize: 11 }}>
-                                → {clients[0]?.name}
+                                → {clientAlias(clients[0]?.name)}
                               </div>
                             );
                           }

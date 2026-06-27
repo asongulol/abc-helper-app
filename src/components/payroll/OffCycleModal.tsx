@@ -22,6 +22,7 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { OffCycleItemRow } from '@/db/queries/payroll';
 import type { UnpaidSessionRow } from '@/db/queries/sessions';
+import { clientAlias } from '@/lib/clients';
 import { fmtDate, peso } from '@/lib/format';
 import {
   addOffCyclePayItem,
@@ -288,7 +289,7 @@ export const OffCycleModal = ({
                             />
                             <span style={{ minWidth: 86 }}>{fmtDate(s.sessionDate)}</span>
                             <span className="muted" style={{ flex: 1 }}>
-                              {s.companyName}
+                              {clientAlias(s.companyName)}
                               {s.eiid ? ` · ${s.eiid}` : ''}
                               {s.sessionType ? ` · ${s.sessionType}` : ''}
                             </span>

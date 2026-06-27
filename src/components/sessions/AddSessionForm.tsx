@@ -17,6 +17,7 @@ import { Badge, type BadgeTone } from '@/components/ui';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PortalSessionRow, RecentSessionRow, WorkerClient } from '@/db/queries/sessions';
+import { clientAlias } from '@/lib/clients';
 import { fmtDate } from '@/lib/format';
 import {
   getOffCycleEligibleWorkers,
@@ -439,7 +440,7 @@ export const AddSessionForm = ({
                 return (
                   <tr key={s.id} style={editingId === s.id ? { background: '#eff6ff' } : undefined}>
                     <td>{fmtDate(s.sessionDate)}</td>
-                    <td>{s.companyName}</td>
+                    <td>{clientAlias(s.companyName)}</td>
                     <td>{s.item ?? '—'}</td>
                     <td>{s.childInitials ?? '—'}</td>
                     <td>{s.eiid ?? '—'}</td>
@@ -516,7 +517,7 @@ export const AddSessionForm = ({
                         style={editingId === s.id ? { background: '#eff6ff' } : undefined}
                       >
                         <td>{s.workerName}</td>
-                        <td>{s.companyName}</td>
+                        <td>{clientAlias(s.companyName)}</td>
                         <td>{fmtDate(s.sessionDate)}</td>
                         <td>{s.item ?? '—'}</td>
                         <td>{s.childInitials ?? '—'}</td>
