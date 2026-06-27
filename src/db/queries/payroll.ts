@@ -535,6 +535,26 @@ export const upsertOpenPeriod = async (
   return { id: data.id, state: data.state };
 };
 
+export type OpenDraft = { id: string; periodStart: string; periodEnd: string };
+
+/** The employer's most recent OPEN regular draft (the "current draft"), or null. */
+export const findCurrentOpenDraft = async (
+  db: Db,
+  companyId: string,
+): Promise<OpenDraft | null> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('id, period_start, period_end')
+    .eq('company_id', companyId)
+    .eq('kind', 'regular')
+    .eq('state', 'open')
+    .order('period_start', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`current draft: ${error.message}`);
+  return data ? { id: data.id, periodStart: data.period_start, periodEnd: data.period_end } : null;
+};
+
 export type OffCycleBatch = {
   id: string;
   periodStart: string;

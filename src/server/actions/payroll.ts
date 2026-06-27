@@ -32,6 +32,7 @@ import {
   fetchRates,
   fetchRoster,
   fetchSavedPayments,
+  findCurrentOpenDraft,
   findOrCreateOffCycleBatch,
   findPeriod,
   insertOffCycleItems,
@@ -1141,12 +1142,160 @@ export async function addOffCyclePayItem(
 }
 
 /**
- * Stage 2 — route approved per-session sessions to the dedicated OFF-CYCLE
- * BATCH: a separate payroll run for catch-up sessions whose own period is
- * locked/paid. Uses the single open off-cycle batch (creating one if none),
- * adds each session as an off-cycle pay line (marking it paid so it leaves the
- * pickers / normal windowed sum), and rebuilds the affected rows from the
- * ledger only. The batch then appears in the period lists to lock & pay.
+ * Shared core: add APPROVED per-session sessions to `period` as off-cycle pay
+ * lines (marking them paid so they leave the pickers / normal windowed sum),
+ * then rebuild the affected workers' rows. `offCycleOnly` is true for the
+ * dedicated batch (ledger-only rows) and false for a regular draft (the worker's
+ * full row is recomputed). Used by the current-draft / next-period / off-cycle
+ * routes below.
+ */
+async function addApprovedSessionsToPeriod(
+  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  period: { id: string; periodStart: string; periodEnd: string },
+  sessionIds: string[],
+  offCycleOnly: boolean,
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
+  const roster = await fetchRoster(db, companyId);
+  const rates = await fetchRates(db, companyId);
+  const sessions = await fetchSessionsByIds(createServiceClient(), sessionIds);
+  if (sessions.length !== sessionIds.length)
+    return { ok: false, error: 'One or more sessions were not found.' };
+
+  const rows: NewOffCycleItem[] = [];
+  const sessionIdsToMark: string[] = [];
+  const affectedWorkers = new Set<string>();
+  for (const s of sessions) {
+    if (!s.workerId) return { ok: false, error: 'A session has no contractor.' };
+    if (s.approval !== 'approved')
+      return { ok: false, error: 'Only approved sessions can be paid.' };
+    if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
+    const link = roster.find((r) => r.workerId === s.workerId);
+    if (!link) return { ok: false, error: "A session's contractor is not on the roster." };
+    if (payModelFor(link.contract, link.payBasis) !== 'per_session')
+      return { ok: false, error: 'Session pay is for per-session contractors.' };
+    const rate = resolveRate(rates, s.workerId, s.sessionDate, s.sessionDate);
+    if (rate === null)
+      return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
+    rows.push({
+      companyId,
+      workerId: s.workerId,
+      payPeriodId: period.id,
+      basis: 'per_session',
+      sessionId: s.id,
+      workDate: s.sessionDate,
+      units: s.units,
+      ratePhp: centavosToPhp(rate),
+      amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
+      description: 'Approved session',
+    });
+    sessionIdsToMark.push(s.id);
+    affectedWorkers.add(s.workerId);
+  }
+
+  try {
+    await insertOffCycleItems(db, rows);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'ALREADY_PAID')
+      return { ok: false, error: 'A selected session has already been paid.' };
+    throw e;
+  }
+  await markSessionsPaid(
+    createServiceClient(),
+    sessionIdsToMark,
+    period.id,
+    null,
+    new Date().toISOString(),
+  );
+  for (const workerId of affectedWorkers) {
+    await recomputeWorkerDraft({
+      companyId,
+      periodId: period.id,
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
+      workerId,
+      offCycleOnly,
+    });
+  }
+  return { ok: true, count: rows.length };
+}
+
+/**
+ * Approve → pay: add approved per-session sessions to the CURRENT open draft so
+ * they get paid in it. Returns `paidInto: 'none'` (no write) when there's no
+ * open draft — the caller then offers next-period / off-cycle.
+ */
+export async function payApprovedSessions(args: {
+  companyId: string;
+  sessionIds: string[];
+}): Promise<ActionResult<{ paidInto: 'draft' | 'none'; count: number; periodStart?: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  if (args.sessionIds.length === 0) return { ok: true, data: { paidInto: 'none', count: 0 } };
+  try {
+    const db = await createServerSupabase();
+    const draft = await findCurrentOpenDraft(db, args.companyId);
+    if (!draft) return { ok: true, data: { paidInto: 'none', count: 0 } };
+    const res = await addApprovedSessionsToPeriod(
+      db,
+      args.companyId,
+      draft,
+      args.sessionIds,
+      false,
+    );
+    if (!res.ok) return res;
+    await logEvent({
+      companyId: args.companyId,
+      action: 'pay_sessions_draft',
+      entity: draft.id,
+      detail: { count: res.count },
+    });
+    return {
+      ok: true,
+      data: { paidInto: 'draft', count: res.count, periodStart: draft.periodStart },
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Add to draft failed.' };
+  }
+}
+
+/**
+ * No open draft → pay these sessions in the NEXT scheduled period (the one
+ * containing today), creating it open if needed.
+ */
+export async function payApprovedSessionsToNextPeriod(args: {
+  companyId: string;
+  sessionIds: string[];
+}): Promise<ActionResult<{ count: number; periodStart: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
+  try {
+    const db = await createServerSupabase();
+    const today = new Date().toISOString().slice(0, 10);
+    const p = periodFor(today);
+    const period = await upsertOpenPeriod(db, args.companyId, p.start, p.end, p.payDate);
+    const res = await addApprovedSessionsToPeriod(
+      db,
+      args.companyId,
+      { id: period.id, periodStart: p.start, periodEnd: p.end },
+      args.sessionIds,
+      false,
+    );
+    if (!res.ok) return res;
+    return { ok: true, data: { count: res.count, periodStart: p.start } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Add to next period failed.' };
+  }
+}
+
+/**
+ * Pay now in the dedicated OFF-CYCLE BATCH (a separate run, independent of the
+ * scheduled periods). Uses the single open batch, creating one if none.
  */
 export async function routeSessionsToOffCycleBatch(args: {
   companyId: string;
@@ -1157,7 +1306,6 @@ export async function routeSessionsToOffCycleBatch(args: {
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
     return { ok: false, error: 'No access to this company.' };
   if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
-
   try {
     const db = await createServerSupabase();
     const today = new Date().toISOString().slice(0, 10);
@@ -1167,78 +1315,21 @@ export async function routeSessionsToOffCycleBatch(args: {
       today,
       periodFor(today).payDate,
     );
-
-    const roster = await fetchRoster(db, args.companyId);
-    const rates = await fetchRates(db, args.companyId);
-    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
-    if (sessions.length !== args.sessionIds.length)
-      return { ok: false, error: 'One or more sessions were not found.' };
-
-    const rows: NewOffCycleItem[] = [];
-    const sessionIdsToMark: string[] = [];
-    const affectedWorkers = new Set<string>();
-    for (const s of sessions) {
-      if (!s.workerId) return { ok: false, error: 'A session has no contractor.' };
-      if (s.approval !== 'approved')
-        return { ok: false, error: 'Only approved sessions can be paid.' };
-      if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
-      const link = roster.find((r) => r.workerId === s.workerId);
-      if (!link) return { ok: false, error: "A session's contractor is not on the roster." };
-      if (payModelFor(link.contract, link.payBasis) !== 'per_session')
-        return { ok: false, error: 'The off-cycle batch is for per-session contractors.' };
-      const rate = resolveRate(rates, s.workerId, s.sessionDate, s.sessionDate);
-      if (rate === null)
-        return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
-      rows.push({
-        companyId: args.companyId,
-        workerId: s.workerId,
-        payPeriodId: batch.id,
-        basis: 'per_session',
-        sessionId: s.id,
-        workDate: s.sessionDate,
-        units: s.units,
-        ratePhp: centavosToPhp(rate),
-        amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
-        description: 'Off-cycle batch',
-      });
-      sessionIdsToMark.push(s.id);
-      affectedWorkers.add(s.workerId);
-    }
-
-    try {
-      await insertOffCycleItems(db, rows);
-    } catch (e) {
-      if (e instanceof Error && e.message === 'ALREADY_PAID')
-        return { ok: false, error: 'A selected session has already been paid.' };
-      throw e;
-    }
-    await markSessionsPaid(
-      createServiceClient(),
-      sessionIdsToMark,
-      batch.id,
-      null,
-      new Date().toISOString(),
+    const res = await addApprovedSessionsToPeriod(
+      db,
+      args.companyId,
+      { id: batch.id, periodStart: batch.periodStart, periodEnd: batch.periodEnd },
+      args.sessionIds,
+      true,
     );
-
-    for (const workerId of affectedWorkers) {
-      await recomputeWorkerDraft({
-        companyId: args.companyId,
-        periodId: batch.id,
-        periodStart: batch.periodStart,
-        periodEnd: batch.periodEnd,
-        workerId,
-        offCycleOnly: true,
-      });
-    }
-
+    if (!res.ok) return res;
     await logEvent({
       companyId: args.companyId,
       action: 'off_cycle_batch_add',
       entity: batch.id,
-      detail: { count: rows.length, workers: affectedWorkers.size },
+      detail: { count: res.count },
     });
-
-    return { ok: true, data: { batchId: batch.id, count: rows.length } };
+    return { ok: true, data: { batchId: batch.id, count: res.count } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
   }

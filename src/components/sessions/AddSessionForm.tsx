@@ -12,7 +12,6 @@
  * `workerId` to hide the picker).
  */
 
-import Link from 'next/link';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
@@ -24,9 +23,9 @@ import { fmtDate } from '@/lib/format';
 import {
   getOffCycleEligibleWorkers,
   getRecentSessions,
-  getSessionsInLockedPeriods,
-  type LockedPeriodSession,
   type OffCycleEligibleWorker,
+  payApprovedSessions,
+  payApprovedSessionsToNextPeriod,
   routeSessionsToOffCycleBatch,
 } from '@/server/actions/payroll';
 import {
@@ -98,8 +97,8 @@ export const AddSessionForm = ({
   const pendingClientId = useRef<string | null>(null);
   // Selected pending rows in the "Recently added" list (for bulk approve).
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Just-approved sessions that fall in a locked/paid period (decision modal).
-  const [lockedWarning, setLockedWarning] = useState<LockedPeriodSession[] | null>(null);
+  // Just-approved session ids with no open draft to add them to (decision modal).
+  const [noDraftSessions, setNoDraftSessions] = useState<string[] | null>(null);
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
@@ -293,11 +292,19 @@ export const AddSessionForm = ({
         else notify(res.error, { type: 'error' });
       }
       if (approved > 0) {
-        notify(`${approved} session(s) approved.`, { type: 'success' });
-        // In-window sessions are paid by Calculate; warn about any whose period
-        // is locked/paid (frozen) so the user can unlock or route them.
-        const check = await getSessionsInLockedPeriods({ companyId, sessionIds: ids });
-        if (check.ok && check.data.sessions.length > 0) setLockedWarning(check.data.sessions);
+        // Add the just-approved sessions to the current draft so they get paid.
+        const pay = await payApprovedSessions({ companyId, sessionIds: ids });
+        if (!pay.ok) {
+          notify(pay.error, { type: 'error' });
+        } else if (pay.data.paidInto === 'draft') {
+          notify(`${approved} session(s) approved & added to the current draft.`, {
+            type: 'success',
+          });
+        } else {
+          // No open draft → ask whether to use the next period or an off-cycle batch.
+          notify(`${approved} session(s) approved.`, { type: 'success' });
+          setNoDraftSessions(ids);
+        }
       }
       setSelected(new Set());
       await reloadAll();
@@ -307,16 +314,12 @@ export const AddSessionForm = ({
     }
   };
 
-  // Locked-period decision: route the affected approved sessions to the dedicated
-  // off-cycle batch (a separate payroll run paid from these sessions).
+  // No-draft decision: pay the approved sessions now in a dedicated off-cycle batch.
   const routeToOffCycle = async () => {
-    if (!lockedWarning) return;
+    if (!noDraftSessions) return;
     setBusy(true);
     try {
-      const res = await routeSessionsToOffCycleBatch({
-        companyId,
-        sessionIds: lockedWarning.map((s) => s.sessionId),
-      });
+      const res = await routeSessionsToOffCycleBatch({ companyId, sessionIds: noDraftSessions });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -325,7 +328,26 @@ export const AddSessionForm = ({
         `${res.data.count} session(s) added to the off-cycle batch — lock & pay it in Process & Pay.`,
         { type: 'success' },
       );
-      setLockedWarning(null);
+      setNoDraftSessions(null);
+      await reloadAll();
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // No-draft decision: pay the approved sessions in the next scheduled period.
+  const payNextPeriod = async () => {
+    if (!noDraftSessions) return;
+    setBusy(true);
+    try {
+      const res = await payApprovedSessionsToNextPeriod({ companyId, sessionIds: noDraftSessions });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`${res.data.count} session(s) added to the next period's draft.`, { type: 'success' });
+      setNoDraftSessions(null);
       await reloadAll();
       onCreated();
     } finally {
@@ -697,93 +719,42 @@ export const AddSessionForm = ({
         </div>
       )}
 
-      {lockedWarning &&
-        (() => {
-          const groups = new Map<
-            string,
-            { start: string; end: string; state: 'locked' | 'paid'; items: LockedPeriodSession[] }
-          >();
-          for (const s of lockedWarning) {
-            const key = `${s.periodStart}|${s.periodEnd}`;
-            const g = groups.get(key) ?? {
-              start: s.periodStart,
-              end: s.periodEnd,
-              state: s.periodState,
-              items: [],
-            };
-            g.items.push(s);
-            groups.set(key, g);
-          }
-          return (
-            <Modal
-              title="Approved sessions in a closed period"
-              onClose={() => setLockedWarning(null)}
-              maxWidth={560}
+      {noDraftSessions && (
+        <Modal
+          title="No open draft payroll"
+          onClose={() => setNoDraftSessions(null)}
+          maxWidth={520}
+        >
+          <p className="sub" style={{ marginTop: 0 }}>
+            {noDraftSessions.length} session(s) are approved, but there&apos;s no open draft to add
+            them to. Pay them in:
+          </p>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 8,
+              marginTop: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => setNoDraftSessions(null)}
             >
-              <p className="sub" style={{ marginTop: 0 }}>
-                {lockedWarning.length} approved session(s) fall in a <b>locked or paid</b> period —
-                the current Calculate won&apos;t pay them. Handle each period:
-              </p>
-              {[...groups.values()].map((g) => (
-                <div
-                  key={`${g.start}|${g.end}`}
-                  style={{
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    padding: 12,
-                    marginBottom: 10,
-                  }}
-                >
-                  <div style={{ fontWeight: 600 }}>
-                    {fmtDate(g.start)} – {fmtDate(g.end)}{' '}
-                    <Badge tone={g.state === 'paid' ? 'good' : 'warn'}>{g.state}</Badge>
-                  </div>
-                  <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
-                    {g.items.length} session(s):{' '}
-                    {g.items
-                      .map((s) => `${clientAlias(s.companyName)} ${fmtDate(s.sessionDate)}`)
-                      .join(', ')}
-                  </div>
-                  {g.state === 'locked' ? (
-                    <Link
-                      className="btn sm"
-                      href={`/payroll?period=${g.start}&unlock=1`}
-                      onClick={() => setLockedWarning(null)}
-                    >
-                      Unlock this period &amp; add
-                    </Link>
-                  ) : (
-                    <p className="sub" style={{ margin: 0 }}>
-                      Paid — to add these, first <b>Process &amp; Pay → mark unpaid</b>, then
-                      unlock; a one-click off-cycle batch is coming.
-                    </p>
-                  )}
-                </div>
-              ))}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'flex-end',
-                  gap: 8,
-                  marginTop: 8,
-                  flexWrap: 'wrap',
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn ghost sm"
-                  disabled={busy}
-                  onClick={() => setLockedWarning(null)}
-                >
-                  Leave for next payroll
-                </button>
-                <button type="button" className="btn sm" disabled={busy} onClick={routeToOffCycle}>
-                  Add all to off-cycle batch
-                </button>
-              </div>
-            </Modal>
-          );
-        })()}
+              Not now
+            </button>
+            <button type="button" className="btn sm" disabled={busy} onClick={payNextPeriod}>
+              Next period
+            </button>
+            <button type="button" className="btn sm" disabled={busy} onClick={routeToOffCycle}>
+              Off-cycle batch (pay now)
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 };
