@@ -72,6 +72,8 @@ interface PayrollShellProps {
   isOwner: boolean;
   defaultPeriod: PayPeriod;
   initialPeriods: PeriodSummaryRow[];
+  /** Deep-link from Process & Pay → open the unlock modal once the locked period loads. */
+  autoUnlock?: boolean;
 }
 
 // Convert SavedPayment to EditableRow
@@ -116,6 +118,7 @@ export const PayrollShell = ({
   isOwner: _isOwner,
   defaultPeriod,
   initialPeriods,
+  autoUnlock = false,
 }: PayrollShellProps) => {
   const idPeriodStart = useId();
   const idFxRef = useId();
@@ -218,6 +221,17 @@ export const PayrollShell = ({
   useEffect(() => {
     loadSaved();
   }, [loadSaved]);
+
+  // Deep-link from Process & Pay's "Unlock": once the locked period has loaded,
+  // open the unlock modal automatically (fires once). Paid periods can't be
+  // unlocked here, so we only trigger on `locked`.
+  const autoUnlockFired = useRef(false);
+  useEffect(() => {
+    if (autoUnlock && !autoUnlockFired.current && currentPeriod?.state === 'locked') {
+      autoUnlockFired.current = true;
+      setConfirmModal({ kind: 'unlock' });
+    }
+  }, [autoUnlock, currentPeriod]);
 
   // Calculate
   const handleCalculate = async (skipConfirm = false) => {
@@ -559,7 +573,15 @@ export const PayrollShell = ({
                           type="button"
                           className="btn ghost sm"
                           disabled={busy}
-                          onClick={() => applyPeriodStart(b.periodStart)}
+                          onClick={() => {
+                            applyPeriodStart(b.periodStart);
+                            // The editor card lives below this list — bring it into
+                            // view so the selection is visible (otherwise the click
+                            // looks like a no-op, especially for the current period).
+                            document
+                              .getElementById('pay-batch-card')
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }}
                         >
                           {b.state === 'open' ? 'Edit' : 'View'}
                         </button>

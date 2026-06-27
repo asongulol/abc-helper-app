@@ -8,7 +8,11 @@ import { getTrackerCompanyId } from '@/server/company';
 
 export const metadata = { title: 'Payroll — Aaron Anderson E.H.S. LLC' };
 
-export default async function PayrollPage() {
+export default async function PayrollPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ period?: string; unlock?: string }>;
+}) {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
@@ -24,8 +28,13 @@ export default async function PayrollPage() {
     );
   }
 
+  const sp = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const defaultPeriod = periodFor(today);
+  // Honor a ?period=<YYYY-MM-DD> deep-link (Process & Pay, command palette);
+  // periodFor() throws on malformed input, so validate before using it.
+  const isIsoDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const defaultPeriod = periodFor(isIsoDate(sp.period) ? sp.period : today);
+  const autoUnlock = sp.unlock === '1';
 
   const db = await createServerSupabase();
   const periods = await fetchPeriodSummaries(db, companyId);
@@ -36,6 +45,7 @@ export default async function PayrollPage() {
       isOwner={admin.isOwner}
       defaultPeriod={defaultPeriod}
       initialPeriods={periods}
+      autoUnlock={autoUnlock}
     />
   );
 }

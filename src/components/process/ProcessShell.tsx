@@ -84,7 +84,7 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
                 .
               </span>
               {drafts.length > 0 && (
-                <Link className="btn sm" href="/payroll">
+                <Link className="btn sm" href={`/payroll?period=${drafts[0]?.start}`}>
                   Go to Calculate
                 </Link>
               )}
@@ -122,12 +122,12 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
                     </span>
                   </td>
                   <td className="card-action" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <Link className="btn sm" href="/payroll">
+                    <Link className="btn sm" href={`/payroll?period=${p.periodStart}`}>
                       Open &amp; pay
                     </Link>{' '}
                     <Link
                       className="btn ghost sm"
-                      href="/payroll"
+                      href={`/payroll?period=${p.periodStart}&unlock=1`}
                       title="Flip back to a draft and return to Calculate for editing. Requires a reason."
                     >
                       Unlock
