@@ -55,6 +55,11 @@ function fullName(w: RosterWorker): string {
   return [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
 }
 
+/** First + last only — the table column reads cleaner; confirmations use fullName. */
+function tableName(w: RosterWorker): string {
+  return [w.firstName, w.lastName].filter(Boolean).join(' ').trim();
+}
+
 export function ContractorsClient({
   companyId,
   roster,
@@ -98,7 +103,7 @@ export function ContractorsClient({
         if (r.workerId !== updated.workerId) return r;
         const shaped: RowShape = {
           ...updated,
-          _name: fullName(updated),
+          _name: tableName(updated),
           _statusLabel: isActive(updated) ? 'active' : 'inactive',
         };
         return shaped;
@@ -407,7 +412,7 @@ function isActive(w: RosterWorker): boolean {
 function buildRows(roster: RosterWorker[]): RowShape[] {
   return roster.map((w) => ({
     ...w,
-    _name: [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim(),
+    _name: tableName(w),
     _statusLabel: isActive(w) ? ('active' as const) : ('inactive' as const),
   }));
 }

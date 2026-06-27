@@ -27,13 +27,10 @@ export type SessionRow = {
   approval: ApprovalStatus;
 };
 
-const joinName = (
-  w: {
-    first_name: string | null;
-    middle_name: string | null;
-    last_name: string | null;
-  } | null,
-): string => [w?.first_name, w?.middle_name, w?.last_name].filter(Boolean).join(' ').trim();
+// First + last only (middle dropped — tables read cleaner). The full legal name
+// still lives on payslips / Wise, which build their names separately.
+const joinName = (w: { first_name: string | null; last_name: string | null } | null): string =>
+  [w?.first_name, w?.last_name].filter(Boolean).join(' ').trim();
 
 /** Sessions for a client in [from, to] (all approval states), newest first. */
 export const fetchSessionsList = async (
@@ -45,7 +42,7 @@ export const fetchSessionsList = async (
   const { data, error } = await db
     .from('service_sessions')
     .select(
-      'id, worker_id, session_date, session_type, units, child_initials, eiid, case_ref, notes, approval, workers(first_name, middle_name, last_name)',
+      'id, worker_id, session_date, session_type, units, child_initials, eiid, case_ref, notes, approval, workers(first_name, last_name)',
     )
     .eq('company_id', clientId)
     .gte('session_date', from)
@@ -208,6 +205,59 @@ export const fetchWorkerSessions = async (
     id: r.id,
     companyId: r.company_id,
     companyName: r.companies?.name ?? '—',
+    sessionDate: r.session_date,
+    item: r.session_type,
+    units: Number(r.units) || 0,
+    childInitials: r.child_initials,
+    eiid: r.eiid,
+    approval: r.approval,
+  }));
+};
+
+export type RecentSessionRow = {
+  id: string;
+  /** CLIENT company billed. */
+  companyId: string;
+  companyName: string;
+  workerId: string;
+  /** First + last only (middle dropped — tables read cleaner). */
+  workerName: string;
+  sessionDate: string;
+  item: string | null;
+  units: number;
+  childInitials: string | null;
+  eiid: string | null;
+  approval: ApprovalStatus;
+};
+
+/**
+ * Most-recently-CREATED sessions for a set of workers (the employer's
+ * per-session contractors), newest first — the always-visible "Recently added"
+ * list on Time & Approval, so a just-entered session is visible without
+ * re-selecting its contractor.
+ */
+export const fetchRecentSessionsForWorkers = async (
+  db: Db,
+  workerIds: readonly string[],
+  limit = 30,
+): Promise<RecentSessionRow[]> => {
+  if (workerIds.length === 0) return [];
+  const { data, error } = await db
+    .from('service_sessions')
+    .select(
+      'id, company_id, worker_id, session_date, session_type, units, child_initials, eiid, approval, companies(name), workers(first_name, last_name)',
+    )
+    .in('worker_id', workerIds as string[])
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`recent sessions: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    companyId: r.company_id,
+    companyName: r.companies?.name ?? '—',
+    workerId: r.worker_id ?? '',
+    workerName:
+      [r.workers?.first_name, r.workers?.last_name].filter(Boolean).join(' ').trim() || '—',
     sessionDate: r.session_date,
     item: r.session_type,
     units: Number(r.units) || 0,

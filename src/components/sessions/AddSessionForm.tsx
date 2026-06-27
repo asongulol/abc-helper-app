@@ -12,13 +12,17 @@
  * `workerId` to hide the picker).
  */
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
-import type { PortalSessionRow, WorkerClient } from '@/db/queries/sessions';
+import type { PortalSessionRow, RecentSessionRow, WorkerClient } from '@/db/queries/sessions';
 import { fmtDate } from '@/lib/format';
-import { getOffCycleEligibleWorkers, type OffCycleEligibleWorker } from '@/server/actions/payroll';
+import {
+  getOffCycleEligibleWorkers,
+  getRecentSessions,
+  type OffCycleEligibleWorker,
+} from '@/server/actions/payroll';
 import {
   createSession,
   deleteSession,
@@ -77,8 +81,14 @@ export const AddSessionForm = ({
   const [approve, setApprove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<PortalSessionRow[]>([]);
+  // Employer-wide "Recently added" list (uncontrolled mode) — always visible so a
+  // just-entered session shows without re-picking its contractor.
+  const [recentAll, setRecentAll] = useState<RecentSessionRow[] | null>(controlled ? [] : null);
   // Non-null while editing a pending session (the submit becomes "Save changes").
   const [editingId, setEditingId] = useState<string | null>(null);
+  // When editing a row for a different contractor, the worker switch reloads the
+  // client list (which resets clientId) — stash the target so we can re-apply it.
+  const pendingClientId = useRef<string | null>(null);
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
@@ -136,7 +146,12 @@ export const AddSessionForm = ({
       if (!live) return;
       const list = res.ok ? res.data.clients : [];
       setClients(list);
-      setClientId(list.length === 1 ? (list[0]?.id ?? '') : '');
+      if (pendingClientId.current && list.some((c) => c.id === pendingClientId.current)) {
+        setClientId(pendingClientId.current);
+      } else {
+        setClientId(list.length === 1 ? (list[0]?.id ?? '') : '');
+      }
+      pendingClientId.current = null;
       setLoadingClients(false);
     });
     return () => {
@@ -160,6 +175,24 @@ export const AddSessionForm = ({
     };
   }, [companyId, workerId]);
 
+  // Employer-wide "Recently added" list — fetched on mount, then after each
+  // add/edit/delete so it always reflects what was just entered (uncontrolled).
+  const reloadAll = async () => {
+    if (controlled) return;
+    const res = await getRecentSessions({ companyId });
+    setRecentAll(res.ok ? res.data.sessions : []);
+  };
+  useEffect(() => {
+    if (controlled) return;
+    let live = true;
+    getRecentSessions({ companyId }).then((res) => {
+      if (live) setRecentAll(res.ok ? res.data.sessions : []);
+    });
+    return () => {
+      live = false;
+    };
+  }, [companyId, controlled]);
+
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;
 
@@ -174,10 +207,26 @@ export const AddSessionForm = ({
     resetEntryFields();
   };
 
-  // Load a pending session back into the form for editing.
-  const startEdit = (s: PortalSessionRow) => {
+  // Load a pending session back into the form for editing. `workerId` is present
+  // on employer-wide rows — switching contractor reloads clients, so the target
+  // client is stashed in pendingClientId and re-applied once they load.
+  const startEdit = (s: {
+    id: string;
+    companyId: string;
+    childInitials: string | null;
+    eiid: string | null;
+    sessionDate: string;
+    item: string | null;
+    units: number;
+    workerId?: string;
+  }) => {
     setEditingId(s.id);
-    setClientId(s.companyId);
+    if (!controlled && s.workerId && s.workerId !== pickedWorker) {
+      pendingClientId.current = s.companyId;
+      setPickedWorker(s.workerId);
+    } else {
+      setClientId(s.companyId);
+    }
     setChildInitials(s.childInitials ?? '');
     setEiid(s.eiid ?? '');
     setDate(s.sessionDate);
@@ -185,7 +234,7 @@ export const AddSessionForm = ({
     setUnits(String(s.units || 1));
   };
 
-  const removeSession = async (s: PortalSessionRow) => {
+  const removeSession = async (s: { id: string; companyId: string }) => {
     setBusy(true);
     try {
       const res = await deleteSession({ clientId: s.companyId, id: s.id });
@@ -196,6 +245,7 @@ export const AddSessionForm = ({
       if (editingId === s.id) cancelEdit();
       notify('Session deleted.', { type: 'success' });
       await reloadRecent(workerId);
+      await reloadAll();
       onCreated();
     } finally {
       setBusy(false);
@@ -238,6 +288,7 @@ export const AddSessionForm = ({
       setEditingId(null);
       resetEntryFields();
       await reloadRecent(workerId);
+      await reloadAll();
       onCreated();
     } finally {
       setBusy(false);
@@ -367,7 +418,7 @@ export const AddSessionForm = ({
         )}
       </div>
 
-      {workerId && recent.length > 0 && (
+      {controlled && workerId && recent.length > 0 && (
         <div className="table-scroll" style={{ marginTop: 14 }}>
           <table>
             <thead>
@@ -428,6 +479,86 @@ export const AddSessionForm = ({
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!controlled && (
+        <div style={{ marginTop: 16 }}>
+          <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Recently added sessions</h4>
+          {recentAll === null ? (
+            <Spinner />
+          ) : recentAll.length === 0 ? (
+            <p className="sub" style={{ margin: 0 }}>
+              No sessions yet — add one above.
+            </p>
+          ) : (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Contractor</th>
+                    <th>Client</th>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Child</th>
+                    <th>EIID</th>
+                    <th style={{ textAlign: 'right' }}>Units</th>
+                    <th>Status</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {recentAll.map((s) => {
+                    const pending = s.approval === 'pending';
+                    return (
+                      <tr
+                        key={s.id}
+                        style={editingId === s.id ? { background: '#eff6ff' } : undefined}
+                      >
+                        <td>{s.workerName}</td>
+                        <td>{s.companyName}</td>
+                        <td>{fmtDate(s.sessionDate)}</td>
+                        <td>{s.item ?? '—'}</td>
+                        <td>{s.childInitials ?? '—'}</td>
+                        <td>{s.eiid ?? '—'}</td>
+                        <td style={{ textAlign: 'right' }}>{s.units}</td>
+                        <td>
+                          <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
+                        </td>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {pending ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={busy}
+                                onClick={() => startEdit(s)}
+                              >
+                                Edit
+                              </button>{' '}
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={busy}
+                                style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                                onClick={() => removeSession(s)}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          ) : (
+                            <span className="muted" style={{ fontSize: 11 }}>
+                              locked
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
     </>

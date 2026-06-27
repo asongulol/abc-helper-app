@@ -48,8 +48,10 @@ import {
 import type { RateHistoryRow } from '@/db/queries/rates';
 import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
 import {
+  fetchRecentSessionsForWorkers,
   fetchSessionsByIds,
   fetchUnpaidApprovedSessions,
+  type RecentSessionRow,
   type UnpaidSessionRow,
 } from '@/db/queries/sessions';
 import { periodFor } from '@/lib/dates/periods';
@@ -834,6 +836,36 @@ export async function getOffCycleEligibleWorkers(args: {
     }
     workers.sort((a, b) => a.name.localeCompare(b.name));
     return { ok: true, data: { workers } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/**
+ * Most-recently-added sessions across the employer's per-session/per-hour
+ * contractors — the always-visible "Recently added" list, so a just-entered
+ * session is visible without re-picking its contractor.
+ */
+export async function getRecentSessions(args: {
+  companyId: string;
+}): Promise<ActionResult<{ sessions: RecentSessionRow[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const roster = await fetchRoster(db, args.companyId);
+    const workerIds = roster
+      .filter((r) => {
+        const m = payModelFor(r.contract, r.payBasis);
+        return m === 'per_session' || m === 'per_hour';
+      })
+      .map((r) => r.workerId);
+    // Service client + explicit worker-id scoping (sessions are CLIENT-company
+    // RLS-scoped; we restrict to this employer's roster).
+    const sessions = await fetchRecentSessionsForWorkers(createServiceClient(), workerIds);
+    return { ok: true, data: { sessions } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
   }
