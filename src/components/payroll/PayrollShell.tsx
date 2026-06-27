@@ -129,6 +129,9 @@ export const PayrollShell = ({
   const { notify } = useToast();
   const [periods, setPeriods] = useState<PeriodSummaryRow[]>(initialPeriods);
   const [showFinished, setShowFinished] = useState(false);
+  // The statements table collapses to a summary to cut clutter; it auto-expands
+  // after a Calculate so the result is visible.
+  const [tableOpen, setTableOpen] = useState(false);
 
   // Current period state
   const [periodStart, setPeriodStart] = useState(defaultPeriod.start);
@@ -297,9 +300,11 @@ export const PayrollShell = ({
       } else {
         notify('Calculated successfully.', { type: 'success' });
       }
-      // Reload saved rows to reflect the newly persisted draft
+      // Reload saved rows to reflect the newly persisted draft, and expand the
+      // statements table so the result is visible.
       const refreshed = periods;
       setPeriods(refreshed);
+      setTableOpen(true);
       await loadSaved();
     } finally {
       setBusy(false);
@@ -870,256 +875,290 @@ export const PayrollShell = ({
         )}
         {rows !== null && !busy && rows.length > 0 && (
           <>
-            <div className="table-scroll keep-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Contractor</th>
-                    <th>Worked h</th>
-                    <th>Exp h</th>
-                    <th>Ratio</th>
-                    <th>Rate ₱</th>
-                    <th>Gross ₱</th>
-                    <th>HA ₱</th>
-                    <th>13th ₱</th>
-                    <th>Lunch ₱</th>
-                    <th>Bonus ₱</th>
-                    <th>Misc ₱</th>
-                    <th>Net ₱</th>
-                    <th>≈ USD</th>
-                    <th>Via</th>
-                    {isOpen && <th />}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => {
-                    const usdRef = usdReference(
-                      r.netPhp != null ? centavos(Math.round(r.netPhp * 100)) : null,
-                      fx,
-                    );
-                    const miscSum = r.miscItems.reduce((s, it) => {
-                      const a = Number(it.amount) || 0;
-                      return s + (it.kind === 'deduction' ? -a : a);
-                    }, 0);
-                    return (
-                      <tr
-                        key={r.workerId}
-                        style={
-                          r.inactive
-                            ? { background: '#fef2f2' }
-                            : r.ratePhp == null
-                              ? { background: 'var(--warn-soft)' }
-                              : undefined
-                        }
-                      >
-                        <td className="card-title">
-                          <b style={r.inactive ? { textDecoration: 'line-through' } : undefined}>
-                            {r.displayName || r.name}
-                          </b>
-                          {r.inactive && (
-                            <Badge tone="bad" style={{ marginLeft: 6, fontSize: 10 }}>
-                              🚫 inactive
-                            </Badge>
-                          )}
-                        </td>
-                        <td data-label="Worked h">{r.workedHours.toFixed(2)}</td>
-                        <td data-label="Exp h">{r.expectedHours}</td>
-                        <td data-label="Ratio">{(r.ratio * 100).toFixed(0)}%</td>
-                        <td data-label="Rate ₱">
-                          {r.ratePhp == null ? (
-                            <span className="muted">no rate</span>
-                          ) : (
-                            r.ratePhp.toLocaleString('en-US')
-                          )}
-                        </td>
-                        <td data-label="Gross ₱">
-                          {isOpen ? (
-                            <>
-                              <input
-                                type="number"
-                                step="0.01"
-                                value={r.grossPhp ?? ''}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const overridden = val !== '' && val != null;
-                                  patchRow(r.workerId, {
-                                    grossPhp: overridden
-                                      ? Number.parseFloat(val)
-                                      : r.computedGrossPhp,
-                                    overridden,
-                                  });
-                                }}
+            <button
+              type="button"
+              onClick={() => setTableOpen((o) => !o)}
+              aria-expanded={tableOpen}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'none',
+                border: 'none',
+                padding: '6px 0',
+                font: 'inherit',
+                fontWeight: 600,
+                color: 'inherit',
+                textAlign: 'left',
+                cursor: 'pointer',
+              }}
+            >
+              <span aria-hidden style={{ color: 'var(--muted)' }}>
+                {tableOpen ? '▾' : '▸'}
+              </span>
+              Statements · {rows.length} contractor(s) · {money(centavosToPhp(totalNetCentavos))}
+            </button>
+            {tableOpen && (
+              <>
+                <div className="table-scroll keep-table">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Contractor</th>
+                        <th>Worked h</th>
+                        <th>Exp h</th>
+                        <th>Ratio</th>
+                        <th>Rate ₱</th>
+                        <th>Gross ₱</th>
+                        <th>HA ₱</th>
+                        <th>13th ₱</th>
+                        <th>Lunch ₱</th>
+                        <th>Bonus ₱</th>
+                        <th>Misc ₱</th>
+                        <th>Net ₱</th>
+                        <th>≈ USD</th>
+                        <th>Via</th>
+                        {isOpen && <th />}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r) => {
+                        const usdRef = usdReference(
+                          r.netPhp != null ? centavos(Math.round(r.netPhp * 100)) : null,
+                          fx,
+                        );
+                        const miscSum = r.miscItems.reduce((s, it) => {
+                          const a = Number(it.amount) || 0;
+                          return s + (it.kind === 'deduction' ? -a : a);
+                        }, 0);
+                        return (
+                          <tr
+                            key={r.workerId}
+                            style={
+                              r.inactive
+                                ? { background: '#fef2f2' }
+                                : r.ratePhp == null
+                                  ? { background: 'var(--warn-soft)' }
+                                  : undefined
+                            }
+                          >
+                            <td className="card-title">
+                              <b
+                                style={r.inactive ? { textDecoration: 'line-through' } : undefined}
+                              >
+                                {r.displayName || r.name}
+                              </b>
+                              {r.inactive && (
+                                <Badge tone="bad" style={{ marginLeft: 6, fontSize: 10 }}>
+                                  🚫 inactive
+                                </Badge>
+                              )}
+                            </td>
+                            <td data-label="Worked h">{r.workedHours.toFixed(2)}</td>
+                            <td data-label="Exp h">{r.expectedHours}</td>
+                            <td data-label="Ratio">{(r.ratio * 100).toFixed(0)}%</td>
+                            <td data-label="Rate ₱">
+                              {r.ratePhp == null ? (
+                                <span className="muted">no rate</span>
+                              ) : (
+                                r.ratePhp.toLocaleString('en-US')
+                              )}
+                            </td>
+                            <td data-label="Gross ₱">
+                              {isOpen ? (
+                                <>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={r.grossPhp ?? ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const overridden = val !== '' && val != null;
+                                      patchRow(r.workerId, {
+                                        grossPhp: overridden
+                                          ? Number.parseFloat(val)
+                                          : r.computedGrossPhp,
+                                        overridden,
+                                      });
+                                    }}
+                                    style={{
+                                      width: 90,
+                                      padding: '3px 6px',
+                                      fontSize: 13,
+                                      border: r.overridden
+                                        ? '1px solid var(--accent)'
+                                        : '1px solid var(--border)',
+                                      background: r.overridden ? 'var(--accent-soft)' : '#fff',
+                                    }}
+                                  />
+                                  {r.overridden && (
+                                    <button
+                                      type="button"
+                                      className="btn ghost sm"
+                                      style={{ marginLeft: 4, padding: '2px 6px' }}
+                                      title="Revert to computed"
+                                      aria-label="Revert to computed value"
+                                      onClick={() =>
+                                        patchRow(r.workerId, {
+                                          grossPhp: r.computedGrossPhp,
+                                          overridden: false,
+                                        })
+                                      }
+                                    >
+                                      ↺
+                                    </button>
+                                  )}
+                                </>
+                              ) : (
+                                (r.grossPhp?.toLocaleString('en-US') ?? '—')
+                              )}
+                            </td>
+                            <td data-label="HA ₱">
+                              {r.haPhp ? r.haPhp.toLocaleString('en-US') : '—'}
+                            </td>
+                            <td data-label="13th ₱">
+                              {r.t13Php ? r.t13Php.toLocaleString('en-US') : '—'}
+                            </td>
+                            <td data-label="Lunch ₱">
+                              {r.pddPhp ? r.pddPhp.toLocaleString('en-US') : '—'}
+                            </td>
+                            <td data-label="Bonus ₱">
+                              {r.bonusPhp ? r.bonusPhp.toLocaleString('en-US') : '—'}
+                            </td>
+                            <td data-label="Misc ₱" style={{ whiteSpace: 'nowrap' }}>
+                              <span
                                 style={{
-                                  width: 90,
-                                  padding: '3px 6px',
-                                  fontSize: 13,
-                                  border: r.overridden
-                                    ? '1px solid var(--accent)'
-                                    : '1px solid var(--border)',
-                                  background: r.overridden ? 'var(--accent-soft)' : '#fff',
+                                  display: 'inline-flex',
+                                  gap: 6,
+                                  alignItems: 'center',
                                 }}
-                              />
-                              {r.overridden && (
+                              >
+                                {Math.abs(miscSum) > 0.005 ? (
+                                  <span
+                                    style={{
+                                      color: miscSum < 0 ? '#b91c1c' : 'inherit',
+                                    }}
+                                  >
+                                    {miscSum < 0 ? '-' : ''}
+                                    {Math.abs(miscSum).toLocaleString('en-US', {
+                                      minimumFractionDigits: 2,
+                                    })}
+                                  </span>
+                                ) : (
+                                  <span className="muted">—</span>
+                                )}
+                                {isOpen && (
+                                  <button
+                                    type="button"
+                                    className="btn ghost sm"
+                                    style={{ padding: '2px 8px', fontSize: 12 }}
+                                    onClick={() => setMiscRowId(r.workerId)}
+                                    title={
+                                      r.miscItems.length
+                                        ? `Edit ${r.miscItems.length} misc item(s)`
+                                        : 'Add Misc items'
+                                    }
+                                  >
+                                    {r.miscItems.length ? `Edit (${r.miscItems.length})` : '+ Misc'}
+                                  </button>
+                                )}
+                              </span>
+                            </td>
+                            <td data-label="Net ₱">
+                              <b>{r.netPhp == null ? '—' : r.netPhp.toLocaleString('en-US')}</b>
+                              {r.offCyclePhp > 0 && (
+                                <div
+                                  className="muted"
+                                  style={{ fontSize: 11 }}
+                                  title="Includes off-cycle per-session / per-hour pay"
+                                >
+                                  incl. off-cycle ₱
+                                  {r.offCyclePhp.toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                  })}
+                                </div>
+                              )}
+                            </td>
+                            <td className="muted" data-label="≈ USD">
+                              {usdRef == null
+                                ? '—'
+                                : `$${(usdRef / 100).toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                  })}`}
+                            </td>
+                            <td data-label="Via">
+                              {isOpen ? (
+                                <select
+                                  value={r.payoutMethod ?? ''}
+                                  onChange={(e) =>
+                                    patchRow(r.workerId, {
+                                      payoutMethod: e.target.value || null,
+                                    })
+                                  }
+                                  style={{
+                                    padding: '3px 6px',
+                                    fontSize: 13,
+                                    border: r.payoutMethod
+                                      ? '1px solid var(--border)'
+                                      : '1px solid var(--warn)',
+                                    background: r.payoutMethod ? '#fff' : 'var(--warn-soft)',
+                                  }}
+                                >
+                                  <option value="">— set —</option>
+                                  {PAYOUT_METHODS.map((m) => (
+                                    <option key={m} value={m}>
+                                      {payoutMethodLabel(m)}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                payoutMethodLabel(r.payoutMethod)
+                              )}
+                            </td>
+                            {isOpen && (
+                              <td style={{ textAlign: 'right' }}>
                                 <button
                                   type="button"
                                   className="btn ghost sm"
-                                  style={{ marginLeft: 4, padding: '2px 6px' }}
-                                  title="Revert to computed"
-                                  aria-label="Revert to computed value"
-                                  onClick={() =>
-                                    patchRow(r.workerId, {
-                                      grossPhp: r.computedGrossPhp,
-                                      overridden: false,
-                                    })
-                                  }
+                                  disabled={busy}
+                                  style={{
+                                    borderColor: 'var(--bad)',
+                                    color: 'var(--bad)',
+                                    padding: '2px 8px',
+                                  }}
+                                  onClick={() => handleDeleteStatement(r.paymentId, r.name)}
                                 >
-                                  ↺
+                                  Delete
                                 </button>
-                              )}
-                            </>
-                          ) : (
-                            (r.grossPhp?.toLocaleString('en-US') ?? '—')
-                          )}
-                        </td>
-                        <td data-label="HA ₱">{r.haPhp ? r.haPhp.toLocaleString('en-US') : '—'}</td>
-                        <td data-label="13th ₱">
-                          {r.t13Php ? r.t13Php.toLocaleString('en-US') : '—'}
-                        </td>
-                        <td data-label="Lunch ₱">
-                          {r.pddPhp ? r.pddPhp.toLocaleString('en-US') : '—'}
-                        </td>
-                        <td data-label="Bonus ₱">
-                          {r.bonusPhp ? r.bonusPhp.toLocaleString('en-US') : '—'}
-                        </td>
-                        <td data-label="Misc ₱" style={{ whiteSpace: 'nowrap' }}>
-                          <span
-                            style={{
-                              display: 'inline-flex',
-                              gap: 6,
-                              alignItems: 'center',
-                            }}
-                          >
-                            {Math.abs(miscSum) > 0.005 ? (
-                              <span
-                                style={{
-                                  color: miscSum < 0 ? '#b91c1c' : 'inherit',
-                                }}
-                              >
-                                {miscSum < 0 ? '-' : ''}
-                                {Math.abs(miscSum).toLocaleString('en-US', {
-                                  minimumFractionDigits: 2,
-                                })}
-                              </span>
-                            ) : (
-                              <span className="muted">—</span>
+                              </td>
                             )}
-                            {isOpen && (
-                              <button
-                                type="button"
-                                className="btn ghost sm"
-                                style={{ padding: '2px 8px', fontSize: 12 }}
-                                onClick={() => setMiscRowId(r.workerId)}
-                                title={
-                                  r.miscItems.length
-                                    ? `Edit ${r.miscItems.length} misc item(s)`
-                                    : 'Add Misc items'
-                                }
-                              >
-                                {r.miscItems.length ? `Edit (${r.miscItems.length})` : '+ Misc'}
-                              </button>
-                            )}
-                          </span>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colSpan={11} style={{ textAlign: 'right', fontWeight: 600 }}>
+                          Total
                         </td>
-                        <td data-label="Net ₱">
-                          <b>{r.netPhp == null ? '—' : r.netPhp.toLocaleString('en-US')}</b>
-                          {r.offCyclePhp > 0 && (
-                            <div
-                              className="muted"
-                              style={{ fontSize: 11 }}
-                              title="Includes off-cycle per-session / per-hour pay"
-                            >
-                              incl. off-cycle ₱
-                              {r.offCyclePhp.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                            </div>
-                          )}
+                        <td>
+                          <b>{money(centavosToPhp(totalNetCentavos))}</b>
                         </td>
-                        <td className="muted" data-label="≈ USD">
-                          {usdRef == null
-                            ? '—'
-                            : `$${(usdRef / 100).toLocaleString('en-US', {
-                                minimumFractionDigits: 2,
-                              })}`}
-                        </td>
-                        <td data-label="Via">
-                          {isOpen ? (
-                            <select
-                              value={r.payoutMethod ?? ''}
-                              onChange={(e) =>
-                                patchRow(r.workerId, {
-                                  payoutMethod: e.target.value || null,
-                                })
-                              }
-                              style={{
-                                padding: '3px 6px',
-                                fontSize: 13,
-                                border: r.payoutMethod
-                                  ? '1px solid var(--border)'
-                                  : '1px solid var(--warn)',
-                                background: r.payoutMethod ? '#fff' : 'var(--warn-soft)',
-                              }}
-                            >
-                              <option value="">— set —</option>
-                              {PAYOUT_METHODS.map((m) => (
-                                <option key={m} value={m}>
-                                  {payoutMethodLabel(m)}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            payoutMethodLabel(r.payoutMethod)
-                          )}
-                        </td>
-                        {isOpen && (
-                          <td style={{ textAlign: 'right' }}>
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              disabled={busy}
-                              style={{
-                                borderColor: 'var(--bad)',
-                                color: 'var(--bad)',
-                                padding: '2px 8px',
-                              }}
-                              onClick={() => handleDeleteStatement(r.paymentId, r.name)}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        )}
+                        <td />
+                        <td />
+                        {isOpen && <td />}
                       </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr>
-                    <td colSpan={11} style={{ textAlign: 'right', fontWeight: 600 }}>
-                      Total
-                    </td>
-                    <td>
-                      <b>{money(centavosToPhp(totalNetCentavos))}</b>
-                    </td>
-                    <td />
-                    <td />
-                    {isOpen && <td />}
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-            <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-              Contractors are <b>paid in PHP</b> (Net ₱). USD is a reference only (Net ÷ FX).{' '}
-              <b>Gross ₱ is editable</b> — a blue cell marks an override. Yellow rows have no
-              effective rate.
-            </p>
+                    </tfoot>
+                  </table>
+                </div>
+                <p className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+                  Contractors are <b>paid in PHP</b> (Net ₱). USD is a reference only (Net ÷ FX).{' '}
+                  <b>Gross ₱ is editable</b> — a blue cell marks an override. Yellow rows have no
+                  effective rate.
+                </p>
+              </>
+            )}
           </>
         )}
       </div>
