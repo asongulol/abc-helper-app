@@ -38,8 +38,10 @@ interface AdminShellProps {
 
 const COLLAPSE_KEY = 'abc_sidebar_collapsed';
 
-/** Centered footer build stamp; replaced at deploy time via NEXT_PUBLIC_BUILD. */
-const BUILD = process.env.NEXT_PUBLIC_BUILD ?? '2026-06-12 18:48 EDT · c4b475e';
+/** Centered footer build stamp. NEXT_PUBLIC_BUILD is set in next.config.ts from
+ * VERCEL_GIT_COMMIT_SHA at build time, so this fallback only shows if that ever
+ * fails to resolve. */
+const BUILD = process.env.NEXT_PUBLIC_BUILD ?? 'local · unstamped';
 
 /**
  * Admin app shell — faithful port of the legacy topbar (navy bar, gold top
