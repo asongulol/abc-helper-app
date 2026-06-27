@@ -485,6 +485,8 @@ export const fetchLastPayoutMethods = async (
 export type PeriodRef = {
   id: string;
   state: Database['public']['Enums']['pay_period_state'];
+  /** Present only on reads that select it (findPeriod); undefined elsewhere. */
+  kind?: 'regular' | 'off_cycle';
 };
 
 /** Legacy `resolvePeriod`: look up the pay period by company + dates. */
@@ -496,13 +498,15 @@ export const findPeriod = async (
 ): Promise<PeriodRef | null> => {
   const { data, error } = await db
     .from('pay_periods')
-    .select('id, state')
+    .select('id, state, kind')
     .eq('company_id', companyId)
     .eq('period_start', start)
     .eq('period_end', end)
     .maybeSingle();
   if (error) throw new Error(`pay_periods: ${error.message}`);
-  return data ? { id: data.id, state: data.state } : null;
+  return data
+    ? { id: data.id, state: data.state, kind: data.kind === 'off_cycle' ? 'off_cycle' : 'regular' }
+    : null;
 };
 
 /** Upsert the period as OPEN (legacy `saveDraft` step). Returns the row. */
@@ -529,6 +533,64 @@ export const upsertOpenPeriod = async (
     .single();
   if (error) throw new Error(`pay_periods upsert: ${error.message}`);
   return { id: data.id, state: data.state };
+};
+
+export type OffCycleBatch = {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  isNew: boolean;
+};
+
+/**
+ * The employer's single OPEN off-cycle batch (kind='off_cycle'), creating one
+ * dated `today` if none exists. The date window is a label only — an off-cycle
+ * batch is paid purely from its off_cycle_pay_items (the regular calc is guarded
+ * against it), so the window intentionally captures no hours/sessions.
+ */
+export const findOrCreateOffCycleBatch = async (
+  db: Db,
+  companyId: string,
+  today: string,
+  payDate: string,
+): Promise<OffCycleBatch> => {
+  const { data: open, error: findErr } = await db
+    .from('pay_periods')
+    .select('id, period_start, period_end')
+    .eq('company_id', companyId)
+    .eq('kind', 'off_cycle')
+    .eq('state', 'open')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (findErr) throw new Error(`off-cycle batch lookup: ${findErr.message}`);
+  if (open)
+    return {
+      id: open.id,
+      periodStart: open.period_start,
+      periodEnd: open.period_end,
+      isNew: false,
+    };
+
+  const { data: created, error: insErr } = await db
+    .from('pay_periods')
+    .insert({
+      company_id: companyId,
+      period_start: today,
+      period_end: today,
+      pay_date: payDate,
+      state: 'open',
+      kind: 'off_cycle',
+    })
+    .select('id, period_start, period_end')
+    .single();
+  if (insErr) throw new Error(`off-cycle batch create: ${insErr.message}`);
+  return {
+    id: created.id,
+    periodStart: created.period_start,
+    periodEnd: created.period_end,
+    isNew: true,
+  };
 };
 
 /**
@@ -653,6 +715,8 @@ export type SavedPayment = {
 export type PeriodSummaryRow = {
   id: string;
   state: Database['public']['Enums']['pay_period_state'];
+  /** 'regular' semi-monthly period or an 'off_cycle' catch-up batch. */
+  kind: 'regular' | 'off_cycle';
   periodStart: string;
   periodEnd: string;
   payDate: string | null;
@@ -673,7 +737,7 @@ export const fetchPeriodSummaries = cache(
   async (db: Db, companyId: string): Promise<PeriodSummaryRow[]> => {
     const { data: periods, error: e1 } = await db
       .from('pay_periods')
-      .select('id, state, period_start, period_end, pay_date, locked_at')
+      .select('id, state, kind, period_start, period_end, pay_date, locked_at')
       .eq('company_id', companyId)
       .order('period_start', { ascending: false });
     if (e1) throw new Error(`pay_periods: ${e1.message}`);
@@ -699,6 +763,7 @@ export const fetchPeriodSummaries = cache(
       return {
         id: p.id,
         state: p.state,
+        kind: p.kind === 'off_cycle' ? 'off_cycle' : 'regular',
         periodStart: p.period_start,
         periodEnd: p.period_end,
         payDate: p.pay_date,

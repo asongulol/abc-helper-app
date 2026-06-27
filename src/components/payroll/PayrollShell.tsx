@@ -559,8 +559,15 @@ export const PayrollShell = ({
                     <tr key={b.id} style={isCur ? { background: '#eff6ff' } : undefined}>
                       <td className="card-title">
                         <b>
-                          {fmtDate(b.periodStart)} – {fmtDate(b.periodEnd)}
+                          {b.kind === 'off_cycle'
+                            ? '⏱ Off-cycle batch'
+                            : `${fmtDate(b.periodStart)} – ${fmtDate(b.periodEnd)}`}
                         </b>
+                        {b.kind === 'off_cycle' && (
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            catch-up · added {fmtDate(b.periodStart)}
+                          </div>
+                        )}
                       </td>
                       <td data-label="Pay date">{fmtDate(b.payDate)}</td>
                       <td data-label="Contractors">{b.contractorCount}</td>

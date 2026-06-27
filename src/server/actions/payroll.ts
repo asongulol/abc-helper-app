@@ -32,6 +32,7 @@ import {
   fetchRates,
   fetchRoster,
   fetchSavedPayments,
+  findOrCreateOffCycleBatch,
   findPeriod,
   insertOffCycleItems,
   markPaymentsPaid,
@@ -1136,6 +1137,110 @@ export async function addOffCyclePayItem(
     return { ok: true, data: { netPhp, count: rows.length } };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Add off-cycle pay failed.' };
+  }
+}
+
+/**
+ * Stage 2 — route approved per-session sessions to the dedicated OFF-CYCLE
+ * BATCH: a separate payroll run for catch-up sessions whose own period is
+ * locked/paid. Uses the single open off-cycle batch (creating one if none),
+ * adds each session as an off-cycle pay line (marking it paid so it leaves the
+ * pickers / normal windowed sum), and rebuilds the affected rows from the
+ * ledger only. The batch then appears in the period lists to lock & pay.
+ */
+export async function routeSessionsToOffCycleBatch(args: {
+  companyId: string;
+  sessionIds: string[];
+}): Promise<ActionResult<{ batchId: string; count: number }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
+
+  try {
+    const db = await createServerSupabase();
+    const today = new Date().toISOString().slice(0, 10);
+    const batch = await findOrCreateOffCycleBatch(
+      db,
+      args.companyId,
+      today,
+      periodFor(today).payDate,
+    );
+
+    const roster = await fetchRoster(db, args.companyId);
+    const rates = await fetchRates(db, args.companyId);
+    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
+    if (sessions.length !== args.sessionIds.length)
+      return { ok: false, error: 'One or more sessions were not found.' };
+
+    const rows: NewOffCycleItem[] = [];
+    const sessionIdsToMark: string[] = [];
+    const affectedWorkers = new Set<string>();
+    for (const s of sessions) {
+      if (!s.workerId) return { ok: false, error: 'A session has no contractor.' };
+      if (s.approval !== 'approved')
+        return { ok: false, error: 'Only approved sessions can be paid.' };
+      if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
+      const link = roster.find((r) => r.workerId === s.workerId);
+      if (!link) return { ok: false, error: "A session's contractor is not on the roster." };
+      if (payModelFor(link.contract, link.payBasis) !== 'per_session')
+        return { ok: false, error: 'The off-cycle batch is for per-session contractors.' };
+      const rate = resolveRate(rates, s.workerId, s.sessionDate, s.sessionDate);
+      if (rate === null)
+        return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
+      rows.push({
+        companyId: args.companyId,
+        workerId: s.workerId,
+        payPeriodId: batch.id,
+        basis: 'per_session',
+        sessionId: s.id,
+        workDate: s.sessionDate,
+        units: s.units,
+        ratePhp: centavosToPhp(rate),
+        amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
+        description: 'Off-cycle batch',
+      });
+      sessionIdsToMark.push(s.id);
+      affectedWorkers.add(s.workerId);
+    }
+
+    try {
+      await insertOffCycleItems(db, rows);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'ALREADY_PAID')
+        return { ok: false, error: 'A selected session has already been paid.' };
+      throw e;
+    }
+    await markSessionsPaid(
+      createServiceClient(),
+      sessionIdsToMark,
+      batch.id,
+      null,
+      new Date().toISOString(),
+    );
+
+    for (const workerId of affectedWorkers) {
+      await recomputeWorkerDraft({
+        companyId: args.companyId,
+        periodId: batch.id,
+        periodStart: batch.periodStart,
+        periodEnd: batch.periodEnd,
+        workerId,
+        offCycleOnly: true,
+      });
+    }
+
+    await logEvent({
+      companyId: args.companyId,
+      action: 'off_cycle_batch_add',
+      entity: batch.id,
+      detail: { count: rows.length, workers: affectedWorkers.size },
+    });
+
+    return { ok: true, data: { batchId: batch.id, count: rows.length } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
   }
 }
 

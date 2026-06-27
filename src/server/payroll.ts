@@ -64,6 +64,9 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   if (existing && existing.state !== 'open') {
     throw new Error(`Period is ${existing.state} — unlock it before recalculating.`);
   }
+  if (existing?.kind === 'off_cycle') {
+    throw new Error('Off-cycle batches are paid from their added sessions, not recalculated.');
+  }
 
   const [entries, roster, rates, lastMethod] = await Promise.all([
     fetchApprovedTime(db, input.companyId, input.periodStart, input.periodEnd),
@@ -185,10 +188,19 @@ export const recomputeWorkerDraft = async (args: {
   periodStart: string;
   periodEnd: string;
   workerId: string;
+  /**
+   * Off-cycle BATCH rows are built ONLY from the ledger — no hours, no in-window
+   * sessions, no health allowance (the batch's window is just a label). The
+   * worker's pay is the sum of their off_cycle_pay_items on this batch.
+   */
+  offCycleOnly?: boolean;
 }): Promise<{ netPhp: number | null }> => {
+  const offCycleOnly = args.offCycleOnly ?? false;
   const db = await createServerSupabase();
   const [entries, roster, rates, lastMethod] = await Promise.all([
-    fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
+    offCycleOnly
+      ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
+      : fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
     fetchRates(db, args.companyId),
     fetchLastPayoutMethods(db, args.companyId),
@@ -199,12 +211,14 @@ export const recomputeWorkerDraft = async (args: {
   const offCycle = await fetchOffCycleItemsForPeriod(db, args.companyId, args.periodId, [
     args.workerId,
   ]);
-  const sessionUnitsByWorkerByDate = await fetchSessionUnitsByWorkerByDate(
-    createServiceClient(),
-    [args.workerId],
-    args.periodStart,
-    args.periodEnd,
-  );
+  const sessionUnitsByWorkerByDate = offCycleOnly
+    ? new Map<string, Map<string, number>>()
+    : await fetchSessionUnitsByWorkerByDate(
+        createServiceClient(),
+        [args.workerId],
+        args.periodStart,
+        args.periodEnd,
+      );
   const sessionsByWorker = new Map<string, number>();
   for (const [workerId, byDate] of sessionUnitsByWorkerByDate) {
     let total = 0;
@@ -220,7 +234,7 @@ export const recomputeWorkerDraft = async (args: {
     roster: rosterOne,
     rates,
     lastPayoutMethod: lastMethod,
-    includeHealthAllowance: true,
+    includeHealthAllowance: !offCycleOnly,
     includeThirteenth: false,
     sessionsByWorker,
     sessionUnitsByWorkerByDate,

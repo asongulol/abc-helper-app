@@ -964,6 +964,7 @@ export type Database = {
           expected_hours_ft: number
           expected_hours_pt: number
           id: string
+          kind: string
           locked_at: string | null
           pay_date: string | null
           period_end: string
@@ -976,6 +977,7 @@ export type Database = {
           expected_hours_ft?: number
           expected_hours_pt?: number
           id?: string
+          kind?: string
           locked_at?: string | null
           pay_date?: string | null
           period_end: string
@@ -988,6 +990,7 @@ export type Database = {
           expected_hours_ft?: number
           expected_hours_pt?: number
           id?: string
+          kind?: string
           locked_at?: string | null
           pay_date?: string | null
           period_end?: string

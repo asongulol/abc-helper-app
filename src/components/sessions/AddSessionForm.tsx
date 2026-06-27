@@ -27,6 +27,7 @@ import {
   getSessionsInLockedPeriods,
   type LockedPeriodSession,
   type OffCycleEligibleWorker,
+  routeSessionsToOffCycleBatch,
 } from '@/server/actions/payroll';
 import {
   createSession,
@@ -299,6 +300,32 @@ export const AddSessionForm = ({
         if (check.ok && check.data.sessions.length > 0) setLockedWarning(check.data.sessions);
       }
       setSelected(new Set());
+      await reloadAll();
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Locked-period decision: route the affected approved sessions to the dedicated
+  // off-cycle batch (a separate payroll run paid from these sessions).
+  const routeToOffCycle = async () => {
+    if (!lockedWarning) return;
+    setBusy(true);
+    try {
+      const res = await routeSessionsToOffCycleBatch({
+        companyId,
+        sessionIds: lockedWarning.map((s) => s.sessionId),
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(
+        `${res.data.count} session(s) added to the off-cycle batch — lock & pay it in Process & Pay.`,
+        { type: 'success' },
+      );
+      setLockedWarning(null);
       await reloadAll();
       onCreated();
     } finally {
@@ -733,13 +760,25 @@ export const AddSessionForm = ({
                   )}
                 </div>
               ))}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: 8,
+                  marginTop: 8,
+                  flexWrap: 'wrap',
+                }}
+              >
                 <button
                   type="button"
                   className="btn ghost sm"
+                  disabled={busy}
                   onClick={() => setLockedWarning(null)}
                 >
                   Leave for next payroll
+                </button>
+                <button type="button" className="btn sm" disabled={busy} onClick={routeToOffCycle}>
+                  Add all to off-cycle batch
                 </button>
               </div>
             </Modal>
