@@ -91,12 +91,21 @@ Empirically dropped (item 8): `optimizePackageImports: ['@/components/ui']` prod
 Cheap additive indexes; worth doing on the shared prod DB before headcount grows,
 but they will not move the needle on current navigation latency.
 
-| # | Fix | Source |
-|---|-----|--------|
-| 16 | `CREATE INDEX documents_company_created_idx ON documents (company_id, created_at DESC)` | DB-2 **medium** |
-| 17 | `CREATE INDEX time_entries_company_approval_date_idx ON time_entries (company_id, approval, work_date)` **and** add a date bound to `countPendingTimeApprovals` (the one genuinely unbounded full-table scan, on overview + process) | DB-3 **medium** |
-| 18 | `rates (company_id)`; `service_sessions (worker_id, approval, session_date)` | DB-1, DB-5 **low** |
-| 19 | **(Careful, tested) RLS per-row → set-membership rewrite** for `worker_companies`/`rates`/`documents` policies (match the efficient `company_id IN (SELECT unnest(my_admin_company_ids()))` form). Security-sensitive: `admin_can_see_worker` grants via *any* of a worker's companies — a naive rewrite narrows client-admin visibility. | DB-6 **low** |
+✅ **SHIPPED (#16, #17-index, #18)** as two files with matching index names:
+`supabase/migrations/00000000000021_perf_indexes.sql` (local repo lineage) and
+**`audit/perf-indexes-2026-06-27.sql`** (the prod-apply copy, `CONCURRENTLY`, with a
+Dashboard runbook — apply manually per `docs/PROD-CONFORMANCE-PLAN.md`; repo
+migrations never touch the shared prod DB). Verified against local Postgres: all 4
+build `valid=true`, and `EXPLAIN` confirms eligibility — the unbounded
+`countPendingTimeApprovals` becomes an **Index Only Scan**, the documents list an
+**Index Scan**. Indexes are transparent to the 3 sibling apps (pure speedup).
+
+| # | Fix | Source | Status |
+|---|-----|--------|--------|
+| 16 | `documents (company_id, created_at DESC)` | DB-2 **medium** | ✅ in both files |
+| 17 | `time_entries (company_id, approval, work_date)` — the `(company_id, approval)` prefix indexes the unbounded pending-count, so **no behavior change needed** (the "add a date bound" idea was dropped — it would change the tile from company-wide to per-period). | DB-3 **medium** | ✅ index only |
+| 18 | `rates (company_id, effective_start)`; `service_sessions (worker_id, approval, session_date)` | DB-1, DB-5 **low** | ✅ in both files |
+| 19 | **(Careful, tested) RLS per-row → set-membership rewrite** for `worker_companies`/`rates`/`documents` policies. Security-sensitive: `admin_can_see_worker` grants via *any* of a worker's companies — a naive rewrite narrows client-admin visibility. | DB-6 **low** | ⏭️ **NOT done** — RLS change on shared prod auth; low load-time value; left as a careful, tested follow-up like #11/#12. |
 
 ### Phase 6 — Pure hygiene · S effort · trivial (not load-time)
 
