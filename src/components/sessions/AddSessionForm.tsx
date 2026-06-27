@@ -29,6 +29,7 @@ import {
   deleteSession,
   getWorkerClients,
   getWorkerSessions,
+  setSessionApproval,
   updateSession,
 } from '@/server/actions/sessions';
 import { EI_SESSION_ITEMS } from '@/types/schemas/sessions';
@@ -90,6 +91,8 @@ export const AddSessionForm = ({
   // When editing a row for a different contractor, the worker switch reloads the
   // client list (which resets clientId) — stash the target so we can re-apply it.
   const pendingClientId = useRef<string | null>(null);
+  // Selected pending rows in the "Recently added" list (for bulk approve).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
@@ -246,6 +249,48 @@ export const AddSessionForm = ({
       if (editingId === s.id) cancelEdit();
       notify('Session deleted.', { type: 'success' });
       await reloadRecent(workerId);
+      await reloadAll();
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Approve a set of sessions. setSessionApproval is client-scoped, so group the
+  // ids by their client first. Approved in-window sessions are picked up by the
+  // next Calculate of the open period (per-session pay).
+  const approveIds = async (ids: string[]) => {
+    if (ids.length === 0 || !recentAll) return;
+    setBusy(true);
+    try {
+      const byClient = new Map<string, string[]>();
+      for (const id of ids) {
+        const row = recentAll.find((r) => r.id === id);
+        if (!row) continue;
+        const arr = byClient.get(row.companyId) ?? [];
+        arr.push(id);
+        byClient.set(row.companyId, arr);
+      }
+      let approved = 0;
+      for (const [clientId, clientIds] of byClient) {
+        const res = await setSessionApproval({ clientId, ids: clientIds, status: 'approved' });
+        if (res.ok) approved += res.data.count;
+        else notify(res.error, { type: 'error' });
+      }
+      if (approved > 0) {
+        notify(`${approved} session(s) approved — recalculate the open period to pay them.`, {
+          type: 'success',
+        });
+      }
+      setSelected(new Set());
       await reloadAll();
       onCreated();
     } finally {
@@ -485,7 +530,42 @@ export const AddSessionForm = ({
 
       {!controlled && (
         <div style={{ marginTop: 16 }}>
-          <h4 style={{ margin: '0 0 6px', fontSize: 14 }}>Recently added sessions</h4>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginBottom: 6,
+            }}
+          >
+            <h4 style={{ margin: 0, fontSize: 14 }}>Recently added sessions</h4>
+            {recentAll?.some((r) => r.approval === 'pending') && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {selected.size > 0 && (
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={busy}
+                    onClick={() => approveIds([...selected])}
+                  >
+                    Approve {selected.size} selected
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={busy}
+                  onClick={() =>
+                    approveIds(recentAll.filter((r) => r.approval === 'pending').map((r) => r.id))
+                  }
+                >
+                  Approve all pending ({recentAll.filter((r) => r.approval === 'pending').length})
+                </button>
+              </div>
+            )}
+          </div>
           {recentAll === null ? (
             <Spinner />
           ) : recentAll.length === 0 ? (
@@ -497,6 +577,7 @@ export const AddSessionForm = ({
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }} />
                     <th>Contractor</th>
                     <th>Client</th>
                     <th>Date</th>
@@ -516,6 +597,16 @@ export const AddSessionForm = ({
                         key={s.id}
                         style={editingId === s.id ? { background: '#eff6ff' } : undefined}
                       >
+                        <td>
+                          {pending && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${s.workerName} ${fmtDate(s.sessionDate)}`}
+                              checked={selected.has(s.id)}
+                              onChange={() => toggleSelected(s.id)}
+                            />
+                          )}
+                        </td>
                         <td>{s.workerName}</td>
                         <td>{clientAlias(s.companyName)}</td>
                         <td>{fmtDate(s.sessionDate)}</td>
@@ -529,6 +620,14 @@ export const AddSessionForm = ({
                         <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                           {pending ? (
                             <>
+                              <button
+                                type="button"
+                                className="btn sm"
+                                disabled={busy}
+                                onClick={() => approveIds([s.id])}
+                              >
+                                Approve
+                              </button>{' '}
                               <button
                                 type="button"
                                 className="btn ghost sm"
