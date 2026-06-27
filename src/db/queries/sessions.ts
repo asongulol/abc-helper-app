@@ -228,6 +228,8 @@ export type RecentSessionRow = {
   childInitials: string | null;
   eiid: string | null;
   approval: ApprovalStatus;
+  /** Set once paid (via a draft/off-cycle line) — drives the Pay vs paid label. */
+  paidAt: string | null;
 };
 
 /**
@@ -245,7 +247,7 @@ export const fetchRecentSessionsForWorkers = async (
   const { data, error } = await db
     .from('service_sessions')
     .select(
-      'id, company_id, worker_id, session_date, session_type, units, child_initials, eiid, approval, companies(name), workers(first_name, last_name)',
+      'id, company_id, worker_id, session_date, session_type, units, child_initials, eiid, approval, paid_at, companies(name), workers(first_name, last_name)',
     )
     .in('worker_id', workerIds as string[])
     .order('created_at', { ascending: false })
@@ -264,6 +266,7 @@ export const fetchRecentSessionsForWorkers = async (
     childInitials: r.child_initials,
     eiid: r.eiid,
     approval: r.approval,
+    paidAt: r.paid_at,
   }));
 };
 

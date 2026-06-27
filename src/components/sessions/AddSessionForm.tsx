@@ -270,9 +270,33 @@ export const AddSessionForm = ({
       return next;
     });
 
+  // Pay approved sessions: add them to the current draft, or open the no-draft
+  // modal (next period / off-cycle). Shared by Approve and the per-row Pay action.
+  const addToPayroll = async (ids: string[]) => {
+    const pay = await payApprovedSessions({ companyId, sessionIds: ids });
+    if (!pay.ok) {
+      notify(pay.error, { type: 'error' });
+    } else if (pay.data.paidInto === 'draft') {
+      notify(`${ids.length} session(s) added to the current draft.`, { type: 'success' });
+    } else {
+      setNoDraftSessions(ids);
+    }
+  };
+
+  // Per-row "Pay" on an already-approved, unpaid session.
+  const payApproved = async (ids: string[]) => {
+    setBusy(true);
+    try {
+      await addToPayroll(ids);
+      await reloadAll();
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Approve a set of sessions. setSessionApproval is client-scoped, so group the
-  // ids by their client first. Approved in-window sessions are picked up by the
-  // next Calculate of the open period (per-session pay).
+  // ids by their client first, then add them to payroll.
   const approveIds = async (ids: string[]) => {
     if (ids.length === 0 || !recentAll) return;
     setBusy(true);
@@ -292,19 +316,9 @@ export const AddSessionForm = ({
         else notify(res.error, { type: 'error' });
       }
       if (approved > 0) {
+        notify(`${approved} session(s) approved.`, { type: 'success' });
         // Add the just-approved sessions to the current draft so they get paid.
-        const pay = await payApprovedSessions({ companyId, sessionIds: ids });
-        if (!pay.ok) {
-          notify(pay.error, { type: 'error' });
-        } else if (pay.data.paidInto === 'draft') {
-          notify(`${approved} session(s) approved & added to the current draft.`, {
-            type: 'success',
-          });
-        } else {
-          // No open draft → ask whether to use the next period or an off-cycle batch.
-          notify(`${approved} session(s) approved.`, { type: 'success' });
-          setNoDraftSessions(ids);
-        }
+        await addToPayroll(ids);
       }
       setSelected(new Set());
       await reloadAll();
@@ -703,9 +717,22 @@ export const AddSessionForm = ({
                                 Delete
                               </button>
                             </>
+                          ) : s.approval === 'approved' && !s.paidAt ? (
+                            <button
+                              type="button"
+                              className="btn sm"
+                              disabled={busy}
+                              onClick={() => payApproved([s.id])}
+                            >
+                              Pay
+                            </button>
+                          ) : s.paidAt ? (
+                            <span className="muted" style={{ fontSize: 11 }}>
+                              paid
+                            </span>
                           ) : (
                             <span className="muted" style={{ fontSize: 11 }}>
-                              locked
+                              —
                             </span>
                           )}
                         </td>
