@@ -128,6 +128,14 @@ const config: Config = {
         out: 'reference/code',
         readme: 'none',
         skipErrorChecking: true,
+        // Build "Defined in" source links from a fixed template instead of
+        // auto-detecting the git remote. Vercel's checkout can't be parsed as a
+        // GitHub remote, which warns "The provided git remote 'origin' was not
+        // valid. Source links will be broken." disableGit removes the git probe
+        // entirely; basePath makes {path} repo-root-relative (cwd is website/).
+        disableGit: true,
+        basePath: '..',
+        sourceLinkTemplate: 'https://github.com/asongulol/abc-helper-app/blob/main/{path}#L{line}',
       },
     ],
     // API reference generated from the OpenAPI spec into the reference tree.
