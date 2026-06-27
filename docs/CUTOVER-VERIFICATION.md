@@ -52,10 +52,20 @@ portal at `/portal`) while the old app keeps serving users — see `docs/CUTOVER
 for the full prepare-now / flip-later runbook. At the flip, between pay periods:
 
 1. Freeze writes on the old app.
-2. Disable the old app's Hubstaff cron FIRST (single syncer — refresh tokens are
-   single-use). The new edge function is scheduled only after the flip.
-3. Apply any new migrations to prod (additive only — old app stays a valid rollback).
+2. Keep the **legacy** Hubstaff edge function + its prod cron as the **single
+   syncer** (refresh tokens are single-use). Do **NOT** deploy abc-helper's
+   `hubstaff-sync` / `wise-payouts` edge functions to the shared prod project —
+   that overwrites the legacy v10 functions the live apps depend on. The vendored
+   `supabase/functions/` are local-dev only.
+3. Apply any schema changes to prod additive-only **via the Dashboard SQL Editor,
+   never the migration CLI** (abc-helper migrations are local-only; a push re-runs
+   the baseline on the live DB). Old app stays a valid rollback.
 4. `pnpm parity:verify --url <prod> --key <service_key>` → must exit 0 (read-only).
-5. Announce `3a.abbilabs.com` to users; schedule the new app's Hubstaff cron.
-6. Keep the old app deployed at `payroll.*` / `portal.*` as the rollback until a full
-   clean period runs.
+5. Announce `3a.abbilabs.com` to users. **Single-own the two digest crons** in this
+   window: remove the legacy `documents-expiry-check` / `hiring-docs-review-check`
+   crons and schedule the new `/api/cron/{doc-expiry,hiring-review}` digests. Leave
+   the Hubstaff/Wise crons legacy-owned.
+6. Keep the old app deployed at `payroll.*` / `portal.*` as the rollback until **two
+   full clean pay periods** run on the new app.
+
+The authoritative, fuller runbook + risk register is `audit/CUTOVER-PLAN-2026-06-24.md`.

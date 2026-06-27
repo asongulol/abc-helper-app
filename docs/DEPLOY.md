@@ -17,7 +17,8 @@ Set env vars in **Vercel → Project → Settings → Environment Variables**.
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API → anon public key |
 | `SUPABASE_SERVICE_KEY` | Supabase → Project Settings → API → service_role key (SECRET) |
 
-`ADMIN_SSO_ALLOWED_DOMAIN` defaults to `abckidsny.com`; override only if needed.
+`ADMIN_SSO_ALLOWED_DOMAIN` defaults to `abckidsny.com,abbilabs.com` (comma-separated;
+admins sign in on `abbilabs.com`). Override only if your admin domains differ.
 
 ## Optional (features degrade gracefully when unset)
 

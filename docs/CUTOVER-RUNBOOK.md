@@ -34,9 +34,14 @@ issues in the app itself.
 1. **Freeze writes on the old app.** Easiest: set the old Cloudflare app to a
    read-only/maintenance state, or just announce a freeze and stop using it.
    There must be no in-flight open/locked (unpaid) period mid-edit.
-2. **Apply any new migrations to prod** — additive only. (Today there are NONE;
-   the new app runs on the existing schema. If future work adds migrations, they
-   must be backward-compatible so the old app still reads the DB.)
+2. **Apply any schema changes to prod — additive only, via the Dashboard SQL
+   Editor. NEVER `supabase db push` / the migration CLI.** abc-helper's migrations
+   are local-only and have *zero overlap* with prod's migration history, so a CLI
+   push would try to re-run the whole baseline on the live shared DB. Any change
+   must be backward-compatible (the still-live legacy apps keep reading the DB) and
+   sibling-grep-verified first. The conformance objects (`coverage_targets`,
+   invoices AR cols, `worker_tools.revealed_at`, `my_tools_pending`) were applied
+   exactly this way. See `audit/CUTOVER-PLAN-2026-06-24.md` §2.
 3. **Run the gate against prod (read-only):**
    ```sh
    pnpm parity:verify --url https://cgsidolrauzsowqlllsz.supabase.co --key <PROD_SERVICE_KEY>
