@@ -841,6 +841,69 @@ export async function getOffCycleEligibleWorkers(args: {
   }
 }
 
+export type LockedPeriodSession = {
+  sessionId: string;
+  workerName: string;
+  companyName: string;
+  sessionDate: string;
+  periodStart: string;
+  periodEnd: string;
+  periodState: 'locked' | 'paid';
+};
+
+/**
+ * Of the given (just-approved) sessions, which fall in a LOCKED or PAID pay
+ * period? Those won't be paid by Calculate (the period is frozen), so the
+ * approve flow warns and offers to unlock that period / route off-cycle.
+ */
+export async function getSessionsInLockedPeriods(args: {
+  companyId: string;
+  sessionIds: string[];
+}): Promise<ActionResult<{ sessions: LockedPeriodSession[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  if (args.sessionIds.length === 0) return { ok: true, data: { sessions: [] } };
+  try {
+    const { data: rows, error } = await createServiceClient()
+      .from('service_sessions')
+      .select('id, session_date, companies(name), workers(first_name, last_name)')
+      .in('id', args.sessionIds);
+    if (error) throw new Error(error.message);
+
+    const db = await createServerSupabase();
+    const { data: periods, error: pErr } = await db
+      .from('pay_periods')
+      .select('period_start, period_end, state')
+      .eq('company_id', args.companyId);
+    if (pErr) throw new Error(pErr.message);
+    const stateByRange = new Map<string, string>();
+    for (const p of periods ?? []) stateByRange.set(`${p.period_start}|${p.period_end}`, p.state);
+
+    const out: LockedPeriodSession[] = [];
+    for (const r of rows ?? []) {
+      const p = periodFor(r.session_date);
+      const state = stateByRange.get(`${p.start}|${p.end}`);
+      if (state === 'locked' || state === 'paid') {
+        out.push({
+          sessionId: r.id,
+          workerName:
+            [r.workers?.first_name, r.workers?.last_name].filter(Boolean).join(' ').trim() || '—',
+          companyName: r.companies?.name ?? '—',
+          sessionDate: r.session_date,
+          periodStart: p.start,
+          periodEnd: p.end,
+          periodState: state,
+        });
+      }
+    }
+    return { ok: true, data: { sessions: out } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
 /**
  * Most-recently-added sessions across the employer's per-session/per-hour
  * contractors — the always-visible "Recently added" list, so a just-entered

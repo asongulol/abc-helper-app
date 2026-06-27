@@ -12,8 +12,10 @@
  * `workerId` to hide the picker).
  */
 
+import Link from 'next/link';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui';
+import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PortalSessionRow, RecentSessionRow, WorkerClient } from '@/db/queries/sessions';
@@ -22,6 +24,8 @@ import { fmtDate } from '@/lib/format';
 import {
   getOffCycleEligibleWorkers,
   getRecentSessions,
+  getSessionsInLockedPeriods,
+  type LockedPeriodSession,
   type OffCycleEligibleWorker,
 } from '@/server/actions/payroll';
 import {
@@ -93,6 +97,8 @@ export const AddSessionForm = ({
   const pendingClientId = useRef<string | null>(null);
   // Selected pending rows in the "Recently added" list (for bulk approve).
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Just-approved sessions that fall in a locked/paid period (decision modal).
+  const [lockedWarning, setLockedWarning] = useState<LockedPeriodSession[] | null>(null);
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
@@ -286,9 +292,11 @@ export const AddSessionForm = ({
         else notify(res.error, { type: 'error' });
       }
       if (approved > 0) {
-        notify(`${approved} session(s) approved — recalculate the open period to pay them.`, {
-          type: 'success',
-        });
+        notify(`${approved} session(s) approved.`, { type: 'success' });
+        // In-window sessions are paid by Calculate; warn about any whose period
+        // is locked/paid (frozen) so the user can unlock or route them.
+        const check = await getSessionsInLockedPeriods({ companyId, sessionIds: ids });
+        if (check.ok && check.data.sessions.length > 0) setLockedWarning(check.data.sessions);
       }
       setSelected(new Set());
       await reloadAll();
@@ -661,6 +669,82 @@ export const AddSessionForm = ({
           )}
         </div>
       )}
+
+      {lockedWarning &&
+        (() => {
+          const groups = new Map<
+            string,
+            { start: string; end: string; state: 'locked' | 'paid'; items: LockedPeriodSession[] }
+          >();
+          for (const s of lockedWarning) {
+            const key = `${s.periodStart}|${s.periodEnd}`;
+            const g = groups.get(key) ?? {
+              start: s.periodStart,
+              end: s.periodEnd,
+              state: s.periodState,
+              items: [],
+            };
+            g.items.push(s);
+            groups.set(key, g);
+          }
+          return (
+            <Modal
+              title="Approved sessions in a closed period"
+              onClose={() => setLockedWarning(null)}
+              maxWidth={560}
+            >
+              <p className="sub" style={{ marginTop: 0 }}>
+                {lockedWarning.length} approved session(s) fall in a <b>locked or paid</b> period —
+                the current Calculate won&apos;t pay them. Handle each period:
+              </p>
+              {[...groups.values()].map((g) => (
+                <div
+                  key={`${g.start}|${g.end}`}
+                  style={{
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    padding: 12,
+                    marginBottom: 10,
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>
+                    {fmtDate(g.start)} – {fmtDate(g.end)}{' '}
+                    <Badge tone={g.state === 'paid' ? 'good' : 'warn'}>{g.state}</Badge>
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
+                    {g.items.length} session(s):{' '}
+                    {g.items
+                      .map((s) => `${clientAlias(s.companyName)} ${fmtDate(s.sessionDate)}`)
+                      .join(', ')}
+                  </div>
+                  {g.state === 'locked' ? (
+                    <Link
+                      className="btn sm"
+                      href={`/payroll?period=${g.start}&unlock=1`}
+                      onClick={() => setLockedWarning(null)}
+                    >
+                      Unlock this period &amp; add
+                    </Link>
+                  ) : (
+                    <p className="sub" style={{ margin: 0 }}>
+                      Paid — to add these, first <b>Process &amp; Pay → mark unpaid</b>, then
+                      unlock; a one-click off-cycle batch is coming.
+                    </p>
+                  )}
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={() => setLockedWarning(null)}
+                >
+                  Leave for next payroll
+                </button>
+              </div>
+            </Modal>
+          );
+        })()}
     </>
   );
 };
