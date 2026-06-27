@@ -16,6 +16,7 @@ export interface ReadyPeriod {
   periodStart: string;
   periodEnd: string;
   payDate: string | null;
+  kind?: 'regular' | 'off_cycle';
 }
 
 export interface DraftRef {
@@ -112,7 +113,9 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
                 <tr key={p.id}>
                   <td className="card-title">
                     <b>
-                      {p.periodStart} → {p.periodEnd}
+                      {p.kind === 'off_cycle'
+                        ? '⏱ Off-cycle batch'
+                        : `${p.periodStart} → ${p.periodEnd}`}
                     </b>
                   </td>
                   <td data-label="Pay date">{p.payDate || '—'}</td>

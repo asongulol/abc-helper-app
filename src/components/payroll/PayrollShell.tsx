@@ -489,6 +489,8 @@ export const PayrollShell = ({
   const isOpen = !currentPeriod || currentPeriod.state === 'open';
   const isLocked = currentPeriod?.state === 'locked';
   const isPaid = currentPeriod?.state === 'paid';
+  // Off-cycle batches are paid from their added sessions, not recalculated.
+  const isOffCycle = currentPeriod?.kind === 'off_cycle';
 
   // Batch list
   const finishedBatches = periods.filter((p) => p.state === 'locked' || p.state === 'paid');
@@ -668,7 +670,9 @@ export const PayrollShell = ({
         >
           <div>
             <h2 style={{ margin: 0 }}>
-              Pay batch · {fmtDate(periodStart)} – {fmtDate(periodEnd)}
+              {isOffCycle
+                ? '⏱ Off-cycle batch'
+                : `Pay batch · ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}`}
             </h2>
             {currentPeriod && (
               <p className="sub" style={{ margin: '4px 0 0' }}>
@@ -808,15 +812,21 @@ export const PayrollShell = ({
               {fxNote}
             </span>
           )}
-          <button
-            type="button"
-            className="btn ghost sm"
-            disabled={busy}
-            onClick={() => handleCalculate()}
-          >
-            {busy ? 'Working…' : 'Calculate / Recalculate'}
-          </button>
-          {isOpen && (
+          {isOffCycle ? (
+            <span className="muted" style={{ fontSize: 12 }}>
+              Pay lines come from the added sessions — lock to process.
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => handleCalculate()}
+            >
+              {busy ? 'Working…' : 'Calculate / Recalculate'}
+            </button>
+          )}
+          {isOpen && !isOffCycle && (
             <button
               type="button"
               className="btn ghost sm"
