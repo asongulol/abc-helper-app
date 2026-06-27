@@ -1,0 +1,9 @@
+{
+  "$comment": "Manual record of which repo migrations have had their (additive) DDL applied to the SHARED PROD DB (cgsidolrauzsowqlllsz). Prod's migration history is DISJOINT from this repo — prod schema was conformed via the shared-prod work (PRs #13-15), so `supabase db push` is NEVER run against prod. The Vercel deploy ships CODE but NOT schema. When you add a migration the deployed code depends on, run its DDL on prod via the Supabase SQL Editor / MCP FIRST (additive migrations are backward-compatible, so applying before the code deploy is always safe), then add its version prefix to `applied` below. scripts/check-prod-migrations.mjs blocks pushing to `main` while any migration newer than `baselineThrough` is unrecorded.",
+  "baselineThrough": "00000000000021",
+  "baselineNote": "Migrations 00000000000000–00000000000021 predate the prod-conformance baseline and are treated as applied (prod schema was conformed separately; not independently re-verified per migration).",
+  "applied": {
+    "00000000000022": "2026-06-27 — off-cycle pay: payments.off_cycle_php, off_cycle_pay_items, service_sessions paid_* cols, payments_period_open_enforce trigger update",
+    "00000000000023": "2026-06-27 — time_entries.client_company_id (hours→client attribution)"
+  }
+}

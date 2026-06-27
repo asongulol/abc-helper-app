@@ -76,6 +76,39 @@ Keep new DB migrations additive so the old app remains a valid rollback. See
 
 ---
 
+## Database migrations → prod (the deploy does NOT apply schema)
+
+**The Vercel deploy ships CODE, not schema.** Pushing to `main` rebuilds the app
+but never touches the database. Prod's migration history is **disjoint** from
+this repo (prod was conformed via the shared-prod work; `supabase db push` is
+never run against prod). So a migration file in `supabase/migrations/` is *not*
+in prod until you apply it by hand.
+
+If the deployed code reads a column/table that prod doesn't have yet, the query
+throws `column ... does not exist` at runtime and the feature silently breaks in
+prod — even though the build was green and tests passed. (This is exactly how the
+payroll editor broke once: code shipped reading `payments.off_cycle_php` before
+that column existed in prod.)
+
+**Checklist when a change adds/edits a migration:**
+
+1. Because additive migrations are backward-compatible (old code ignores new
+   columns), **apply the schema to prod _before_ deploying the code** — never the
+   other way around. Run the migration's DDL on the prod project
+   (`cgsidolrauzsowqlllsz`) via the **Supabase SQL Editor** (or the Supabase MCP
+   `execute_sql`). Keep it additive + idempotent (`add column if not exists`,
+   `create table if not exists`).
+2. Record the migration's version prefix in **`supabase/prod-applied.json`**
+   (under `applied`, with a one-line note).
+3. Then push the code.
+
+A pre-push gate (`scripts/check-prod-migrations.mjs`, wired into `lefthook.yml`)
+**blocks pushing to `main`** while any migration newer than the recorded baseline
+is missing from `supabase/prod-applied.json`. It only warns on other branches.
+Run it anytime with `pnpm check:prod-migrations`.
+
+---
+
 ## vercel.json
 
 `vercel.json` pins the Next framework, the Singapore region (`sin1`, closest to

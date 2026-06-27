@@ -13,6 +13,10 @@ pre-push:
   commands:
     guardrails:
       run: pnpm guardrails
+    # Blocks pushing to main while a migration isn't recorded as applied to prod
+    # (the deploy ships code but not schema). Warns only on other branches.
+    prod-migrations:
+      run: pnpm check:prod-migrations
     typecheck:
       run: pnpm typecheck
     test:
