@@ -30,14 +30,27 @@ export default async function PayrollPage({
 
   const sp = await searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  // Honor a ?period=<YYYY-MM-DD> deep-link (Process & Pay, command palette);
-  // periodFor() throws on malformed input, so validate before using it.
   const isIsoDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
-  const defaultPeriod = periodFor(isIsoDate(sp.period) ? sp.period : today);
   const autoUnlock = sp.unlock === '1';
 
   const db = await createServerSupabase();
   const periods = await fetchPeriodSummaries(db, companyId);
+
+  // Which period the editor opens on:
+  //  1. an explicit ?period=<YYYY-MM-DD> deep-link (Process & Pay, ⌘K), else
+  //  2. the most recent OPEN draft that already has statements — so the unlocked
+  //     draft opens fully instead of an empty "current period" card that just
+  //     confuses (its hours aren't approved yet), else
+  //  3. any open draft, else the period containing today (to start a fresh calc).
+  // periodFor() throws on malformed input, so the deep-link is validated first.
+  const openDraft =
+    periods.find((p) => p.state === 'open' && p.contractorCount > 0) ??
+    periods.find((p) => p.state === 'open');
+  const defaultPeriod = isIsoDate(sp.period)
+    ? periodFor(sp.period)
+    : openDraft
+      ? periodFor(openDraft.periodStart)
+      : periodFor(today);
 
   return (
     <PayrollShell
