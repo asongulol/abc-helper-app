@@ -49,6 +49,12 @@ export const TimeShell = ({
   const router = useRouter();
   const [period, setPeriod] = useState<PayPeriod>(initialPeriod);
   const [, startRefresh] = useTransition();
+  // The Review & Approve grid is collapsed by default so it isn't distracting
+  // and you can't accidentally act on the wrong period — expand to review.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const pendingCount = rows
+    .flatMap((r) => r.entries)
+    .filter((e) => e.approval === 'pending').length;
 
   // Contractors whose hours can't be cleanly invoiced: no client, or more than
   // one (multi-client needs per-project attribution — see the hours plan).
@@ -127,21 +133,55 @@ export const TimeShell = ({
       )}
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h3 style={{ marginBottom: 12 }}>
-          Review &amp; Approve — {period.start} – {period.end}
+        <h3 style={{ margin: 0 }}>
+          <button
+            type="button"
+            onClick={() => setReviewOpen((o) => !o)}
+            aria-expanded={reviewOpen}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              font: 'inherit',
+              color: 'inherit',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span aria-hidden style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
+                {reviewOpen ? '▾' : '▸'}
+              </span>
+              Review &amp; Approve — {period.start} – {period.end}
+            </span>
+            <span className="sub" style={{ margin: 0, fontWeight: 400, fontSize: 13 }}>
+              {pendingCount > 0 ? `${pendingCount} pending` : 'all clear'}
+              {reviewOpen ? '' : ' · click to review'}
+            </span>
+          </button>
         </h3>
-        <TimeApprovalTable
-          companyId={companyId}
-          periodStart={period.start}
-          periodEnd={period.end}
-          periodDays={periodDays}
-          workingDays={workingDays}
-          rows={rows}
-          unmatchedNames={unmatchedNames}
-          contractorOptions={contractorOptions}
-          assignedClients={assignedClients}
-          onRefresh={handleRefresh}
-        />
+        {reviewOpen && (
+          <div style={{ marginTop: 12 }}>
+            <TimeApprovalTable
+              companyId={companyId}
+              periodStart={period.start}
+              periodEnd={period.end}
+              periodDays={periodDays}
+              workingDays={workingDays}
+              rows={rows}
+              unmatchedNames={unmatchedNames}
+              contractorOptions={contractorOptions}
+              assignedClients={assignedClients}
+              onRefresh={handleRefresh}
+            />
+          </div>
+        )}
       </div>
     </>
   );

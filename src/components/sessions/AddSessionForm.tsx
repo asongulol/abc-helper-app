@@ -4,8 +4,8 @@
  * Admin "Add session" form for per-session contractors — the same fields a
  * contractor enters in the portal (client, child initials, EIID, item/type,
  * date) plus a worker picker and units, creating a real service_sessions row.
- * The CLIENT is required (it's the company billed → invoicing). Admin entry is
- * authoritative, so it defaults to Approved (pays/bills without a review step).
+ * The CLIENT is required (it's the company billed → invoicing). Sessions are
+ * added as `pending` for a review pass; tick Approved to skip review.
  *
  * Reused in two places: the Time & Approval screen (own worker picker) and the
  * Calculate batch's session modal (worker controlled by the parent — pass
@@ -19,7 +19,13 @@ import { useToast } from '@/components/ui/Toast';
 import type { PortalSessionRow, WorkerClient } from '@/db/queries/sessions';
 import { fmtDate } from '@/lib/format';
 import { getOffCycleEligibleWorkers, type OffCycleEligibleWorker } from '@/server/actions/payroll';
-import { createSession, getWorkerClients, getWorkerSessions } from '@/server/actions/sessions';
+import {
+  createSession,
+  deleteSession,
+  getWorkerClients,
+  getWorkerSessions,
+  updateSession,
+} from '@/server/actions/sessions';
 import { EI_SESSION_ITEMS } from '@/types/schemas/sessions';
 
 const STATUS_TONE: Record<string, BadgeTone> = {
@@ -66,9 +72,13 @@ export const AddSessionForm = ({
   const [date, setDate] = useState(defaultDate);
   const [type, setType] = useState<string>(EI_SESSION_ITEMS[0]);
   const [units, setUnits] = useState('1');
-  const [approve, setApprove] = useState(true);
+  // Default OFF so admin-entered sessions land as `pending` for a review pass
+  // before they bill/pay (tick Approved to skip review).
+  const [approve, setApprove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<PortalSessionRow[]>([]);
+  // Non-null while editing a pending session (the submit becomes "Save changes").
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
@@ -91,6 +101,27 @@ export const AddSessionForm = ({
       live = false;
     };
   }, [companyId, controlled]);
+
+  // #1: remember the last-picked contractor across navigation so the entered
+  // (pending) sessions stay visible on return — until they're approved/deleted.
+  useEffect(() => {
+    if (controlled) return;
+    try {
+      const saved = window.localStorage.getItem(`abc.addsession.worker.${companyId}`);
+      if (saved) setPickedWorker(saved);
+    } catch {
+      /* localStorage unavailable (private mode) — non-fatal */
+    }
+  }, [companyId, controlled]);
+
+  useEffect(() => {
+    if (controlled || !pickedWorker) return;
+    try {
+      window.localStorage.setItem(`abc.addsession.worker.${companyId}`, pickedWorker);
+    } catch {
+      /* non-fatal */
+    }
+  }, [companyId, controlled, pickedWorker]);
 
   // Load the worker's assigned clients (the invoicing target options).
   useEffect(() => {
@@ -132,28 +163,80 @@ export const AddSessionForm = ({
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;
 
-  const submit = async () => {
-    if (!canSubmit) return;
+  const resetEntryFields = () => {
+    setChildInitials('');
+    setEiid('');
+    setUnits('1');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    resetEntryFields();
+  };
+
+  // Load a pending session back into the form for editing.
+  const startEdit = (s: PortalSessionRow) => {
+    setEditingId(s.id);
+    setClientId(s.companyId);
+    setChildInitials(s.childInitials ?? '');
+    setEiid(s.eiid ?? '');
+    setDate(s.sessionDate);
+    setType(s.item ?? EI_SESSION_ITEMS[0]);
+    setUnits(String(s.units || 1));
+  };
+
+  const removeSession = async (s: PortalSessionRow) => {
     setBusy(true);
     try {
-      const res = await createSession({
-        clientId,
-        workerId,
-        sessionDate: date,
-        sessionType: type,
-        units: Math.max(1, Number(units) || 1),
-        childInitials: childInitials.trim(),
-        eiid: eiid.trim(),
-        approve,
-      });
+      const res = await deleteSession({ clientId: s.companyId, id: s.id });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(`Session added${approve ? ' (approved)' : ' — pending'}.`, { type: 'success' });
+      if (editingId === s.id) cancelEdit();
+      notify('Session deleted.', { type: 'success' });
+      await reloadRecent(workerId);
+      onCreated();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      const res = editingId
+        ? await updateSession({
+            clientId,
+            id: editingId,
+            sessionDate: date,
+            sessionType: type,
+            units: Math.max(1, Number(units) || 1),
+            childInitials: childInitials.trim(),
+            eiid: eiid.trim(),
+          })
+        : await createSession({
+            clientId,
+            workerId,
+            sessionDate: date,
+            sessionType: type,
+            units: Math.max(1, Number(units) || 1),
+            childInitials: childInitials.trim(),
+            eiid: eiid.trim(),
+            approve,
+          });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(
+        editingId ? 'Session updated.' : `Session added${approve ? ' (approved)' : ' — pending'}.`,
+        { type: 'success' },
+      );
       // Keep worker/client/date; clear the per-child fields for fast repeat entry.
-      setChildInitials('');
-      setEiid('');
+      setEditingId(null);
+      resetEntryFields();
       await reloadRecent(workerId);
       onCreated();
     } finally {
@@ -263,14 +346,25 @@ export const AddSessionForm = ({
           />
         </label>
 
-        <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
-          <input type="checkbox" checked={approve} onChange={(e) => setApprove(e.target.checked)} />
-          Approved
-        </label>
+        {!editingId && (
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+            <input
+              type="checkbox"
+              checked={approve}
+              onChange={(e) => setApprove(e.target.checked)}
+            />
+            Approved
+          </label>
+        )}
 
         <button type="button" className="btn sm" disabled={!canSubmit} onClick={submit}>
-          {busy ? 'Adding…' : 'Add session'}
+          {busy ? 'Saving…' : editingId ? 'Save changes' : 'Add session'}
         </button>
+        {editingId && (
+          <button type="button" className="btn ghost sm" disabled={busy} onClick={cancelEdit}>
+            Cancel
+          </button>
+        )}
       </div>
 
       {workerId && recent.length > 0 && (
@@ -283,22 +377,55 @@ export const AddSessionForm = ({
                 <th>Type</th>
                 <th>Child</th>
                 <th>EIID</th>
+                <th style={{ textAlign: 'right' }}>Units</th>
                 <th>Status</th>
+                <th />
               </tr>
             </thead>
             <tbody>
-              {recent.map((s) => (
-                <tr key={s.id}>
-                  <td>{fmtDate(s.sessionDate)}</td>
-                  <td>{s.companyName}</td>
-                  <td>{s.item ?? '—'}</td>
-                  <td>{s.childInitials ?? '—'}</td>
-                  <td>{s.eiid ?? '—'}</td>
-                  <td>
-                    <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
-                  </td>
-                </tr>
-              ))}
+              {recent.map((s) => {
+                const pending = s.approval === 'pending';
+                return (
+                  <tr key={s.id} style={editingId === s.id ? { background: '#eff6ff' } : undefined}>
+                    <td>{fmtDate(s.sessionDate)}</td>
+                    <td>{s.companyName}</td>
+                    <td>{s.item ?? '—'}</td>
+                    <td>{s.childInitials ?? '—'}</td>
+                    <td>{s.eiid ?? '—'}</td>
+                    <td style={{ textAlign: 'right' }}>{s.units}</td>
+                    <td>
+                      <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
+                    </td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      {pending ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            disabled={busy}
+                            onClick={() => startEdit(s)}
+                          >
+                            Edit
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            disabled={busy}
+                            style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                            onClick={() => removeSession(s)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : (
+                        <span className="muted" style={{ fontSize: 11 }}>
+                          locked
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

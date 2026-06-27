@@ -41,6 +41,18 @@ export const CreateSessionSchema = z.object({
 });
 export type CreateSessionInput = z.infer<typeof CreateSessionSchema>;
 
+/** Edit a still-PENDING session (approved ones are locked — they already bill). */
+export const UpdateSessionSchema = z.object({
+  clientId: uuid(),
+  id: uuid(),
+  sessionDate: IsoDateSchema,
+  sessionType: z.string().max(100).nullable().optional(),
+  units: z.number().int().min(1).max(1000),
+  childInitials: z.string().max(12).nullable().optional(),
+  eiid: z.string().max(40).nullable().optional(),
+});
+export type UpdateSessionInput = z.infer<typeof UpdateSessionSchema>;
+
 /**
  * Record one session from the CONTRACTOR portal. The worker is the logged-in
  * contractor (not supplied by the client); the item is constrained to

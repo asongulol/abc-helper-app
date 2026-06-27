@@ -19,6 +19,7 @@ import {
   insertSessions,
   type PortalSessionRow,
   type SessionRow,
+  updateSessionRow,
   updateSessionsApproval,
   type WorkerClient,
 } from '@/db/queries/sessions';
@@ -31,6 +32,7 @@ import {
   ImportSessionsSchema,
   LoadSessionsSchema,
   SetSessionApprovalSchema,
+  UpdateSessionSchema,
 } from '@/types/schemas/sessions';
 
 const authGuard = async (clientId: string) => {
@@ -259,5 +261,36 @@ export async function deleteSession(args: unknown): Promise<ActionResult> {
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Delete failed.' };
+  }
+}
+
+/** Edit a still-pending session (approved sessions are locked — they bill). */
+export async function updateSession(args: unknown): Promise<ActionResult> {
+  const parsed = UpdateSessionSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const { clientId, id, sessionDate, sessionType, units, childInitials, eiid } = parsed.data;
+
+  const guard = await authGuard(clientId);
+  if (!guard.ok) return guard;
+
+  try {
+    const db = await createServerSupabase();
+    await updateSessionRow(db, clientId, id, {
+      sessionDate,
+      sessionType: sessionType ?? null,
+      units,
+      childInitials: childInitials ?? null,
+      eiid: eiid ?? null,
+    });
+    await logEvent({
+      companyId: clientId,
+      action: 'session_updated',
+      entity: id,
+      detail: { id, date: sessionDate, units, type: sessionType ?? null },
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Could not update session.' };
   }
 }

@@ -178,9 +178,12 @@ export const fetchWorkerClientsBatch = async (
 
 export type PortalSessionRow = {
   id: string;
+  /** CLIENT company billed (needed to scope edits/deletes and re-populate the form). */
+  companyId: string;
   companyName: string;
   sessionDate: string;
   item: string | null;
+  units: number;
   childInitials: string | null;
   eiid: string | null;
   approval: ApprovalStatus;
@@ -194,16 +197,20 @@ export const fetchWorkerSessions = async (
 ): Promise<PortalSessionRow[]> => {
   const { data, error } = await db
     .from('service_sessions')
-    .select('id, session_date, session_type, child_initials, eiid, approval, companies(name)')
+    .select(
+      'id, company_id, session_date, session_type, units, child_initials, eiid, approval, companies(name)',
+    )
     .eq('worker_id', workerId)
     .order('session_date', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`worker sessions: ${error.message}`);
   return (data ?? []).map((r) => ({
     id: r.id,
+    companyId: r.company_id,
     companyName: r.companies?.name ?? '—',
     sessionDate: r.session_date,
     item: r.session_type,
+    units: Number(r.units) || 0,
     childInitials: r.child_initials,
     eiid: r.eiid,
     approval: r.approval,
@@ -307,4 +314,38 @@ export const deleteSession = async (db: Db, clientId: string, id: string): Promi
     .eq('company_id', clientId)
     .eq('id', id);
   if (error) throw new Error(`delete session: ${error.message}`);
+};
+
+export type UpdateSessionFields = {
+  sessionDate: string;
+  sessionType: string | null;
+  units: number;
+  childInitials: string | null;
+  eiid: string | null;
+};
+
+/**
+ * Edit a session's fields, scoped to the client AND to `approval = 'pending'`:
+ * once approved a session bills/pays, so it's frozen here (RLS would also block,
+ * but the explicit filter makes the no-op intent clear and self-documenting).
+ */
+export const updateSessionRow = async (
+  db: Db,
+  clientId: string,
+  id: string,
+  fields: UpdateSessionFields,
+): Promise<void> => {
+  const { error } = await db
+    .from('service_sessions')
+    .update({
+      session_date: fields.sessionDate,
+      session_type: fields.sessionType,
+      units: fields.units,
+      child_initials: fields.childInitials,
+      eiid: fields.eiid,
+    })
+    .eq('company_id', clientId)
+    .eq('id', id)
+    .eq('approval', 'pending');
+  if (error) throw new Error(`update session: ${error.message}`);
 };
