@@ -30,6 +30,8 @@ export interface SortableTableProps<T> {
   onRowClick?: (row: T) => void;
   /** Keep tabular layout on phones (side-scroll) instead of the card stack. */
   keepTable?: boolean;
+  /** Initial sort applied on first render (e.g. name A→Z). dir defaults to 1 (asc). */
+  defaultSort?: { key: string; dir?: SortDir };
 }
 
 type SortDir = 1 | -1;
@@ -74,9 +76,10 @@ export const SortableTable = <T,>({
   emptyMessage = 'Nothing here yet.',
   onRowClick,
   keepTable = false,
+  defaultSort,
 }: SortableTableProps<T>) => {
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [dir, setDir] = useState<SortDir>(1);
+  const [sortKey, setSortKey] = useState<string | null>(defaultSort?.key ?? null);
+  const [dir, setDir] = useState<SortDir>(defaultSort?.dir ?? 1);
   const [q, setQ] = useState('');
 
   const toggle = (key: string) => {

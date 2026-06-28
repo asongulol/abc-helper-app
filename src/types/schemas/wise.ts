@@ -16,8 +16,20 @@ export const WiseDraftSchema = z.object({
 });
 export type WiseDraftInput = z.infer<typeof WiseDraftSchema>;
 
+/**
+ * One row of a Wise batch draft. `recipientId` / `amountPhp` are optional
+ * per-row OVERRIDES — when omitted the draft uses the worker's saved default
+ * recipient and the locked net. Drafts only: no money ever moves here.
+ */
+export const WiseBatchItemSchema = z.object({
+  paymentId: uuid('paymentId must be a UUID'),
+  recipientId: z.number().int().positive().optional(),
+  amountPhp: z.number().positive().optional(),
+});
+export type WiseBatchItem = z.infer<typeof WiseBatchItemSchema>;
+
 export const WiseBatchSchema = z.object({
-  paymentIds: PaymentIdsSchema,
+  items: z.array(WiseBatchItemSchema).min(1, 'at least one item required').max(500),
   /** Optional display name for the Wise batch group. */
   name: z.string().min(1).max(200).optional(),
 });
