@@ -1,10 +1,11 @@
 import { redirect } from 'next/navigation';
 import { ContractorsClient } from '@/components/contractors/ContractorsClient';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import { listAdmins } from '@/db/queries/admins';
 import { listAnnouncementsAll } from '@/db/queries/config';
 import { fetchRates } from '@/db/queries/payroll';
-import { fetchRoster, fetchWorkerClientsMap } from '@/db/queries/workers';
+import { fetchRoster, fetchWorkerClientsMap, type RosterWorker } from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
 
@@ -45,6 +46,23 @@ export default async function ContractorsPage() {
     listCompanies(),
   ]);
 
+  // Batch-sign avatar URLs for the roster (private bucket) so the table can show
+  // contractor photos; workers without a photo fall back to initials in the UI.
+  const photoUrlByWorker: Record<string, string> = {};
+  const withPhotos = roster.filter((w): w is RosterWorker & { photoUrl: string } => !!w.photoUrl);
+  if (withPhotos.length > 0) {
+    const svc = createServiceClient();
+    const { data: signed } = await svc.storage.from('avatars').createSignedUrls(
+      withPhotos.map((w) => w.photoUrl),
+      600,
+    );
+    const byPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
+    for (const w of withPhotos) {
+      const url = byPath.get(w.photoUrl);
+      if (url) photoUrlByWorker[w.workerId] = url;
+    }
+  }
+
   return (
     <ContractorsClient
       companyId={companyId}
@@ -56,6 +74,7 @@ export default async function ContractorsPage() {
       clientsByWorker={clientsByWorker}
       companies={companies}
       announcements={announcements}
+      photoUrlByWorker={photoUrlByWorker}
     />
   );
 }

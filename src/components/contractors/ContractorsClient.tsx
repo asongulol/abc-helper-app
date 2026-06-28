@@ -17,6 +17,7 @@ import {
 import type { AnnouncementRow } from '@/db/queries/config';
 import type { RosterWorker } from '@/db/queries/workers';
 import type { RateRow } from '@/lib/pay/rates';
+import { payoutMethodLabel } from '@/lib/payroll/status-pills';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
 
@@ -44,6 +45,8 @@ type Props = {
   clientsByWorker: Record<string, string[]>;
   companies: { id: string; name: string }[];
   announcements: AnnouncementRow[];
+  /** Short-lived signed avatar URLs by workerId; absent → initials fallback. */
+  photoUrlByWorker: Record<string, string>;
 };
 
 type RowShape = RosterWorker & {
@@ -60,6 +63,18 @@ function tableName(w: RosterWorker): string {
   return [w.firstName, w.lastName].filter(Boolean).join(' ').trim();
 }
 
+/** Avatar fallback when no photo: initials of the first two words of the name. */
+function initials(name: string): string {
+  return (
+    name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? '')
+      .join('') || '?'
+  );
+}
+
 export function ContractorsClient({
   companyId,
   roster,
@@ -68,6 +83,7 @@ export function ContractorsClient({
   clientsByWorker,
   companies,
   announcements,
+  photoUrlByWorker,
 }: Props) {
   const { notify } = useToast();
   const router = useRouter();
@@ -152,16 +168,52 @@ export function ContractorsClient({
 
   const columns: ReadonlyArray<SortableColumn<RowShape>> = [
     {
+      key: '_avatar',
+      label: '',
+      sortable: false,
+      render: (r) => {
+        const url = photoUrlByWorker[r.workerId];
+        return url ? (
+          // biome-ignore lint/performance/noImgElement: remote Supabase signed-URL avatar, not a static asset
+          <img
+            src={url}
+            alt=""
+            width={34}
+            height={34}
+            style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }}
+          />
+        ) : (
+          <div
+            aria-hidden="true"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: '50%',
+              background: 'var(--navy, #1f3a68)',
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 700,
+              fontSize: 12,
+            }}
+          >
+            {initials(r._name)}
+          </div>
+        );
+      },
+    },
+    {
       key: '_name',
       label: 'Name',
       sortable: true,
       cardTitle: true,
       accessor: (r) => r._name,
+      // Clickable plain bold text (no button box) — the whole row is also a link.
       render: (r) => (
         <Link
           href={profileHref(r.workerId)}
-          className="btn ghost sm"
-          style={{ textAlign: 'left', fontWeight: 600 }}
+          style={{ fontWeight: 600, color: 'inherit', textDecoration: 'none' }}
           onClick={(e) => e.stopPropagation()}
         >
           {r._name || '(no name)'}
@@ -189,14 +241,15 @@ export function ContractorsClient({
       label: 'Contract',
       sortable: true,
       accessor: (r) => r.contract,
-      render: (r) => <Badge tone={r.contract === 'FT' ? 'good' : 'neutral'}>{r.contract}</Badge>,
+      render: (r) => <Badge tone={r.contract === 'PT' ? 'bad' : 'neutral'}>{r.contract}</Badge>,
     },
     {
       key: 'payoutMethod',
       label: 'Payout',
       sortable: true,
       accessor: (r) => r.payoutMethod ?? '',
-      render: (r) => (r.payoutMethod ? r.payoutMethod : <Badge tone="warn">not set</Badge>),
+      render: (r) =>
+        r.payoutMethod ? payoutMethodLabel(r.payoutMethod) : <Badge tone="warn">not set</Badge>,
     },
     {
       key: '_statusLabel',
@@ -239,8 +292,12 @@ export function ContractorsClient({
               Reactivate
             </button>
           )}
-          {isOwner && r._statusLabel !== 'active' && (
-            <button type="button" className="btn ghost sm" onClick={() => setDeleteTarget(r)}>
+          {isOwner && (
+            <button
+              type="button"
+              className="btn danger-outline sm"
+              onClick={() => setDeleteTarget(r)}
+            >
               Delete
             </button>
           )}
