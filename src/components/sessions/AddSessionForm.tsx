@@ -211,6 +211,11 @@ export const AddSessionForm = ({
   const approvedUnpaidIds =
     recentAll?.filter((r) => r.approval === 'approved' && !r.paidAt).map((r) => r.id) ?? [];
 
+  // "Recently added sessions" is an action queue: pending (needs approval) +
+  // approved-but-not-yet-added. Once a session is added to a draft batch its
+  // paid_at is stamped, so it drops off this list (it now lives on Calculate).
+  const recentVisible = recentAll ? recentAll.filter((r) => !r.paidAt) : null;
+
   const resetEntryFields = () => {
     setChildInitials('');
     setEiid('');
@@ -660,11 +665,11 @@ export const AddSessionForm = ({
                 </div>
               )}
           </div>
-          {recentAll === null ? (
+          {recentVisible === null ? (
             <Spinner />
-          ) : recentAll.length === 0 ? (
+          ) : recentVisible.length === 0 ? (
             <p className="sub" style={{ margin: 0 }}>
-              No sessions yet — add one above.
+              No sessions waiting — add one above.
             </p>
           ) : (
             <div className="table-scroll">
@@ -684,7 +689,7 @@ export const AddSessionForm = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {recentAll.map((s) => {
+                  {recentVisible.map((s) => {
                     const pending = s.approval === 'pending';
                     return (
                       <tr
