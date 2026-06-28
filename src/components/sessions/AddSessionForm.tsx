@@ -750,8 +750,12 @@ export const AddSessionForm = ({
                               Pay
                             </button>
                           ) : s.paidAt ? (
-                            <span className="muted" style={{ fontSize: 11 }}>
-                              paid
+                            <span
+                              className="muted"
+                              style={{ fontSize: 11 }}
+                              title="Added to a draft pay batch — lock & pay it in Process & Pay."
+                            >
+                              added
                             </span>
                           ) : (
                             <span className="muted" style={{ fontSize: 11 }}>
