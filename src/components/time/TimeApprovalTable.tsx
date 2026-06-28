@@ -156,16 +156,7 @@ export const TimeApprovalTable = ({
   return (
     <div>
       {/* Header actions */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 12,
-          flexWrap: 'wrap',
-          marginBottom: 12,
-        }}
-      >
+      <div className="card-head" style={{ marginBottom: 12 }}>
         <p className="sub" style={{ margin: 0 }}>
           {pendingIds.length} pending entr
           {pendingIds.length === 1 ? 'y' : 'ies'} · {periodDays} days in period · {workingDays}{' '}

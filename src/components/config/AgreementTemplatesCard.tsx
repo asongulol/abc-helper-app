@@ -188,16 +188,7 @@ export const AgreementTemplatesCard = ({
       </div>
 
       <div className="field">
-        <div
-          style={{
-            display: 'block',
-            fontSize: 11,
-            color: 'var(--muted)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.03em',
-            marginBottom: 4,
-          }}
-        >
+        <div className="section-label" style={{ marginBottom: 4 }}>
           Live preview — merge fields filled with sample values
         </div>
         <pre style={PREVIEW_STYLE}>

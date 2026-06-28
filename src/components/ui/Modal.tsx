@@ -75,21 +75,11 @@ export const Modal = ({ title, onClose, escClose = true, maxWidth, children }: M
       style={maxWidth != null ? { maxWidth } : undefined}
     >
       {title != null && (
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <h2 id={titleId} style={{ margin: 0 }}>
-            {title}
-          </h2>
+        <div className="modal-head">
+          <h2 id={titleId}>{title}</h2>
           <button
             type="button"
             className="x"
-            style={{ float: 'none' }}
             aria-label="Close"
             onClick={() => onCloseRef.current()}
           >

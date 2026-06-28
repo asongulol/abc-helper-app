@@ -148,36 +148,26 @@ export default async function OverviewPage() {
 
   return (
     <>
-      <div
-        className="card"
-        style={{
-          marginBottom: 16,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
-        <div>
-          <h2 style={{ margin: 0 }}>Overview</h2>
-          <div className="sub" style={{ margin: 0 }}>
-            {companyName} · what needs your attention
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-head" style={{ marginBottom: 0, alignItems: 'center' }}>
+          <div>
+            <h2>Overview</h2>
+            <div className="sub">{companyName} · what needs your attention</div>
           </div>
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 6,
-          }}
-        >
-          <RefreshButton />
-          <span className="ov-updated">
-            <span className="dot" />
-            updated just now
-          </span>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-end',
+              gap: 6,
+            }}
+          >
+            <RefreshButton />
+            <span className="ov-updated">
+              <span className="dot" />
+              updated just now
+            </span>
+          </div>
         </div>
       </div>
 

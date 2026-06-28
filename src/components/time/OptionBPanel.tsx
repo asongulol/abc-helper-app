@@ -86,16 +86,7 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
 
   return (
     <div style={{ borderLeft: '1px solid var(--border)', paddingLeft: 16 }}>
-      <span
-        style={{
-          fontSize: 11,
-          color: 'var(--muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '.03em',
-        }}
-      >
-        Option B — sync from Hubstaff API
-      </span>
+      <span className="section-label">Option B — sync from Hubstaff API</span>
       <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
         Pulls directly. Needs the <code>hubstaff-sync</code> Edge Function deployed and the token
         set (see setup).

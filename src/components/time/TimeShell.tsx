@@ -81,18 +81,10 @@ export const TimeShell = ({
   return (
     <>
       <div className="card" style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-          }}
-        >
+        <div className="card-head" style={{ marginBottom: 0 }}>
           <div>
-            <h2 style={{ margin: 0 }}>Time Import &amp; Approval</h2>
-            <p className="sub" style={{ marginTop: 4 }}>
+            <h2>Time Import &amp; Approval</h2>
+            <p className="sub">
               Review, approve, or add manual hours. Approved time flows to Payroll for calculation.
             </p>
           </div>

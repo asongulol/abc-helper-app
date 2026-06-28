@@ -266,14 +266,8 @@ export function AddContractorWizard({
 
   return (
     <Modal onClose={onClose} maxWidth={560}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
-        <h2 style={{ margin: 0 }}>
+      <div className="card-head">
+        <h2>
           Add contractor{' '}
           <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
             · {companyName || 'this company'}

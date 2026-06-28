@@ -820,15 +820,7 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
       {/* 3 · Documents review — required checklist (incl. MISSING) + extras */}
       {detailLoaded && (docChecklist.length > 0 || documents.length > 0) && (
         <div style={{ marginBottom: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 8,
-              marginBottom: 8,
-            }}
-          >
+          <div className="section-head">
             <h3 style={{ fontSize: 14, margin: 0 }}>
               3 · Documents{' '}
               {missingDocCount > 0 && (
