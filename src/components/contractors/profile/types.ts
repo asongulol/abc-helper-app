@@ -41,6 +41,8 @@ export type FormState = {
   paymaya: string;
   paypal: string;
   wiseTag: string;
+  wiseRecipientId: string;
+  wiseRecipientUuid: string;
 };
 
 /** Field-update setter the shell hands to each tab panel. */

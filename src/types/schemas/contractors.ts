@@ -135,6 +135,8 @@ export const SaveWorkerProfileSchema = z
     paymaya: z.string().max(60).nullable().optional(),
     paypal: z.string().max(120).nullable().optional(),
     wiseTag: z.string().max(60).nullable().optional(),
+    wiseRecipientId: z.number().int().positive().nullable().optional(),
+    wiseRecipientUuid: z.string().max(60).nullable().optional(),
     // worker_companies link fields
     contract: ContractTypeSchema,
     payBasis: PayBasisSchema.nullable().default(null),

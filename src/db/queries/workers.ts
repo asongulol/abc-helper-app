@@ -45,6 +45,10 @@ export type RosterWorker = {
   paymaya: string | null;
   paypal: string | null;
   wiseTag: string | null;
+  /** Wise API recipient id (numeric) — the payee for Wise API draft transfers. */
+  wiseRecipientId: number | null;
+  /** Wise recipient UUID — used by the manual Wise Batch Payments CSV. */
+  wiseRecipientUuid: string | null;
   photoUrl: string | null;
   // worker_companies link fields
   linkId: string;
@@ -71,7 +75,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = cache(async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -120,6 +124,8 @@ export const fetchRoster = cache(async (db: Db, companyId: string): Promise<Rost
         paymaya: w.paymaya,
         paypal: w.paypal,
         wiseTag: w.wise_tag,
+        wiseRecipientId: w.wise_recipient_id,
+        wiseRecipientUuid: w.wise_recipient_uuid,
         photoUrl: w.photo_url,
         linkId: l.id,
         companyId: l.company_id,
@@ -177,7 +183,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -222,6 +228,8 @@ export const fetchWorkerLink = async (
     paymaya: w.paymaya,
     paypal: w.paypal,
     wiseTag: w.wise_tag,
+    wiseRecipientId: w.wise_recipient_id,
+    wiseRecipientUuid: w.wise_recipient_uuid,
     photoUrl: w.photo_url,
     linkId: data.id,
     companyId: data.company_id,
@@ -338,6 +346,8 @@ export const updateWorkerProfile = async (
     paymaya?: string | null;
     paypal?: string | null;
     wise_tag?: string | null;
+    wise_recipient_id?: number | null;
+    wise_recipient_uuid?: string | null;
   },
 ): Promise<void> => {
   const { error } = await db.from('workers').update(patch).eq('id', workerId);

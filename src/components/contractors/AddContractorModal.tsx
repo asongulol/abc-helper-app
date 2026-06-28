@@ -89,6 +89,8 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         paymaya: null,
         paypal: null,
         wiseTag: null,
+        wiseRecipientId: null,
+        wiseRecipientUuid: null,
         photoUrl: null,
         linkId: '',
         companyId,

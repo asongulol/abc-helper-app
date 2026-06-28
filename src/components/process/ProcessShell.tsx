@@ -38,8 +38,8 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
     <div className="card">
       <h2>Process payroll</h2>
       <p className="sub">
-        After a period is locked, pay people here. Choose a locked period, then use a manual Wise
-        batch file, individual payment files, or the automatic Wise API draft below.{' '}
+        After a period is locked, pay people here. <b>Open &amp; pay</b> a locked period to create
+        Wise API drafts, download a payment file for non-Wise contractors, and mark people paid.{' '}
         <b>Contractors are paid in PHP.</b>
       </p>
 
@@ -125,7 +125,7 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
                     </span>
                   </td>
                   <td className="card-action" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <Link className="btn sm" href={`/payroll?period=${p.periodStart}`}>
+                    <Link className="btn sm" href={`/process?period=${p.id}`}>
                       Open &amp; pay
                     </Link>{' '}
                     <Link

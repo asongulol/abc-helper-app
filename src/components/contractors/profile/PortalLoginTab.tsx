@@ -1,6 +1,10 @@
 import { Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
-import { createPortalLogin } from '@/server/actions/portal-admin';
+import {
+  createPortalLogin,
+  resetPortalPassword,
+  revokePortalLogin,
+} from '@/server/actions/portal-admin';
 
 interface Props {
   worker: RosterWorker;
@@ -38,24 +42,59 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
             documents (read-only).
           </div>
         </div>
-        <button
-          type="button"
-          className="btn sm"
-          disabled={loginBusy || !worker.email}
-          title={worker.email ? '' : 'Set a personal email first.'}
-          onClick={() =>
-            runLogin(
-              () =>
-                createPortalLogin({
-                  workerId: worker.workerId,
-                  email: worker.email ?? '',
-                }),
-              'Portal login created.',
-            )
-          }
-        >
-          {loginBusy ? <Spinner /> : 'Create portal login'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn sm"
+            disabled={loginBusy || !worker.email}
+            title={worker.email ? '' : 'Set a personal email first.'}
+            onClick={() =>
+              runLogin(
+                () =>
+                  createPortalLogin({
+                    workerId: worker.workerId,
+                    email: worker.email ?? '',
+                  }),
+                'Portal login created.',
+              )
+            }
+          >
+            {loginBusy ? <Spinner /> : 'Create portal login'}
+          </button>
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={loginBusy}
+            onClick={() =>
+              runLogin(
+                () => resetPortalPassword({ workerId: worker.workerId }),
+                'Password reset — share the new temp password below.',
+              )
+            }
+          >
+            Reset password
+          </button>
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={loginBusy}
+            onClick={() => {
+              if (
+                !window.confirm(
+                  'Revoke this contractor’s portal access? They will be signed out and can no longer log in until you create a new login.',
+                )
+              ) {
+                return;
+              }
+              runLogin(
+                () => revokePortalLogin({ workerId: worker.workerId }),
+                'Portal access revoked.',
+              );
+            }}
+          >
+            Revoke login
+          </button>
+        </div>
       </div>
       {tempPassword && (
         <div
@@ -84,7 +123,7 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
           }}
         >
           <b>Wise Tag from contractor:</b> <code>{worker.wiseTag}</code> — use this to set up their
-          Wise recipient (then store the recipient ID/UUID above).
+          Wise recipient (then store the recipient ID/UUID on the <b>Pay &amp; payout</b> tab).
         </div>
       )}
     </div>
