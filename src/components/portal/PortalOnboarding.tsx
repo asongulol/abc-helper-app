@@ -67,10 +67,10 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 const STAGE2_TABS = [
-  { key: 'contact', label: 'Contact info' },
+  { key: 'contact', label: 'Contact' },
   { key: 'personal', label: 'Personal info' },
   { key: 'payout', label: 'Payout method' },
-  { key: 'about', label: 'About you' },
+  { key: 'about', label: 'About me' },
 ];
 
 export const PortalOnboarding = ({
@@ -354,7 +354,7 @@ export const PortalOnboarding = ({
                     onClick={() => setSelectedKind(kind)}
                     disabled={isPending}
                   >
-                    Sign
+                    Review &amp; sign
                   </button>
                 )}
                 {!isSigned && !prevSigned && (

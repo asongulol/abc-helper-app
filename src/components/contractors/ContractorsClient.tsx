@@ -375,8 +375,8 @@ export function ContractorsClient({
       {deleteTarget && (
         <ConfirmDangerModal
           title="Delete contractor permanently"
-          message={`Permanently delete ${fullName(deleteTarget)}? This removes their portal login, rates, onboarding, and uploaded documents.`}
-          consequence="Cannot be undone. Blocked if they have any payroll or time history — deactivate instead."
+          message={`Permanently delete ${fullName(deleteTarget)}? This removes their portal login, rates, onboarding, signed agreements, and uploaded documents.`}
+          consequence="⚠ This ALSO destroys their signed agreement(s). Cannot be undone. Blocked if they have any payroll or time history — deactivate instead."
           confirmWord={fullName(deleteTarget) || 'DELETE'}
           confirmLabel="Delete forever"
           busy={deleting}
