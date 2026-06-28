@@ -16,6 +16,7 @@ import {
 } from '@/components/ui';
 import type { AnnouncementRow } from '@/db/queries/config';
 import type { RosterWorker } from '@/db/queries/workers';
+import { clientAlias } from '@/lib/clients';
 import type { RateRow } from '@/lib/pay/rates';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
@@ -226,7 +227,11 @@ export function ContractorsClient({
       sortable: false,
       render: (r) => {
         const names = clientsByWorker[r.workerId];
-        return names && names.length > 0 ? names.join(', ') : <span className="muted">—</span>;
+        return names && names.length > 0 ? (
+          names.map(clientAlias).join(', ')
+        ) : (
+          <span className="muted">—</span>
+        );
       },
     },
     {

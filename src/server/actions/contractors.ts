@@ -806,3 +806,48 @@ export async function assignWorkerCompany(args: {
     };
   }
 }
+
+/**
+ * Remove a contractor's CLIENT assignment (delete the worker_companies link).
+ * Hard delete so the client can be re-assigned later (assignWorkerCompany blocks
+ * re-adding while any link exists). The employer link can never be removed.
+ */
+export async function unassignWorkerCompany(args: {
+  workerId: string;
+  companyId: string;
+}): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+  try {
+    const svc = createServiceClient();
+    const { data: company } = await svc
+      .from('companies')
+      .select('kind')
+      .eq('id', args.companyId)
+      .maybeSingle();
+    if (company?.kind === 'employer') {
+      return { ok: false, error: "Can't remove the employer assignment." };
+    }
+    const { error } = await svc
+      .from('worker_companies')
+      .delete()
+      .eq('worker_id', args.workerId)
+      .eq('company_id', args.companyId);
+    if (error) return { ok: false, error: error.message };
+    await logEvent({
+      action: 'edit_contractor',
+      entity: args.workerId,
+      detail: { unassigned: args.companyId },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Remove failed.',
+    };
+  }
+}

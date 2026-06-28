@@ -15,6 +15,7 @@ interface Props extends ProfileTabProps {
   engagements: WorkerEngagement[];
   updateEng: (i: number, patch: Partial<WorkerEngagement>) => void;
   saveEng: (e: WorkerEngagement) => void;
+  removeEng: (e: WorkerEngagement) => void;
   assignTo: string;
   setAssignTo: (v: string) => void;
   handleAssign: () => void;
@@ -29,6 +30,7 @@ export function PayTab({
   engagements,
   updateEng,
   saveEng,
+  removeEng,
   assignTo,
   setAssignTo,
   handleAssign,
@@ -210,6 +212,17 @@ export function PayTab({
               >
                 Save
               </button>
+              {e.kind !== 'employer' && (
+                <button
+                  type="button"
+                  className="btn danger-outline sm"
+                  disabled={isPending}
+                  title="Remove this client assignment"
+                  onClick={() => removeEng(e)}
+                >
+                  Remove
+                </button>
+              )}
             </div>
           ))
         )}

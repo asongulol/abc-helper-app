@@ -11,6 +11,7 @@ import {
   saveWorkerCompanyLink,
   saveWorkerProfile,
   setWorkerPhoto,
+  unassignWorkerCompany,
   type WorkerEngagement,
 } from '@/server/actions/contractors';
 import { type ContractType, contractForEdit, type PayBasis } from '@/types/schemas/contractors';
@@ -192,6 +193,25 @@ export function useContractorProfile(
       notify(res.ok ? 'Engagement saved.' : res.error, {
         type: res.ok ? 'success' : 'error',
       });
+    });
+  };
+
+  const removeEng = (e: WorkerEngagement) => {
+    if (e.kind === 'employer') {
+      notify("Can't remove the employer assignment.", { type: 'error' });
+      return;
+    }
+    startTransition(async () => {
+      const res = await unassignWorkerCompany({
+        workerId: worker.workerId,
+        companyId: e.companyId,
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      setEngagements((arr) => arr.filter((x) => x.companyId !== e.companyId));
+      notify(`Removed ${e.companyName}.`, { type: 'success' });
     });
   };
 
@@ -427,6 +447,7 @@ export function useContractorProfile(
     engagements,
     updateEng,
     saveEng,
+    removeEng,
     assignTo,
     setAssignTo,
     handleAssign,
