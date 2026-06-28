@@ -1,0 +1,27 @@
+# Dependabot — automated dependency bumps.
+# Patch/minor PRs are auto-merged once CI passes (see
+# .github/workflows/dependabot-auto-merge.yml). Major bumps stay manual.
+version: 2
+updates:
+  - package-ecosystem: npm # also covers the pnpm-lock.yaml
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # One PR per week for the low-risk bumps, instead of N separate PRs.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "chore(ci)"

@@ -1,0 +1,29 @@
+name: Stale PRs
+
+# Branch hygiene: nudge (never auto-close) PRs idle 10+ days, so branches stay
+# short-lived and don't drift far from main. Add the `keep` or `wip` label to
+# exempt a PR.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-pr-stale: 10
+          days-before-pr-close: -1 # flag only, never auto-close
+          stale-pr-label: stale
+          stale-pr-message: >
+            This PR has been idle for 10+ days. Keep branches short-lived —
+            rebase on `main` and merge it, or close it. (Label `keep`/`wip` to exempt.)
+          exempt-pr-labels: "keep,wip"
+          operations-per-run: 60
