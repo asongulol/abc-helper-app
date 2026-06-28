@@ -101,6 +101,38 @@ export const fetchOnboardingProgress = async (
   }));
 };
 
+export type OnboardingFollowup = { count: number; overdue: number };
+
+/**
+ * Open document follow-ups (review_status='deferred') per worker, for the
+ * onboarding list — a completed contractor stays visible while they have open
+ * follow-ups (legacy parity). `defer_until` in the past = overdue. Keyed by
+ * worker_id only: deferred hiring docs carry a NULL company_id, so pass a client
+ * that can read them (service) and scope by the onboarding worker ids instead.
+ */
+export const fetchOnboardingFollowups = async (
+  db: Db,
+  workerIds: string[],
+): Promise<Record<string, OnboardingFollowup>> => {
+  if (workerIds.length === 0) return {};
+  const { data, error } = await db
+    .from('documents')
+    .select('worker_id, defer_until')
+    .eq('review_status', 'deferred')
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`onboarding follow-ups: ${error.message}`);
+  const today = new Date().toISOString().slice(0, 10);
+  const map: Record<string, OnboardingFollowup> = {};
+  for (const d of data ?? []) {
+    if (!d.worker_id) continue;
+    const f = map[d.worker_id] ?? { count: 0, overdue: 0 };
+    f.count += 1;
+    if (d.defer_until && d.defer_until < today) f.overdue += 1;
+    map[d.worker_id] = f;
+  }
+  return map;
+};
+
 /** Single onboarding progress row by worker id. */
 export const fetchOnboardingProgressByWorker = async (
   db: Db,

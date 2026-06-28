@@ -6,9 +6,16 @@ import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { AgreementTemplatesCard } from '@/components/config/AgreementTemplatesCard';
 import type { Countersigner } from '@/components/contractors/AddContractorWizard';
-import { EmptyState, Modal, type SortableColumn, SortableTable, useToast } from '@/components/ui';
+import {
+  Badge,
+  EmptyState,
+  Modal,
+  type SortableColumn,
+  SortableTable,
+  useToast,
+} from '@/components/ui';
 import type { AgreementTemplateRow } from '@/db/queries/config';
-import type { OnboardingProgressRow } from '@/db/queries/onboarding';
+import type { OnboardingFollowup, OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
@@ -21,6 +28,8 @@ const AddContractorWizard = dynamic(
 
 interface Props {
   progress: OnboardingProgressRow[];
+  /** Open document follow-ups (deferred docs) per workerId. */
+  followups?: Record<string, OnboardingFollowup>;
   companyId: string;
   /** Standard agreement templates (edited here or in Config). */
   templates: AgreementTemplateRow[];
@@ -31,6 +40,7 @@ interface Props {
 
 export const OnboardingClient = ({
   progress,
+  followups = {},
   companyId,
   templates,
   employerName,
@@ -52,7 +62,12 @@ export const OnboardingClient = ({
     });
   };
 
-  const visible = showDone ? progress : progress.filter((r) => !r.completedAt);
+  // Hide completed onboardings unless "Show completed" is on — BUT keep a
+  // completed contractor visible while they still have open follow-ups
+  // (deferred docs), matching the legacy default view.
+  const visible = showDone
+    ? progress
+    : progress.filter((r) => !r.completedAt || (followups[r.workerId]?.count ?? 0) > 0);
 
   const columns: ReadonlyArray<SortableColumn<OnboardingProgressRow>> = [
     {
@@ -118,7 +133,17 @@ export const OnboardingClient = ({
       sortable: true,
       render: (row) => {
         const info = deriveStageInfo(stageInput(row));
-        return <span className={`pill ${info.tone}`}>{onbStatusLabel(row)}</span>;
+        const f = followups[row.workerId];
+        return (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span className={`pill ${info.tone}`}>{onbStatusLabel(row)}</span>
+            {f && f.count > 0 && (
+              <Badge tone={f.overdue > 0 ? 'bad' : 'neutral'}>
+                📌 {f.count} follow-up{f.overdue > 0 ? ` · ${f.overdue} overdue` : ''}
+              </Badge>
+            )}
+          </span>
+        );
       },
       accessor: (row) => (row.completedAt ? 3 : row.stalled ? 1 : 2),
     },

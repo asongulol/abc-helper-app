@@ -2,8 +2,9 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { OnboardingClient } from '@/components/onboarding/OnboardingClient';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import { getEmployer } from '@/db/queries/config';
-import { fetchOnboardingProgress } from '@/db/queries/onboarding';
+import { fetchOnboardingFollowups, fetchOnboardingProgress } from '@/db/queries/onboarding';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { getCachedAgreementTemplates } from '@/server/config-cache';
@@ -36,9 +37,19 @@ export default async function OnboardingPage() {
     getEmployer(supabase).catch(() => null),
   ]);
 
+  // Open document follow-ups (deferred docs) per contractor — a completed
+  // onboarding stays visible while it has open follow-ups (legacy parity).
+  // Read via the service client: deferred hiring docs carry a NULL company_id,
+  // which RLS on the user client would hide. Non-fatal — empty on error.
+  const followups = await fetchOnboardingFollowups(
+    createServiceClient(),
+    progress.map((p) => p.workerId),
+  ).catch(() => ({}));
+
   return (
     <OnboardingClient
       progress={progress}
+      followups={followups}
       companyId={companyId}
       templates={templates}
       employerName={employer?.name ?? 'Aaron Anderson E.H.S. LLC'}
