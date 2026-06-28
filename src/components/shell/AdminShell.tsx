@@ -38,6 +38,15 @@ interface AdminShellProps {
 
 const COLLAPSE_KEY = 'abc_sidebar_collapsed';
 
+/** The four primary destinations pinned to the mobile bottom-nav; everything
+ *  else is reachable via the "More" sheet. */
+const PRIMARY_NAV: ReadonlyArray<{ href: string; label: string; icon: string }> = [
+  { href: '/overview', label: 'Overview', icon: '🏠' },
+  { href: '/contractors', label: 'Team', icon: '👥' },
+  { href: '/time', label: 'Time', icon: '⏱' },
+  { href: '/payroll', label: 'Calculate', icon: '🧮' },
+];
+
 /** Centered footer build stamp. NEXT_PUBLIC_BUILD is set in next.config.ts from
  * VERCEL_GIT_COMMIT_SHA at build time, so this fallback only shows if that ever
  * fails to resolve. */
@@ -64,7 +73,24 @@ export const AdminShell = ({
   const [signingOut, setSigningOut] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showAdmins, setShowAdmins] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const sections = NAV_GROUPS.flatMap((g) => g.items);
+
+  // Close the mobile "More" sheet whenever the route changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the trigger, not a read dep.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
+
+  // Escape closes the "More" sheet.
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [moreOpen]);
 
   // ⌘K / Ctrl-K toggles the quick-find palette.
   useEffect(() => {
@@ -266,6 +292,90 @@ export const AdminShell = ({
           </div>
         </main>
       </div>
+
+      {/* Mobile bottom tab bar + "More" sheet (shown <=768px via CSS; the sidebar
+          is hidden there). Styling lives in globals.css (.bottom-nav / .more-sheet). */}
+      <nav className="bottom-nav no-print" aria-label="Primary">
+        {PRIMARY_NAV.map((item) => {
+          const active = isActive(item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={active ? 'bnav active' : 'bnav'}
+              aria-current={active ? 'page' : undefined}
+            >
+              <span className="bnav-ico" aria-hidden="true">
+                {item.icon}
+              </span>
+              {item.label}
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          className="bnav"
+          aria-haspopup="dialog"
+          aria-expanded={moreOpen}
+          onClick={() => setMoreOpen(true)}
+        >
+          <span className="bnav-ico" aria-hidden="true">
+            ⋯
+          </span>
+          More
+        </button>
+      </nav>
+
+      {moreOpen && (
+        <>
+          <button
+            type="button"
+            className="more-sheet-bg"
+            aria-label="Close menu"
+            style={{ border: 0, padding: 0 }}
+            onClick={() => setMoreOpen(false)}
+          />
+          <div
+            className="more-sheet no-print"
+            role="dialog"
+            aria-modal="true"
+            aria-label="All sections"
+          >
+            <div className="more-sheet-head">
+              <strong>All sections</strong>
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => setMoreOpen(false)}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            {NAV_GROUPS.map((group) => (
+              <div className="side-group" key={group.label}>
+                <div className="side-group-label">{group.label}</div>
+                {group.items.map((item) => {
+                  const active = isActive(item.href);
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={active ? 'side-item active' : 'side-item'}
+                      aria-current={active ? 'page' : undefined}
+                    >
+                      <span className="side-ico" aria-hidden="true">
+                        {item.icon}
+                      </span>
+                      <span className="side-label">{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </ToastProvider>
   );
 };
