@@ -206,6 +206,11 @@ export const AddSessionForm = ({
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;
 
+  // Approved-but-unpaid sessions in the employer-wide list — the ones still
+  // waiting to be folded into the draft batch (the per-row "Pay" en masse).
+  const approvedUnpaidIds =
+    recentAll?.filter((r) => r.approval === 'approved' && !r.paidAt).map((r) => r.id) ?? [];
+
   const resetEntryFields = () => {
     setChildInitials('');
     setEiid('');
@@ -613,30 +618,47 @@ export const AddSessionForm = ({
             }}
           >
             <h4 style={{ margin: 0, fontSize: 14 }}>Recently added sessions</h4>
-            {recentAll?.some((r) => r.approval === 'pending') && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {selected.size > 0 && (
-                  <button
-                    type="button"
-                    className="btn sm"
-                    disabled={busy}
-                    onClick={() => approveIds([...selected])}
-                  >
-                    Approve {selected.size} selected
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn sm"
-                  disabled={busy}
-                  onClick={() =>
-                    approveIds(recentAll.filter((r) => r.approval === 'pending').map((r) => r.id))
-                  }
-                >
-                  Approve all pending ({recentAll.filter((r) => r.approval === 'pending').length})
-                </button>
-              </div>
-            )}
+            {recentAll &&
+              (recentAll.some((r) => r.approval === 'pending') || approvedUnpaidIds.length > 0) && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {selected.size > 0 && (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={busy}
+                      onClick={() => approveIds([...selected])}
+                    >
+                      Approve {selected.size} selected
+                    </button>
+                  )}
+                  {recentAll.some((r) => r.approval === 'pending') && (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={busy}
+                      onClick={() =>
+                        approveIds(
+                          recentAll.filter((r) => r.approval === 'pending').map((r) => r.id),
+                        )
+                      }
+                    >
+                      Approve all pending (
+                      {recentAll.filter((r) => r.approval === 'pending').length})
+                    </button>
+                  )}
+                  {approvedUnpaidIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={busy}
+                      onClick={() => payApproved(approvedUnpaidIds)}
+                      title="Add these approved sessions to the current draft pay batch on Calculate."
+                    >
+                      Add {approvedUnpaidIds.length} approved to draft
+                    </button>
+                  )}
+                </div>
+              )}
           </div>
           {recentAll === null ? (
             <Spinner />
