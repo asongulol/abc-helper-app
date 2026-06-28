@@ -115,6 +115,32 @@ export const defaultHolidaysForRange = (start: string, end: string): Holiday[] =
   return all;
 };
 
+/** Per-year observed-holidays override, as stored on companies.holidays_config. */
+export type HolidaysConfig = Record<string, Holiday[]>;
+
+/**
+ * Resolve the effective holidays for [start, end] from a per-year config map.
+ * A year PRESENT in the config is authoritative (its array is the full set for
+ * that year, incl. an explicit empty array = "no holidays"); a year ABSENT falls
+ * back to the standard defaults. Spans the adjacent years like
+ * {@link defaultHolidaysForRange} so a weekend observance crossing the year
+ * boundary is still seen.
+ */
+export const resolveHolidaysForRange = (
+  config: HolidaysConfig | null | undefined,
+  start: string,
+  end: string,
+): Holiday[] => {
+  const ys = Number(start.slice(0, 4));
+  const ye = Number(end.slice(0, 4));
+  const out: Holiday[] = [];
+  for (let y = ys - 1; y <= ye + 1; y++) {
+    const custom = config?.[String(y)];
+    out.push(...(custom !== undefined ? custom : defaultHolidays(y)));
+  }
+  return out;
+};
+
 /**
  * Holidays within [start, end] inclusive.
  *

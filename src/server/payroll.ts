@@ -9,6 +9,7 @@
 import 'server-only';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import {
   deleteWorkerPayment,
   fetchApprovedTime,
@@ -24,6 +25,7 @@ import {
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
+import { resolveHolidaysForRange } from '@/lib/pay/holidays';
 import {
   attributeTimeEntries,
   buildStatements,
@@ -69,14 +71,18 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   // on Calculate and recalculates fine — it just rebuilds the ledger rows.
   const offCycleOnly = existing?.kind === 'off_cycle';
 
-  const [entries, roster, rates, lastMethod] = await Promise.all([
+  const [entries, roster, rates, lastMethod, holidaysConfig] = await Promise.all([
     offCycleOnly
       ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
       : fetchApprovedTime(db, input.companyId, input.periodStart, input.periodEnd),
     fetchRoster(db, input.companyId),
     fetchRates(db, input.companyId),
     fetchLastPayoutMethods(db, input.companyId),
+    fetchHolidaysConfig(db, input.companyId),
   ]);
+  // Custom observed holidays (or code defaults for unconfigured years) — reduce
+  // FT/PT expected hours. THIS is what makes the Configuration editor affect pay.
+  const holidays = resolveHolidaysForRange(holidaysConfig, input.periodStart, input.periodEnd);
 
   // Ensure the period exists & is open up-front so its id is known for the
   // off-cycle ledger read below (employer-scoped — RLS user client).
@@ -134,6 +140,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
+    holidays,
   });
 
   // F6: snapshot the prior rows (incl. manual overrides) before we overwrite
@@ -202,14 +209,16 @@ export const recomputeWorkerDraft = async (args: {
 }): Promise<{ netPhp: number | null }> => {
   const offCycleOnly = args.offCycleOnly ?? false;
   const db = await createServerSupabase();
-  const [entries, roster, rates, lastMethod] = await Promise.all([
+  const [entries, roster, rates, lastMethod, holidaysConfig] = await Promise.all([
     offCycleOnly
       ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
       : fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
     fetchRates(db, args.companyId),
     fetchLastPayoutMethods(db, args.companyId),
+    fetchHolidaysConfig(db, args.companyId),
   ]);
+  const holidays = resolveHolidaysForRange(holidaysConfig, args.periodStart, args.periodEnd);
   const rosterOne = roster.filter((r) => r.workerId === args.workerId);
   if (rosterOne.length === 0) return { netPhp: null }; // not on this company's roster
 
@@ -244,6 +253,7 @@ export const recomputeWorkerDraft = async (args: {
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
+    holidays,
   });
   const drafts = rows
     .map((r) => toPaymentDraft(r, {}))

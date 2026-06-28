@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { defaultHolidays, holidaysInRange, observedDate } from '@/lib/pay/holidays';
+import {
+  defaultHolidays,
+  holidaysInRange,
+  observedDate,
+  resolveHolidaysForRange,
+} from '@/lib/pay/holidays';
 
 const datesByName = (year: number): Record<string, string> =>
   Object.fromEntries(defaultHolidays(year).map((h) => [h.name, h.date]));
@@ -78,5 +83,40 @@ describe('holidaysInRange', () => {
     ];
     // Both resolve to Jul 3; only one working day is lost.
     expect(holidaysInRange(custom, '2026-07-01', '2026-07-15', true)).toHaveLength(1);
+  });
+});
+
+describe('resolveHolidaysForRange — per-year config override (companies.holidays_config)', () => {
+  const has = (hs: { date: string }[], date: string) => hs.some((h) => h.date === date);
+
+  it('falls back to defaults when config is null/empty', () => {
+    const out = resolveHolidaysForRange(null, '2026-01-01', '2026-12-31');
+    expect(has(out, '2026-12-25')).toBe(true); // Christmas default present
+  });
+
+  it('uses a configured year verbatim (authoritative — replaces defaults)', () => {
+    const out = resolveHolidaysForRange(
+      { '2026': [{ date: '2026-06-12', name: 'Company Outing' }] },
+      '2026-06-01',
+      '2026-06-30',
+    );
+    expect(has(out, '2026-06-12')).toBe(true);
+    expect(has(out, '2026-12-25')).toBe(false); // defaults NOT mixed in for a configured year
+  });
+
+  it('an explicit empty year means no holidays (not defaults)', () => {
+    const out = resolveHolidaysForRange({ '2026': [] }, '2026-12-01', '2026-12-31');
+    expect(out.filter((h) => h.date.startsWith('2026'))).toHaveLength(0);
+  });
+
+  it('mixes configured + default years across a boundary span', () => {
+    // 2026 configured (custom only), 2025/2027 fall back to defaults.
+    const out = resolveHolidaysForRange(
+      { '2026': [{ date: '2026-06-12', name: 'Outing' }] },
+      '2026-01-01',
+      '2026-01-31',
+    );
+    expect(has(out, '2026-06-12')).toBe(true); // configured 2026
+    expect(has(out, '2025-12-25')).toBe(true); // default neighbour year
   });
 });

@@ -233,6 +233,7 @@ export type Database = {
           api_payouts_enabled: boolean
           contacts: Json
           created_at: string
+          holidays_config: Json
           hubstaff_org_id: number | null
           id: string
           kind: string
@@ -247,6 +248,7 @@ export type Database = {
           api_payouts_enabled?: boolean
           contacts?: Json
           created_at?: string
+          holidays_config?: Json
           hubstaff_org_id?: number | null
           id?: string
           kind?: string
@@ -261,6 +263,7 @@ export type Database = {
           api_payouts_enabled?: boolean
           contacts?: Json
           created_at?: string
+          holidays_config?: Json
           hubstaff_org_id?: number | null
           id?: string
           kind?: string
