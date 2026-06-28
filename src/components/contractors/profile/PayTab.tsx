@@ -5,6 +5,7 @@ import { RateCard } from '../RateCard';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
 import { type ProfileTabProps, SECTION_H4 } from './types';
+import { WisePayoutPanel } from './WisePayoutPanel';
 
 interface Props extends ProfileTabProps {
   worker: RosterWorker;
@@ -97,40 +98,13 @@ export function PayTab({
             </Field>
           </div>
         </section>
-        <section style={{ marginTop: 24 }}>
-          <h4 style={SECTION_H4}>Wise payout</h4>
-          <p className="sub" style={{ margin: '-4px 0 12px' }}>
-            The Wise recipient identifies who gets paid by the Wise API draft. Set the recipient up
-            in Wise (use the contractor&apos;s Wise Tag on Personal / HR), then store the IDs here.
-          </p>
-          <div className="grid-2">
-            <Field id="pp-wise-rid" label="Wise recipient ID" error={errors.wiseRecipientId}>
-              <input
-                id="pp-wise-rid"
-                inputMode="numeric"
-                value={form.wiseRecipientId}
-                onChange={(e) => set('wiseRecipientId', e.target.value)}
-                placeholder="—"
-                disabled={isPending}
-              />
-            </Field>
-            <Field id="pp-wise-uuid" label="Wise recipient UUID (for manual Batch CSV)">
-              <input
-                id="pp-wise-uuid"
-                value={form.wiseRecipientUuid}
-                onChange={(e) => set('wiseRecipientUuid', e.target.value)}
-                placeholder="—"
-                disabled={isPending}
-              />
-            </Field>
-          </div>
-        </section>
         <SaveBar isPending={isPending} serverError={serverError} />
       </form>
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
         <RateCard workerId={worker.workerId} companyId={companyId} />
       </section>
+      <WisePayoutPanel workerId={worker.workerId} />
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Client engagements</h4>
         {engagements.length === 0 ? (

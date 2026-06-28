@@ -66,8 +66,6 @@ export function toForm(w: RosterWorker): FormState {
     paymaya: w.paymaya ?? '',
     paypal: w.paypal ?? '',
     wiseTag: w.wiseTag ?? '',
-    wiseRecipientId: w.wiseRecipientId != null ? String(w.wiseRecipientId) : '',
-    wiseRecipientUuid: w.wiseRecipientUuid ?? '',
   };
 }
 
@@ -236,13 +234,11 @@ export function useContractorProfile(
       errs.billRateUsd = 'Must be a number.';
     if (form.sessionRateUsd !== '' && Number.isNaN(Number(form.sessionRateUsd)))
       errs.sessionRateUsd = 'Must be a number.';
-    if (form.wiseRecipientId.trim() !== '' && !/^\d+$/.test(form.wiseRecipientId.trim()))
-      errs.wiseRecipientId = 'Must be a whole number (the Wise recipient ID).';
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       // Surface the first error's tab so the user sees what's wrong.
       if (errs.firstName || errs.lastName || errs.email) setActiveTab('profile');
-      else if (errs.billRateUsd || errs.sessionRateUsd || errs.wiseRecipientId) setActiveTab('pay');
+      else if (errs.billRateUsd || errs.sessionRateUsd) setActiveTab('pay');
       else setActiveTab('personal');
       return false;
     }
@@ -276,9 +272,6 @@ export function useContractorProfile(
     const billRateUsd = form.billRateUsd !== '' ? Number(form.billRateUsd) : null;
     const sessionRateUsd = form.sessionRateUsd !== '' ? Number(form.sessionRateUsd) : null;
     const str = (v: string) => (v.trim() === '' ? null : v.trim());
-    const wiseRecipientId =
-      form.wiseRecipientId.trim() !== '' ? Number(form.wiseRecipientId.trim()) : null;
-    const wiseRecipientUuid = str(form.wiseRecipientUuid);
 
     startTransition(async () => {
       const result = await saveWorkerProfile({
@@ -315,8 +308,6 @@ export function useContractorProfile(
         paymaya: str(form.paymaya),
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
-        wiseRecipientId,
-        wiseRecipientUuid,
         contract: form.contract,
         payBasis: form.payBasis,
         role: str(form.role),
@@ -366,8 +357,6 @@ export function useContractorProfile(
         paymaya: str(form.paymaya),
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
-        wiseRecipientId,
-        wiseRecipientUuid,
         contract: form.contract,
         payBasis: form.payBasis,
         role: str(form.role),

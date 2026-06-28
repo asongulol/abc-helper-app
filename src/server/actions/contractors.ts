@@ -135,8 +135,6 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       paymaya: input.paymaya ?? null,
       paypal: input.paypal ?? null,
       wise_tag: input.wiseTag ?? null,
-      wise_recipient_id: input.wiseRecipientId ?? null,
-      wise_recipient_uuid: input.wiseRecipientUuid ?? null,
     });
     await updateWorkerLink(db, input.workerId, input.companyId, {
       contract: input.contract,
