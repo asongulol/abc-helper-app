@@ -13,8 +13,13 @@ interface AuditTableProps {
   page: number;
   pageSize: number;
   filter: string;
+  dateFrom: string;
+  dateTo: string;
+  exporting: boolean;
   onFilterChange: (f: string) => void;
   onPageChange: (p: number) => void;
+  onDateChange: (from: string, to: string) => void;
+  onExport: () => void;
 }
 
 /** Pretty-print a JSON detail value, or stringify if not an object. */
@@ -39,8 +44,13 @@ export const AuditTable = ({
   page,
   pageSize,
   filter,
+  dateFrom,
+  dateTo,
+  exporting,
   onFilterChange,
   onPageChange,
+  onDateChange,
+  onExport,
 }: AuditTableProps) => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -56,7 +66,7 @@ export const AuditTable = ({
     },
     {
       key: 'actor',
-      label: 'Actor',
+      label: 'By',
       sortable: true,
       accessor: (r) => r.actor ?? '',
       render: (r) => <span className="muted">{r.actor ?? '—'}</span>,
@@ -69,7 +79,7 @@ export const AuditTable = ({
     },
     {
       key: 'entity',
-      label: 'Entity',
+      label: 'Item',
       sortable: true,
       accessor: (r) => r.entity ?? '',
       render: (r) => r.entity ?? <span className="muted">—</span>,
@@ -138,9 +148,43 @@ export const AuditTable = ({
           aria-label="Filter audit log"
           style={{ maxWidth: 300 }}
         />
+        <label style={{ fontSize: 12, color: 'var(--muted)' }}>
+          From{' '}
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(e) => onDateChange(e.target.value, dateTo)}
+            aria-label="Filter from date"
+          />
+        </label>
+        <label style={{ fontSize: 12, color: 'var(--muted)' }}>
+          To{' '}
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(e) => onDateChange(dateFrom, e.target.value)}
+            aria-label="Filter to date"
+          />
+        </label>
+        {(dateFrom || dateTo) && (
+          <button type="button" className="btn ghost sm" onClick={() => onDateChange('', '')}>
+            Clear dates
+          </button>
+        )}
         <span className="muted" style={{ fontSize: 12 }}>
           {total} total entr{total === 1 ? 'y' : 'ies'}
         </span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          className="btn ghost sm"
+          disabled={exporting || total === 0}
+          onClick={onExport}
+        >
+          {exporting ? 'Exporting…' : '⬇ Export CSV'}
+        </button>
       </div>
 
       {rows.length === 0 ? (

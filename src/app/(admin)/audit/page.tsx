@@ -12,6 +12,8 @@ const PAGE_SIZE = 50;
 interface SearchParams {
   page?: string;
   q?: string;
+  from?: string;
+  to?: string;
 }
 
 export default async function AuditPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -31,12 +33,16 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const page = Math.max(1, Number(sp.page ?? '1') || 1);
   const filter = sp.q ?? '';
+  const dateFrom = sp.from ?? '';
+  const dateTo = sp.to ?? '';
 
   const supabase = await createServerSupabase();
   const { rows, total } = await getAuditLogPage(supabase, companyId, {
     page,
     pageSize: PAGE_SIZE,
     ...(filter.trim() ? { filter: filter.trim() } : {}),
+    ...(dateFrom ? { dateFrom } : {}),
+    ...(dateTo ? { dateTo } : {}),
   });
 
   return (
@@ -55,6 +61,8 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
           page={page}
           pageSize={PAGE_SIZE}
           filter={filter}
+          dateFrom={dateFrom}
+          dateTo={dateTo}
           companyId={companyId}
         />
       </div>
