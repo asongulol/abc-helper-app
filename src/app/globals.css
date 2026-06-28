@@ -1419,6 +1419,25 @@ a.btn:hover {
   outline: none;
   box-shadow: var(--ring);
 }
+
+/* ===== Back-to-top shortcut (long scroll pages) ========================== */
+.back-to-top {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 45;
+  border-radius: 999px;
+  padding: 9px 16px;
+  box-shadow: var(--shadow-lg);
+  gap: 4px;
+}
+/* Sit above the fixed mobile bottom-nav (and its safe-area inset). */
+@media (max-width: 768px) {
+  .back-to-top {
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
 /* ===== Modal / overlay ==================================================== */
 .modal-bg {
   position: fixed;

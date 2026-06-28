@@ -9,6 +9,7 @@ import {
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
 import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
+import { resolveDraftRow } from '@/lib/wise/draft-row';
 import {
   annotateOrphans,
   buildRecipientIndex,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/wise/matcher';
 import type { MatchDecision, MatchResult, WiseDates, WiseTransfer } from '@/lib/wise/types';
 import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
+import type { WiseBatchItem } from '@/types/schemas/wise';
 import { wiseRequest, wiseRequestNullable } from './client';
 
 type Db = SupabaseClient<Database>;
@@ -214,14 +216,19 @@ export interface ServiceBatchResult {
 /** Draft transfers inside a Wise batch group. OWNER-only. Does NOT complete/fund. */
 export async function serviceBatch(
   db: Db,
-  paymentIds: string[],
+  items: WiseBatchItem[],
   name?: string,
 ): Promise<ServiceBatchResult> {
   const profileId = await getBusinessProfileId();
-  const rows = await fetchDraftPayments(db, paymentIds);
-  const eligible = rows.filter(
-    (r) => (r.workers?.wise_recipient_id ?? null) !== null && Number(r.net_php ?? 0) > 0,
+  const overrides = new Map(items.map((i) => [i.paymentId, i]));
+  const rows = await fetchDraftPayments(
+    db,
+    items.map((i) => i.paymentId),
   );
+  const eligible = rows.filter((r) => {
+    const { recipientId, amountPhp } = resolveDraftRow(r, overrides.get(r.id));
+    return recipientId !== null && amountPhp > 0;
+  });
 
   if (eligible.length === 0) throw new Error('No eligible payments (missing recipient or amount)');
 
@@ -237,8 +244,7 @@ export async function serviceBatch(
   const results: DraftOneResult[] = [];
 
   for (const row of rows) {
-    const recipientId = row.workers?.wise_recipient_id ?? null;
-    const amountPhp = Number(row.net_php ?? 0);
+    const { recipientId, amountPhp } = resolveDraftRow(row, overrides.get(row.id));
 
     if (!recipientId || amountPhp <= 0) {
       results.push({

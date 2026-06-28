@@ -32,6 +32,7 @@ import {
   serviceStatus,
 } from '@/server/wise/service';
 import {
+  type WiseBatchItem,
   WiseBatchSchema,
   WiseDraftSchema,
   WiseFindTransfersSchema,
@@ -104,19 +105,16 @@ export async function wiseDraft(paymentIds: string[]): Promise<WiseActionResult<
  * The owner reviews, completes, and funds the batch group in the Wise UI.
  */
 export async function wiseBatch(
-  paymentIds: string[],
+  items: WiseBatchItem[],
+  name?: string,
 ): Promise<WiseActionResult<{ batchGroupId: string; results: DraftResult[] }>> {
   try {
     await requireOwner();
-    const parsed = WiseBatchSchema.safeParse({ paymentIds });
+    const parsed = WiseBatchSchema.safeParse({ items, name });
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const db = createServiceClient();
-    const { batchGroupId, results } = await serviceBatch(
-      db,
-      parsed.data.paymentIds,
-      parsed.data.name,
-    );
+    const { batchGroupId, results } = await serviceBatch(db, parsed.data.items, parsed.data.name);
 
     void logEvent({
       action: 'wise_batch',

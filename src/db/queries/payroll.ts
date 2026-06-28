@@ -914,6 +914,12 @@ export type ProcessPayment = {
   wiseLockedAt: string | null;
   workerStatus: string | null;
   workerEmail: string | null;
+  /** Wise recipient UUID — the `recipientId` column of a Wise batch-upload CSV. */
+  wiseRecipientUuid: string | null;
+  /** Numeric Wise recipient id — shown in the individual-payments export. */
+  wiseRecipientId: number | null;
+  /** Saved Wise recipients ({id,label}) — options for the API-draft dropdown. */
+  wiseRecipients: { id: number; label: string }[];
 };
 
 export const fetchProcessPayments = async (
@@ -923,7 +929,7 @@ export const fetchProcessPayments = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, workers(first_name, middle_name, last_name, status, email)',
+      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, workers(first_name, middle_name, last_name, status, email, wise_recipient_uuid, wise_recipient_id, wise_recipients)',
     )
     .eq('pay_period_id', payPeriodId)
     .order('worker_id');
@@ -943,6 +949,16 @@ export const fetchProcessPayments = async (
     wiseLockedAt: p.wise_locked_at,
     workerStatus: p.workers?.status ?? null,
     workerEmail: p.workers?.email ?? null,
+    wiseRecipientUuid: p.workers?.wise_recipient_uuid ?? null,
+    wiseRecipientId: p.workers?.wise_recipient_id ?? null,
+    wiseRecipients: Array.isArray(p.workers?.wise_recipients)
+      ? (p.workers.wise_recipients as Array<{ id?: unknown; label?: unknown }>)
+          .filter((r) => r && typeof r.id === 'number')
+          .map((r) => ({
+            id: r.id as number,
+            label: String(r.label ?? `Recipient ${r.id as number}`),
+          }))
+      : [],
   }));
 };
 

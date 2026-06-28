@@ -246,6 +246,7 @@ export const OnboardingClient = ({
           rows={visible}
           rowKey={(r) => r.workerId}
           filterPlaceholder="Filter by name or email…"
+          defaultSort={{ key: 'workerName' }}
           onRowClick={(row) => router.push(`/onboarding/${row.workerId}`)}
         />
       )}

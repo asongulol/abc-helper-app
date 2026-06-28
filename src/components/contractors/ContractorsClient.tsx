@@ -375,6 +375,7 @@ export function ContractorsClient({
             rows={visibleRows}
             rowKey={(r) => r.workerId}
             filterPlaceholder="Filter by name, client, role…"
+            defaultSort={{ key: '_name' }}
             onRowClick={(r) => router.push(profileHref(r.workerId))}
           />
         )}
