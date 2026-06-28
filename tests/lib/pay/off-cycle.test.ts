@@ -62,7 +62,7 @@ describe('offCycleEarnings (calcContractorRow)', () => {
     expect(r.net).toBe(1_550_000);
   });
 
-  it('pays an off-cycle-only per-session worker with zero in-period units', () => {
+  it('folds an off-cycle-only per-session worker into gross (per-unit gross)', () => {
     const r = calcContractorRow({
       workedSeconds: 0,
       sessionUnits: 0,
@@ -72,8 +72,9 @@ describe('offCycleEarnings (calcContractorRow)', () => {
       offCycleEarnings: centavos(150_000), // 3 sessions × ₱500
       ...PERIOD,
     });
-    expect(r.gross).toBe(0);
-    expect(r.offCycle).toBe(150_000);
+    // per-unit: the ledger total is session gross, not a separate off-cycle line
+    expect(r.gross).toBe(150_000);
+    expect(r.offCycle).toBe(0);
     expect(r.net).toBe(150_000);
   });
 
@@ -92,7 +93,7 @@ describe('offCycleEarnings (calcContractorRow)', () => {
 });
 
 describe('buildStatements offCycleByWorker', () => {
-  it('flows the off-cycle total into the draft off_cycle_php and net', () => {
+  it('folds the off-cycle total into a per-session row gross and net', () => {
     const rows = buildStatements({
       ...PERIOD,
       attribution: attributeTimeEntries([], [roster({ workerId: 'w1' })]),
@@ -101,9 +102,10 @@ describe('buildStatements offCycleByWorker', () => {
       sessionsByWorker: new Map([['w1', 0]]),
       offCycleByWorker: new Map([['w1', centavos(150_000)]]),
     });
-    // off-cycle-only worker still gets a row
+    // off-cycle-only worker still gets a row; per-unit → ledger total is gross
     expect(rows).toHaveLength(1);
-    expect(rows[0].result.offCycle).toBe(150_000);
+    expect(rows[0].result.gross).toBe(150_000);
+    expect(rows[0].result.offCycle).toBe(0);
     expect(rows[0].result.net).toBe(150_000);
   });
 });

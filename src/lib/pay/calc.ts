@@ -195,7 +195,17 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
   const pdd = input.pddLunch ?? zeroCentavos();
   const bonus = input.bonus ?? zeroCentavos();
   const misc = miscTotal(input.miscItems);
-  const offCycle = input.offCycleEarnings ?? zeroCentavos();
+  const offCycleRaw = input.offCycleEarnings ?? zeroCentavos();
+  // Per-unit workers (per_hour / per_session): the off-cycle ledger total IS
+  // their session/hour gross — sessions added to this batch regardless of their
+  // date — so fold it into gross. The row then reads as gross (the natural pay
+  // for a session/hour contractor) instead of a confusing gross-0 + separate
+  // "off-cycle" line. Salaried off-cycle stays its own line (gross is a salary).
+  // Net is unchanged either way (same integer-centavos sum).
+  if (perUnit && gross !== null && offCycleRaw !== 0) {
+    gross = addMinor(gross, offCycleRaw);
+  }
+  const offCycle = perUnit ? zeroCentavos() : offCycleRaw;
 
   const net =
     gross === null
