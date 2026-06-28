@@ -52,8 +52,11 @@ export function toForm(w: RosterWorker): FormState {
     sessionRateUsd: w.sessionRateUsd != null ? String(w.sessionRateUsd) : '',
     linkStatus:
       w.linkStatus === 'ended' ? 'ended' : w.linkStatus === 'inactive' ? 'inactive' : 'active',
-    shiftStart: w.shiftStart ?? '',
-    shiftEnd: w.shiftEnd ?? '',
+    // Postgres `time` returns "HH:MM:SS" (8 chars); the <input type="time"> and
+    // the save schema use "HH:MM" (max 5), so trim seconds or an unchanged Save
+    // would fail validation ("expected string to have <=5 characters").
+    shiftStart: (w.shiftStart ?? '').slice(0, 5),
+    shiftEnd: (w.shiftEnd ?? '').slice(0, 5),
     emergencyName: w.emergencyName ?? '',
     emergencyRelationship: w.emergencyRelationship ?? '',
     emergencyMobile: w.emergencyMobile ?? '',
