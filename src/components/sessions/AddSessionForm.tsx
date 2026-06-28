@@ -746,8 +746,9 @@ export const AddSessionForm = ({
                               className="btn sm"
                               disabled={busy}
                               onClick={() => payApproved([s.id])}
+                              title="Add this approved session to the current draft pay batch on Calculate."
                             >
-                              Pay
+                              Add
                             </button>
                           ) : s.paidAt ? (
                             <span
