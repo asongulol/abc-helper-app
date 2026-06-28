@@ -17,7 +17,7 @@
  * Pure Node, no deps — mirrors scripts/guardrails.mjs.
  */
 import { execSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 const MIG_DIR = 'supabase/migrations';
 const LEDGER = 'supabase/prod-applied.json';
