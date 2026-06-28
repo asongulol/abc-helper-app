@@ -571,7 +571,7 @@ export const PayrollShell = ({
                       <td className="card-title">
                         <b>
                           {b.kind === 'off_cycle'
-                            ? '⏱ Off-cycle batch'
+                            ? '⏱ Off-period batch'
                             : `${fmtDate(b.periodStart)} – ${fmtDate(b.periodEnd)}`}
                         </b>
                         {b.kind === 'off_cycle' && (
@@ -680,7 +680,7 @@ export const PayrollShell = ({
           <div>
             <h2 style={{ margin: 0 }}>
               {isOffCycle
-                ? '⏱ Off-cycle batch'
+                ? '⏱ Off-period batch'
                 : `Pay batch · ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}`}
             </h2>
             {currentPeriod && (
@@ -821,21 +821,15 @@ export const PayrollShell = ({
               {fxNote}
             </span>
           )}
-          {isOffCycle ? (
-            <span className="muted" style={{ fontSize: 12 }}>
-              Pay lines come from the added sessions — lock to process.
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="btn ghost sm"
-              disabled={busy}
-              onClick={() => handleCalculate()}
-            >
-              {busy ? 'Working…' : 'Calculate / Recalculate'}
-            </button>
-          )}
-          {isOpen && !isOffCycle && (
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={busy}
+            onClick={() => handleCalculate()}
+          >
+            {busy ? 'Working…' : 'Calculate / Recalculate'}
+          </button>
+          {isOpen && (
             <button
               type="button"
               className="btn ghost sm"

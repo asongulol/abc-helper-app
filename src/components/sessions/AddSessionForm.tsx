@@ -328,7 +328,8 @@ export const AddSessionForm = ({
     }
   };
 
-  // No-draft decision: pay the approved sessions now in a dedicated off-cycle batch.
+  // No-draft decision: pay the approved sessions now in an off-period batch
+  // (a draft on Calculate, off the regular schedule).
   const routeToOffCycle = async () => {
     if (!noDraftSessions) return;
     setBusy(true);
@@ -339,7 +340,7 @@ export const AddSessionForm = ({
         return;
       }
       notify(
-        `${res.data.count} session(s) added to the off-cycle batch — lock & pay it in Process & Pay.`,
+        `${res.data.count} session(s) added to the off-period batch — calculate, lock & pay it in Process & Pay.`,
         { type: 'success' },
       );
       setNoDraftSessions(null);
@@ -774,10 +775,10 @@ export const AddSessionForm = ({
               Not now
             </button>
             <button type="button" className="btn sm" disabled={busy} onClick={payNextPeriod}>
-              Next period
+              Next scheduled payroll
             </button>
             <button type="button" className="btn sm" disabled={busy} onClick={routeToOffCycle}>
-              Off-cycle batch (pay now)
+              Off-period (pay now)
             </button>
           </div>
         </Modal>

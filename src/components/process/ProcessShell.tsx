@@ -114,7 +114,7 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
                   <td className="card-title">
                     <b>
                       {p.kind === 'off_cycle'
-                        ? '⏱ Off-cycle batch'
+                        ? '⏱ Off-period batch'
                         : `${p.periodStart} → ${p.periodEnd}`}
                     </b>
                   </td>

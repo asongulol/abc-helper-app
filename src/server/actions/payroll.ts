@@ -1120,6 +1120,7 @@ export async function addOffCyclePayItem(
       periodStart: input.periodStart,
       periodEnd: input.periodEnd,
       workerId: input.workerId,
+      offCycleOnly: period.kind === 'off_cycle',
     });
 
     await logEvent({
@@ -1359,7 +1360,7 @@ export async function removeOffCyclePayItem(
 
     const { data: period } = await db
       .from('pay_periods')
-      .select('id, state, period_start, period_end')
+      .select('id, state, kind, period_start, period_end')
       .eq('id', item.payPeriodId)
       .maybeSingle();
     if (!period) return { ok: false, error: 'Period not found.' };
@@ -1375,6 +1376,7 @@ export async function removeOffCyclePayItem(
       periodStart: period.period_start,
       periodEnd: period.period_end,
       workerId: item.workerId,
+      offCycleOnly: period.kind === 'off_cycle',
     });
 
     await logEvent({

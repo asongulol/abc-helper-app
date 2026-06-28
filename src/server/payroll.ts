@@ -64,12 +64,15 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   if (existing && existing.state !== 'open') {
     throw new Error(`Period is ${existing.state} — unlock it before recalculating.`);
   }
-  if (existing?.kind === 'off_cycle') {
-    throw new Error('Off-cycle batches are paid from their added sessions, not recalculated.');
-  }
+  // An off-period batch is paid ONLY from its added sessions (the ledger): no
+  // tracked hours, no in-window sessions, no health allowance. It still appears
+  // on Calculate and recalculates fine — it just rebuilds the ledger rows.
+  const offCycleOnly = existing?.kind === 'off_cycle';
 
   const [entries, roster, rates, lastMethod] = await Promise.all([
-    fetchApprovedTime(db, input.companyId, input.periodStart, input.periodEnd),
+    offCycleOnly
+      ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
+      : fetchApprovedTime(db, input.companyId, input.periodStart, input.periodEnd),
     fetchRoster(db, input.companyId),
     fetchRates(db, input.companyId),
     fetchLastPayoutMethods(db, input.companyId),
@@ -102,12 +105,14 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   // regardless of which admin runs it — read via the service role behind the
   // caller's already-verified admin identity (ADR-0004; see src/server/company.ts).
   // paid_at-marked sessions (already paid off-cycle) are excluded by the query.
-  const sessionUnitsByWorkerByDate = await fetchSessionUnitsByWorkerByDate(
-    createServiceClient(),
-    roster.map((r) => r.workerId),
-    input.periodStart,
-    input.periodEnd,
-  );
+  const sessionUnitsByWorkerByDate = offCycleOnly
+    ? new Map<string, Map<string, number>>()
+    : await fetchSessionUnitsByWorkerByDate(
+        createServiceClient(),
+        roster.map((r) => r.workerId),
+        input.periodStart,
+        input.periodEnd,
+      );
   // Per-worker totals derived from the date buckets (PS gross + PS-only build).
   const sessionsByWorker = new Map<string, number>();
   for (const [workerId, byDate] of sessionUnitsByWorkerByDate) {
@@ -124,8 +129,8 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     roster,
     rates,
     lastPayoutMethod: lastMethod,
-    includeHealthAllowance: input.includeHealthAllowance,
-    includeThirteenth: input.includeThirteenth,
+    includeHealthAllowance: offCycleOnly ? false : input.includeHealthAllowance,
+    includeThirteenth: offCycleOnly ? false : input.includeThirteenth,
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
