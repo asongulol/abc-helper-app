@@ -66,6 +66,9 @@ export function toForm(w: RosterWorker): FormState {
     paymaya: w.paymaya ?? '',
     paypal: w.paypal ?? '',
     wiseTag: w.wiseTag ?? '',
+    favoriteColor: w.favoriteColor ?? '',
+    favoriteFood: w.favoriteFood ?? '',
+    motto: w.motto ?? '',
   };
 }
 
@@ -308,6 +311,9 @@ export function useContractorProfile(
         paymaya: str(form.paymaya),
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
+        favoriteColor: str(form.favoriteColor),
+        favoriteFood: str(form.favoriteFood),
+        motto: str(form.motto),
         contract: form.contract,
         payBasis: form.payBasis,
         role: str(form.role),
@@ -357,6 +363,9 @@ export function useContractorProfile(
         paymaya: str(form.paymaya),
         paypal: str(form.paypal),
         wiseTag: str(form.wiseTag),
+        favoriteColor: str(form.favoriteColor),
+        favoriteFood: str(form.favoriteFood),
+        motto: str(form.motto),
         contract: form.contract,
         payBasis: form.payBasis,
         role: str(form.role),

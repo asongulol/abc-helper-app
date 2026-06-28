@@ -10,6 +10,15 @@ import type { Database } from '@/db/types';
 
 type Db = SupabaseClient<Database>;
 
+/** Read a string key out of the profile_extras jsonb, else null. */
+const extraStr = (j: unknown, k: string): string | null => {
+  if (j && typeof j === 'object') {
+    const v = (j as Record<string, unknown>)[k];
+    return typeof v === 'string' ? v : null;
+  }
+  return null;
+};
+
 export type RosterWorker = {
   workerId: string;
   firstName: string;
@@ -49,6 +58,10 @@ export type RosterWorker = {
   wiseRecipientId: number | null;
   /** Wise recipient UUID — used by the manual Wise Batch Payments CSV. */
   wiseRecipientUuid: string | null;
+  // About / culture (profile_extras jsonb; also self-maintained via the portal).
+  favoriteColor: string | null;
+  favoriteFood: string | null;
+  motto: string | null;
   photoUrl: string | null;
   // worker_companies link fields
   linkId: string;
@@ -75,7 +88,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = cache(async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -126,6 +139,9 @@ export const fetchRoster = cache(async (db: Db, companyId: string): Promise<Rost
         wiseTag: w.wise_tag,
         wiseRecipientId: w.wise_recipient_id,
         wiseRecipientUuid: w.wise_recipient_uuid,
+        favoriteColor: extraStr(w.profile_extras, 'favorite_color'),
+        favoriteFood: extraStr(w.profile_extras, 'favorite_food'),
+        motto: extraStr(w.profile_extras, 'motto'),
         photoUrl: w.photo_url,
         linkId: l.id,
         companyId: l.company_id,
@@ -183,7 +199,7 @@ export const fetchWorkerLink = async (
   companyId: string,
 ): Promise<RosterWorker | null> => {
   const SEL2 =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -230,6 +246,9 @@ export const fetchWorkerLink = async (
     wiseTag: w.wise_tag,
     wiseRecipientId: w.wise_recipient_id,
     wiseRecipientUuid: w.wise_recipient_uuid,
+    favoriteColor: extraStr(w.profile_extras, 'favorite_color'),
+    favoriteFood: extraStr(w.profile_extras, 'favorite_food'),
+    motto: extraStr(w.profile_extras, 'motto'),
     photoUrl: w.photo_url,
     linkId: data.id,
     companyId: data.company_id,
@@ -348,6 +367,7 @@ export const updateWorkerProfile = async (
     wise_tag?: string | null;
     wise_recipient_id?: number | null;
     wise_recipient_uuid?: string | null;
+    profile_extras?: Database['public']['Tables']['workers']['Row']['profile_extras'];
   },
 ): Promise<void> => {
   const { error } = await db.from('workers').update(patch).eq('id', workerId);

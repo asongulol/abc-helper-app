@@ -103,6 +103,28 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
 
   try {
     const db = await createServerSupabase();
+
+    // About / culture lives in workers.profile_extras (jsonb) — merge so we don't
+    // clobber portal-set keys (nickname, hobbies, …). Mirrors updateOwnProfile.
+    const { data: cur } = await db
+      .from('workers')
+      .select('profile_extras')
+      .eq('id', input.workerId)
+      .maybeSingle();
+    const extras: Record<string, unknown> =
+      cur?.profile_extras && typeof cur.profile_extras === 'object'
+        ? { ...(cur.profile_extras as Record<string, unknown>) }
+        : {};
+    for (const [k, v] of [
+      ['favorite_color', input.favoriteColor],
+      ['favorite_food', input.favoriteFood],
+      ['motto', input.motto],
+    ] as const) {
+      if (v === undefined) continue; // field not submitted — leave as-is
+      if (v === null || v === '') delete extras[k];
+      else extras[k] = v;
+    }
+
     await updateWorkerProfile(db, input.workerId, {
       first_name: input.firstName,
       middle_name: input.middleName,
@@ -135,6 +157,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       paymaya: input.paymaya ?? null,
       paypal: input.paypal ?? null,
       wise_tag: input.wiseTag ?? null,
+      profile_extras: extras as Json,
     });
     await updateWorkerLink(db, input.workerId, input.companyId, {
       contract: input.contract,

@@ -279,6 +279,40 @@ export function PersonalTab({
       </section>
 
       <section style={{ marginTop: 20 }}>
+        <h4 style={SECTION_H4}>About / culture</h4>
+        <p className="sub" style={{ margin: '-6px 0 12px' }}>
+          Fun facts — contractors can fill these in during onboarding.
+        </p>
+        <div className="grid-2">
+          <Field id="pp-fav-color" label="Favorite color">
+            <input
+              id="pp-fav-color"
+              value={form.favoriteColor}
+              onChange={(e) => set('favoriteColor', e.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+          <Field id="pp-fav-food" label="Favorite food">
+            <input
+              id="pp-fav-food"
+              value={form.favoriteFood}
+              onChange={(e) => set('favoriteFood', e.target.value)}
+              disabled={isPending}
+            />
+          </Field>
+        </div>
+        <div className="field">
+          <label htmlFor="pp-motto">Personal motto</label>
+          <input
+            id="pp-motto"
+            value={form.motto}
+            onChange={(e) => set('motto', e.target.value)}
+            disabled={isPending}
+          />
+        </div>
+      </section>
+
+      <section style={{ marginTop: 20 }}>
         <h4 style={SECTION_H4}>Payout tags</h4>
         <div className="grid-2">
           <Field id="pp-gcash" label="GCash">

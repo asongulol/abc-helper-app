@@ -135,6 +135,10 @@ export const SaveWorkerProfileSchema = z
     paymaya: z.string().max(60).nullable().optional(),
     paypal: z.string().max(120).nullable().optional(),
     wiseTag: z.string().max(60).nullable().optional(),
+    // About / culture (workers.profile_extras jsonb)
+    favoriteColor: z.string().max(120).nullable().optional(),
+    favoriteFood: z.string().max(120).nullable().optional(),
+    motto: z.string().max(280).nullable().optional(),
     // worker_companies link fields
     contract: ContractTypeSchema,
     payBasis: PayBasisSchema.nullable().default(null),
