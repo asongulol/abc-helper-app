@@ -184,15 +184,7 @@ export const OnboardingClient = ({
 
   return (
     <div className="card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
+      <div className="card-head">
         <div>
           <h2>Hiring &amp; Onboarding</h2>
           <p className="sub">

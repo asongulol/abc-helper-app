@@ -40,11 +40,6 @@ const lblInp: React.CSSProperties = {
   fontSize: 13,
   minWidth: 160,
 };
-const sectionStyle: React.CSSProperties = {
-  borderTop: '1px solid var(--border)',
-  paddingTop: 10,
-  marginTop: 10,
-};
 
 export const MiscModal = ({
   name,
@@ -226,24 +221,9 @@ export const MiscModal = ({
       </div>
 
       {/* Other Earns */}
-      <div style={sectionStyle}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: 'var(--muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '.03em',
-            }}
-          >
-            Other earns
-          </span>
+      <div className="modal-section">
+        <div className="section-head">
+          <span className="section-label">Other earns</span>
           <button
             type="button"
             className="btn ghost sm"
@@ -299,22 +279,9 @@ export const MiscModal = ({
       </div>
 
       {/* Other Hours */}
-      <div style={sectionStyle}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: 'var(--muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '.03em',
-            }}
-          >
+      <div className="modal-section">
+        <div className="section-head">
+          <span className="section-label">
             Other hours{' '}
             <span style={{ textTransform: 'none' }}>
               (₱
@@ -392,22 +359,9 @@ export const MiscModal = ({
       </div>
 
       {/* Deductions */}
-      <div style={sectionStyle}>
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 11,
-              color: 'var(--muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '.03em',
-            }}
-          >
+      <div className="modal-section">
+        <div className="section-head">
+          <span className="section-label">
             Deductions <span style={{ textTransform: 'none' }}>(subtracted from Net)</span>
           </span>
           <button
@@ -464,15 +418,7 @@ export const MiscModal = ({
         )}
       </div>
 
-      <div
-        className="actions"
-        style={{
-          ...sectionStyle,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
+      <div className="actions between">
         <div style={{ fontSize: 13 }}>
           Net impact:{' '}
           <b style={{ color: netImpact < 0 ? '#b91c1c' : '#166534' }}>

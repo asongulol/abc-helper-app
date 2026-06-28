@@ -49,12 +49,6 @@ const sectionStyle: React.CSSProperties = {
   paddingTop: 10,
   marginTop: 10,
 };
-const labelCaps: React.CSSProperties = {
-  fontSize: 11,
-  color: 'var(--muted)',
-  textTransform: 'uppercase',
-  letterSpacing: '.03em',
-};
 
 export const OffCycleModal = ({
   companyId,
@@ -264,7 +258,7 @@ export const OffCycleModal = ({
               ) : (
                 <>
                   <div style={sectionStyle}>
-                    <span style={labelCaps}>Approved, unpaid sessions</span>
+                    <span className="section-label">Approved, unpaid sessions</span>
                     {sessions.length === 0 ? (
                       <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
                         None to pay. Add and approve a session under “Add session”.
@@ -319,7 +313,7 @@ export const OffCycleModal = ({
               {/* Existing off-cycle pay items for this worker/period. */}
               {items.length > 0 && (
                 <div style={sectionStyle}>
-                  <span style={labelCaps}>Off-cycle pay added this period</span>
+                  <span className="section-label">Off-cycle pay added this period</span>
                   {items.map((it) => (
                     <div
                       key={it.id}
@@ -361,16 +355,7 @@ export const OffCycleModal = ({
         </p>
       )}
 
-      <div
-        className="actions"
-        style={{
-          ...sectionStyle,
-          display: 'flex',
-          justifyContent: 'space-between',
-          gap: 8,
-          alignItems: 'center',
-        }}
-      >
+      <div className="actions between" style={{ gap: 8 }}>
         <span className="muted" style={{ fontSize: 12 }}>
           {payMissing.length > 0 ? `Needs: ${payMissing.join(', ')}.` : ''}
         </span>

@@ -170,16 +170,7 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
 
       <div className="grid-2">
         <div>
-          <span
-            style={{
-              fontSize: 11,
-              color: 'var(--muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '.03em',
-            }}
-          >
-            Option A — upload CSV
-          </span>
+          <span className="section-label">Option A — upload CSV</span>
           <p className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }}>
             Export the daily report from Hubstaff and drop the file here.
           </p>

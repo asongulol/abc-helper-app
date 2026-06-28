@@ -169,7 +169,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
   const emailDrift = wise != null && norm(wise.email) !== norm(state.email);
 
   return (
-    <section style={{ marginTop: 24, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+    <section className="modal-section" style={{ marginTop: 24 }}>
       <h4 style={SECTION_H4}>Wise recipients (for payouts)</h4>
       {state.recipients.length === 0 ? (
         <p className="muted" style={{ fontSize: 12, margin: '6px 0' }}>

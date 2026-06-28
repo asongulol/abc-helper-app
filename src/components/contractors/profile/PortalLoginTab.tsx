@@ -26,15 +26,7 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
         marginTop: 8,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 10,
-          flexWrap: 'wrap',
-        }}
-      >
+      <div className="card-head">
         <div>
           <b>Self-service portal login</b>
           <div className="sub" style={{ fontSize: 12, maxWidth: 420 }}>

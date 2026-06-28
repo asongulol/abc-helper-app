@@ -109,20 +109,10 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
 
         {/* Reconciliation overview */}
         <div className="card no-print" style={{ marginTop: 12 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 8,
-              flexWrap: 'wrap',
-            }}
-          >
+          <div className="card-head">
             <div>
               <b>Reconciliation overview</b>
-              <div className="sub" style={{ margin: '2px 0 0' }}>
-                Every locked/paid period and its Wise reconcile status.
-              </div>
+              <div className="sub">Every locked/paid period and its Wise reconcile status.</div>
             </div>
             <button
               type="button"

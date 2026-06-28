@@ -567,15 +567,7 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
 
   return (
     <div className="card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
+      <div className="card-head">
         <div>
           <h2>Contractor Pay Summary</h2>
           <p className="sub">
@@ -886,15 +878,7 @@ const ContractorHistory = ({
 
   return (
     <div className="card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
+      <div className="card-head">
         <div>
           <h2>Contractor pay &amp; hours history</h2>
           <p className="sub">
@@ -1078,15 +1062,7 @@ const UtilizationReport = ({ companyId }: { companyId: string }) => {
 
   return (
     <div className="card">
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 8,
-        }}
-      >
+      <div className="card-head">
         <div>
           <h2>Avg. Weekly Activity</h2>
           <p className="sub">

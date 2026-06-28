@@ -27,13 +27,6 @@ interface ArmedRange {
   preview: RangeDryRun['preview'];
 }
 
-const labelStyle = {
-  fontSize: 11,
-  color: 'var(--muted)',
-  textTransform: 'uppercase' as const,
-  letterSpacing: '.03em',
-};
-
 export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientProps) => {
   const router = useRouter();
   const { notify } = useToast();
@@ -135,7 +128,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
       </p>
 
       <div style={{ marginBottom: 14 }}>
-        <span style={labelStyle}>By date range</span>
+        <span className="section-label">By date range</span>
         <div
           style={{
             display: 'flex',
@@ -348,7 +341,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
         )}
       </div>
 
-      <span style={labelStyle}>By import batch (most recent)</span>
+      <span className="section-label">By import batch (most recent)</span>
       {batches.length === 0 ? (
         <div className="empty" style={{ padding: 20 }}>
           No imports recorded.

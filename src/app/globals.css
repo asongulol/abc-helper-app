@@ -32,10 +32,12 @@
   /* Aliases consumed by existing classNames -> re-skin to navy in one place. */
   --accent: var(--navy);
   --accent-soft: var(--navy-50);
-  --radius-sm: 7px;
-  --radius: 11px;
+  --radius-sm: 8px;
+  --radius: 12px;
   --radius-lg: 16px;
-  --shadow-sm: 0 1px 2px rgba(15, 28, 51, 0.05);
+  /* Cards lift off the gray canvas with a soft, tinted two-layer shadow rather
+     than a single hairline — reads cleaner than a hard border alone. */
+  --shadow-sm: 0 1px 2px rgba(15, 28, 51, 0.04), 0 2px 6px -2px rgba(15, 28, 51, 0.07);
   --shadow: 0 4px 14px -5px rgba(15, 28, 51, 0.14);
   --shadow-lg: 0 16px 40px -12px rgba(15, 28, 51, 0.28);
   --ring: 0 0 0 3px rgba(31, 58, 104, 0.22);
@@ -458,8 +460,8 @@ a.side-item:hover {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 20px;
-  margin-bottom: 16px;
+  padding: 22px 24px;
+  margin-bottom: 18px;
   box-shadow: var(--shadow-sm);
 }
 h2 {
@@ -541,7 +543,7 @@ table {
 th,
 td {
   text-align: left;
-  padding: 10px 12px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border);
   font-size: 13px;
   vertical-align: top;
@@ -707,7 +709,7 @@ tr.clickable:hover {
   background: var(--accent);
   color: #fff;
   border: 1px solid transparent;
-  padding: 9px 15px;
+  padding: 9px 16px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   font-weight: 600;
@@ -925,7 +927,7 @@ a.btn:hover {
   border: 1px solid var(--border);
   border-left: 4px solid var(--border-strong);
   border-radius: var(--radius);
-  padding: 14px 16px;
+  padding: 16px 18px;
   cursor: pointer;
   font: inherit;
   transition:
@@ -1202,13 +1204,13 @@ a.btn:hover {
   border: 1px solid #fcd34d;
   border-left: 5px solid #f59e0b;
   color: #92400e;
-  padding: 14px 18px;
-  border-radius: 8px;
-  margin-bottom: 16px;
-  font-size: 15px;
+  padding: 13px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 18px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.4;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  line-height: 1.45;
+  box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1483,7 +1485,77 @@ dialog.modal::backdrop {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+/* Footer that carries a summary on the left + buttons on the right. */
+.modal .actions.between {
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ===== Shared chrome utilities ===========================================
+ * These replace the most-repeated inline-styled patterns (a flex header with a
+ * title on the left + actions on the right; a hairline-separated sub-section;
+ * a small uppercase section label). Using them keeps spacing and alignment
+ * identical across every page and modal instead of drifting per-file. */
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.card-head > :first-child {
+  min-width: 0;
+}
+.card-head h2,
+.card-head h3 {
+  margin: 0;
+}
+.card-head .sub {
+  margin: 3px 0 0;
+}
+/* Modal header band — aligned title + close button over a hairline. Applied by
+   the shared <Modal title=…> component so every titled modal matches. */
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-head h2 {
+  margin: 0;
+}
+.modal-head .x {
+  float: none;
+  margin: -2px -2px 0 0;
+  line-height: 1;
+}
+/* Hairline-separated sub-section inside a modal or card. */
+.modal-section {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
   margin-top: 16px;
+}
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 /* ===== Quick-find command palette (Cmd/Ctrl-K) ============================ */
