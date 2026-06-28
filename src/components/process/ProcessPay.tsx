@@ -250,6 +250,39 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       await refresh();
     });
 
+  // ── Per-row mark paid. Wise uses now (its sent date is approximate anyway);
+  //    BPI / other prompt for the date the transfer actually happened. ──
+  const markRowPaid = (p: ProcessPayment) => {
+    let paidAt: string | undefined;
+    if (p.payoutMethod !== 'wise') {
+      const def = period.payDate ?? new Date().toISOString().slice(0, 10);
+      const entered = window.prompt(
+        `Date you sent ${p.name}'s ${(p.payoutMethod ?? 'manual').toUpperCase()} payment (YYYY-MM-DD):`,
+        def,
+      );
+      if (entered == null) return; // cancelled
+      const d = entered.trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        notify('Enter the date as YYYY-MM-DD.', { type: 'warn' });
+        return;
+      }
+      paidAt = `${d}T00:00:00.000Z`;
+    }
+    startBusy(async () => {
+      const r = await markPaid({
+        companyId,
+        paymentIds: [p.paymentId],
+        ...(paidAt ? { paidAt } : {}),
+      });
+      if (!r.ok) {
+        notify(r.error, { type: 'error', persistent: true });
+        return;
+      }
+      notify(`Marked ${p.name} paid.`, { type: 'success' });
+      await refresh();
+    });
+  };
+
   const pill = (c: Channel | 'all', label: string) => {
     const rows = c === 'all' ? payments : inChannel(c);
     const active = tab === c;
@@ -348,6 +381,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
                   <th>Via</th>
                   <th>Status</th>
                   <th>Wise transfer</th>
+                  <th className="no-print" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -364,6 +398,22 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
                       )}
                     </td>
                     <td data-label="Wise transfer">{p.wiseTransferId ?? '—'}</td>
+                    <td className="card-action no-print" style={{ textAlign: 'right' }}>
+                      {p.status === 'sent' ? (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          ✓ paid
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          disabled={busy}
+                          onClick={() => markRowPaid(p)}
+                        >
+                          {p.payoutMethod === 'wise' ? 'Mark paid' : 'Mark paid…'}
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

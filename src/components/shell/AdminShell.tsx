@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect, useState, useTransition } from 'react';
 import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
+import { BackToTop } from '@/components/ui/BackToTop';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { AdminRow } from '@/db/queries/admins';
 import { selectCompany } from '@/server/actions/company';
@@ -376,6 +377,8 @@ export const AdminShell = ({
           </div>
         </>
       )}
+
+      <BackToTop />
     </ToastProvider>
   );
 };
