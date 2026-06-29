@@ -1,11 +1,10 @@
 /**
- * Match a free-text search term against a saved Wise recipient's name/email.
+ * Match a free-text search term against a Wise bank recipient's name/email.
  *
- * There is no public Wise endpoint that searches by Wisetag, so the "By name /
- * tag" lookup filters the recipient list client-side. Matching the space-
- * stripped name lets a Wisetag like "@leatheresanuevab" find the recipient
- * saved as "Lea Theresa Nueva B". A Wisetag unrelated to the legal name won't
- * match — that case uses the numeric "By recipient ID" route instead.
+ * Backs the "By name" lookup, which filters the recipient list client-side.
+ * Matching the space-stripped name lets a run-together query like
+ * "leatheresanueva" find a recipient saved as "Lea Theresa Nueva B"; a leading
+ * "@" is ignored so a pasted Wisetag still matches on the underlying name.
  */
 export function recipientMatchesTerm(name: string, email: string | null, term: string): boolean {
   const t = term.trim().replace(/^@/, '').toLowerCase();

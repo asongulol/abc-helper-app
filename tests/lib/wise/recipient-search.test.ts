@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { recipientMatchesTerm } from '@/lib/wise/recipient-search';
 
 describe('recipientMatchesTerm', () => {
-  it('matches a Wisetag against the space-stripped name', () => {
-    // The whole reason the "By name / tag" route works for Wisetags.
+  it('matches a run-together query (or pasted Wisetag) against the space-stripped name', () => {
+    // Lets "leatheresanuevab" / "@leatheresanuevab" find "Lea Theresa Nueva B".
     expect(recipientMatchesTerm('Lea Theresa Nueva B', null, '@leatheresanuevab')).toBe(true);
   });
 

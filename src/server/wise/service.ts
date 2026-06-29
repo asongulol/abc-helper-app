@@ -38,7 +38,8 @@ let cachedProfileId: number | null = null;
 export async function getBusinessProfileId(): Promise<number> {
   if (cachedProfileId != null) return cachedProfileId;
   const profiles = await wiseRequest<{ id: number; type: string }[]>('/v2/profiles');
-  const biz = profiles.find((p) => p.type === 'business') ?? profiles[0];
+  // Wise returns type as "BUSINESS"/"PERSONAL" (uppercase) — compare case-insensitively.
+  const biz = profiles.find((p) => p.type?.toUpperCase() === 'BUSINESS') ?? profiles[0];
   if (!biz) throw new Error('No Wise business profile found on this account.');
   cachedProfileId = biz.id;
   return cachedProfileId;
