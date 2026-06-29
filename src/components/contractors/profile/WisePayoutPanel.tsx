@@ -137,7 +137,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
             return;
           }
           if (res.data.length === 0)
-            notify('No Wise contacts matched that Wisetag.', { type: 'warn' });
+            notify('No saved Wise recipient matched that search.', { type: 'warn' });
           setResults(res.data);
         }
       } finally {
@@ -393,20 +393,20 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
               setResults([]);
             }}
           >
-            By Wisetag
+            By name / tag
           </button>
         </div>
         <p className="muted" style={{ fontSize: 12, margin: '0 0 6px' }}>
           {mode === 'id'
             ? 'Paste the numeric Wise recipient ID (e.g. 1372559053) — the standard route for bank-account payouts.'
-            : 'Search your Wise contacts by Wisetag (Wise-to-Wise balance recipients).'}
+            : 'Search your saved Wise recipients by name, Wisetag, or email. A Wisetag with no matching name uses the ID route instead.'}
         </p>
         <div className="row" style={{ gap: 6, alignItems: 'flex-end' }}>
           <input
             value={lookupVal}
             onChange={(e) => setLookupVal(e.target.value)}
-            placeholder={mode === 'id' ? 'numeric Wise recipient ID' : '@wisetag'}
-            aria-label={mode === 'id' ? 'Wise recipient ID' : 'Wisetag'}
+            placeholder={mode === 'id' ? 'numeric Wise recipient ID' : 'name, @wisetag, or email'}
+            aria-label={mode === 'id' ? 'Wise recipient ID' : 'Search saved Wise recipients'}
             style={{ maxWidth: 260 }}
             disabled={lookupBusy}
           />
