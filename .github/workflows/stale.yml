@@ -17,7 +17,7 @@ jobs:
   stale:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@v10
         with:
           days-before-pr-stale: 10
           days-before-pr-close: -1 # flag only, never auto-close
