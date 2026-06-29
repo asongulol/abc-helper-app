@@ -198,15 +198,14 @@ export async function saveWorkerWiseUuid(args: {
 }
 
 /**
- * Pull-from-Wise: find a saved Wise recipient by name / Wisetag / email.
+ * "By name" lookup: find a Wise BANK recipient by name / email.
  *
- * There is no public Wise endpoint that searches by Wisetag (the only Wisetag
- * API, POST /v2/profiles/{id}/contacts, *creates* a contact and returns a UUID
- * the rest of this app can't pay). So we filter the recipient list — the same
- * GET /v1/accounts?profile= the payout pipeline uses — which yields the numeric
- * ids this app stores. A Wisetag-added recipient appears here once it exists.
- * ponytail: substring match on name/email; a Wisetag unrelated to the legal
- * name won't match — use "By recipient ID" with the numeric id for those.
+ * Filters the same GET /v1/accounts?profile= list the payout pipeline pays
+ * from, returning the numeric ids this app stores. It deliberately does NOT
+ * search Wise *contacts* (GET /v1/profiles/{id}/contacts): those are Wisetag/
+ * balance recipients whose payable id (balanceRecipientId) 403s on /v1/accounts
+ * and can't be drafted by the current transfer flow, so surfacing them would
+ * only let you add a recipient that can't be paid. Bank-recipient-only by design.
  */
 export async function lookupWiseByTag(
   query: string,
