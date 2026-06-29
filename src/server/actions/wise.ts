@@ -19,6 +19,11 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
+import {
+  type PullRecipientRow,
+  type PullRecipientStatus,
+  planRecipientMatches,
+} from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
@@ -280,67 +285,84 @@ export async function wiseRecipients(): Promise<WiseActionResult<unknown[]>> {
   }
 }
 
+export type { PullRecipientRow, PullRecipientStatus };
+export interface PullRecipientsResult {
+  total: number;
+  alreadyLinked: number;
+  matched: number;
+  unmatched: number;
+  rows: PullRecipientRow[];
+}
+
 /**
  * Admin: pull recipient IDs from Wise and store them on matched contractors
  * (legacy "Pull IDs from Wise", manifest 21). READ-ONLY against Wise — lists
- * saved recipients and matches each to a worker by normalized name, then writes
- * the numeric recipient id onto workers that don't already have one. Never pulls
- * bank details and moves no money.
+ * saved recipients and, per recipient, finds its contractor by stored Wise ID
+ * first (→ "already linked"), then by normalized name (→ "matched", writing the
+ * numeric recipient id onto an active unlinked worker); otherwise "unmatched".
+ * Returns the full per-recipient breakdown so the UI shows the legacy table.
+ * Never pulls bank details and moves no money.
  */
-export async function wisePullRecipientIds(): Promise<
-  WiseActionResult<{ total: number; matched: number; updated: number }>
-> {
+export async function wisePullRecipientIds(): Promise<WiseActionResult<PullRecipientsResult>> {
   try {
     await requireAdmin();
     const { recipients } = await serviceRecipients();
 
     const db = createServiceClient();
+    // All statuses on purpose — see planRecipientMatches (an ended contractor
+    // that holds a recipient id is still "already linked").
     const { data: workers, error } = await db
       .from('workers')
-      .select('id, first_name, middle_name, last_name, wise_recipient_id')
-      .neq('status', 'ended');
+      .select('id, first_name, middle_name, last_name, wise_recipient_id, status');
     if (error) return fail(error.message);
 
-    const norm = (s: string): string =>
-      s
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, ' ')
-        .trim();
+    const fullName = (w: {
+      first_name: string;
+      middle_name: string | null;
+      last_name: string;
+    }): string => [w.first_name, w.middle_name, w.last_name].filter(Boolean).join(' ');
 
-    // Index workers WITHOUT a stored recipient id, by normalized full name.
-    const byName = new Map<string, string>();
-    for (const w of workers ?? []) {
-      if (w.wise_recipient_id != null) continue;
-      const key = norm([w.first_name, w.middle_name, w.last_name].filter(Boolean).join(' '));
-      if (key && !byName.has(key)) byName.set(key, w.id);
-    }
+    const rows = planRecipientMatches(
+      recipients.map((r) => ({
+        id: r.id,
+        name: r.name,
+        currency: r.currency,
+        account: r.account,
+      })),
+      (workers ?? []).map((w) => ({
+        id: w.id,
+        name: fullName(w),
+        status: w.status,
+        wiseRecipientId: w.wise_recipient_id,
+      })),
+    );
 
-    let matched = 0;
-    let updated = 0;
-    for (const r of recipients) {
-      const name = typeof r === 'object' && r != null ? ((r as { name?: string }).name ?? '') : '';
-      const id = typeof r === 'object' && r != null ? (r as { id?: number }).id : undefined;
-      if (!name || id == null) continue;
-      const workerId = byName.get(norm(name));
-      if (!workerId) continue;
-      matched++;
-      const { error: upErr } = await db
-        .from('workers')
-        .update({ wise_recipient_id: id })
-        .eq('id', workerId);
-      if (!upErr) {
-        updated++;
-        byName.delete(norm(name)); // one recipient per worker
+    // Write a freshly name-matched recipient id onto its contractor; downgrade
+    // the row to "unmatched" if the write fails so the count stays honest.
+    for (const row of rows) {
+      if (row.status === 'matched' && row.contractor) {
+        const { error: upErr } = await db
+          .from('workers')
+          .update({ wise_recipient_id: row.recipientId })
+          .eq('id', row.contractor.id);
+        if (upErr) {
+          row.status = 'unmatched';
+          row.contractor = null;
+        }
       }
     }
+
+    const alreadyLinked = rows.filter((r) => r.status === 'already-linked').length;
+    const matched = rows.filter((r) => r.status === 'matched').length;
+    const unmatched = rows.filter((r) => r.status === 'unmatched').length;
 
     void logEvent({
       action: 'wise_pull_recipient_ids',
       entity: 'workers',
-      detail: { total: recipients.length, matched, updated },
+      detail: { total: recipients.length, alreadyLinked, matched, unmatched },
     });
     revalidatePath('/contractors');
-    return ok({ total: recipients.length, matched, updated });
+    return ok({ total: recipients.length, alreadyLinked, matched, unmatched, rows });
   } catch (e) {
     return fail(e);
   }

@@ -2,27 +2,33 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { Modal, Spinner, useToast } from '@/components/ui';
-import { wisePullRecipientIds } from '@/server/actions/wise';
+import { Badge, type BadgeTone, Modal, Spinner, useToast } from '@/components/ui';
+import {
+  type PullRecipientStatus,
+  type PullRecipientsResult,
+  wisePullRecipientIds,
+} from '@/server/actions/wise';
 
 interface Props {
   onClose: () => void;
 }
 
+const STATUS: Record<PullRecipientStatus, { tone: BadgeTone; label: string }> = {
+  'already-linked': { tone: 'good', label: 'already linked' },
+  matched: { tone: 'good', label: 'matched' },
+  unmatched: { tone: 'warn', label: 'unmatched' },
+};
+
 /**
  * "Pull recipient IDs from Wise" (manifest 21) — read-only. Lists saved Wise
- * recipients, matches each to a contractor by name, and stores the numeric
- * recipient id on the matched contractor. No bank details, no money movement.
+ * recipients, matches each to a contractor (by stored Wise ID, then name), and
+ * shows the per-recipient table (legacy parity). No bank details, no money.
  */
 export const PullWiseRecipientsModal = ({ onClose }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [result, setResult] = useState<{
-    total: number;
-    matched: number;
-    updated: number;
-  } | null>(null);
+  const [result, setResult] = useState<PullRecipientsResult | null>(null);
 
   const handlePull = () => {
     startTransition(async () => {
@@ -32,15 +38,16 @@ export const PullWiseRecipientsModal = ({ onClose }: Props) => {
         return;
       }
       setResult(res.data);
-      notify(`Matched ${res.data.matched} of ${res.data.total} recipients.`, {
-        type: 'success',
-      });
+      notify(
+        `${res.data.matched} newly matched · ${res.data.alreadyLinked} already linked · ${res.data.unmatched} unmatched.`,
+        { type: 'success' },
+      );
       router.refresh();
     });
   };
 
   return (
-    <Modal title="Pull recipient IDs from Wise" onClose={onClose} maxWidth={460}>
+    <Modal title="Pull recipient IDs from Wise" onClose={onClose} maxWidth={760}>
       <p className="sub">
         Read-only. Lists your saved Wise recipients and matches each to a contractor (by stored Wise
         ID first, then name), then stores the numeric <b>recipient ID</b> on the matched contractor.
@@ -48,9 +55,43 @@ export const PullWiseRecipientsModal = ({ onClose }: Props) => {
       </p>
 
       {result && (
-        <div className="banner" style={{ margin: '12px 0' }}>
-          {result.total} recipient(s) · {result.matched} matched · {result.updated} updated.
-        </div>
+        <>
+          <div className="banner" style={{ margin: '12px 0' }}>
+            {result.total} recipient(s) · {result.alreadyLinked} already linked · {result.matched}{' '}
+            newly matched · {result.unmatched} unmatched.
+          </div>
+          <div className="table-scroll" style={{ maxHeight: 380 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Wise recipient</th>
+                  <th>Currency</th>
+                  <th>Account</th>
+                  <th>Matched contractor</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.rows.map((row) => {
+                  const s = STATUS[row.status];
+                  return (
+                    <tr key={row.recipientId}>
+                      <td>
+                        <b>{row.name}</b> <span className="muted">#{row.recipientId}</span>
+                      </td>
+                      <td>{row.currency || '—'}</td>
+                      <td>{row.account || '—'}</td>
+                      <td>{row.contractor?.name ?? <span className="muted">— no match —</span>}</td>
+                      <td>
+                        <Badge tone={s.tone}>{s.label}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <div className="actions">
