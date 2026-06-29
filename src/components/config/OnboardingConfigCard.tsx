@@ -267,6 +267,7 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
                 value={doc.title}
                 onChange={(e) => updateDoc(i, { title: e.target.value })}
                 placeholder="Document name (e.g. NBI Clearance)"
+                aria-label="Document name"
               />
             </div>
             <div className="field">
@@ -369,6 +370,7 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
                 value={agreement.title}
                 onChange={(e) => updateAgreement(i, { title: e.target.value })}
                 placeholder="Agreement name (e.g. IC Agreement)"
+                aria-label="Agreement name"
               />
             </div>
             <div className="field">
@@ -752,6 +754,7 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
             rows={12}
             value={rawJson}
             onChange={(e) => handleRawJsonChange(e.target.value)}
+            aria-label="Raw JSON config"
           />
           {rawError !== '' && <p className="sub error">{rawError}</p>}
         </div>

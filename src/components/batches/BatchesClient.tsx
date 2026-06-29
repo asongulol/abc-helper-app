@@ -107,8 +107,9 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
           </p>
         )}
 
-        {/* Reconciliation overview */}
-        <div className="card no-print" style={{ marginTop: 12 }}>
+        {/* Reconciliation overview — a hairline-separated sub-section, not a
+            nested card (nested card chrome is an anti-pattern). */}
+        <div className="modal-section no-print">
           <div className="card-head">
             <div>
               <b>Reconciliation overview</b>
@@ -132,13 +133,13 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
             <EmptyState>No locked or paid periods yet.</EmptyState>
           ) : (
             <div className="table-scroll" style={{ marginTop: 8 }}>
-              <table>
+              <table aria-label="Reconciliation overview">
                 <thead>
                   <tr>
-                    <th>Period</th>
-                    <th>Contractors</th>
-                    <th>Reconcile status</th>
-                    <th />
+                    <th scope="col">Period</th>
+                    <th scope="col">Contractors</th>
+                    <th scope="col">Reconcile status</th>
+                    <th scope="col" />
                   </tr>
                 </thead>
                 <tbody>

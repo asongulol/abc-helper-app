@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useState, useTransition } from 'react';
 import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
 import { BackToTop } from '@/components/ui/BackToTop';
+import { Modal } from '@/components/ui/Modal';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { AdminRow } from '@/db/queries/admins';
 import { selectCompany } from '@/server/actions/company';
@@ -295,7 +296,8 @@ export const AdminShell = ({
       </div>
 
       {/* Mobile bottom tab bar + "More" sheet (shown <=768px via CSS; the sidebar
-          is hidden there). Styling lives in globals.css (.bottom-nav / .more-sheet). */}
+          is hidden there). Bottom-bar styling lives in globals.css (.bottom-nav);
+          the "More" sheet renders through the shared <Modal>. */}
       <nav className="bottom-nav no-print" aria-label="Primary">
         {PRIMARY_NAV.map((item) => {
           const active = isActive(item.href);
@@ -328,54 +330,30 @@ export const AdminShell = ({
       </nav>
 
       {moreOpen && (
-        <>
-          <button
-            type="button"
-            className="more-sheet-bg"
-            aria-label="Close menu"
-            style={{ border: 0, padding: 0 }}
-            onClick={() => setMoreOpen(false)}
-          />
-          <div
-            className="more-sheet no-print"
-            role="dialog"
-            aria-modal="true"
-            aria-label="All sections"
-          >
-            <div className="more-sheet-head">
-              <strong>All sections</strong>
-              <button
-                type="button"
-                className="btn ghost sm"
-                onClick={() => setMoreOpen(false)}
-                aria-label="Close"
-              >
-                ✕
-              </button>
+        <Modal title="All sections" onClose={() => setMoreOpen(false)}>
+          {NAV_GROUPS.map((group) => (
+            <div className="side-group" key={group.label}>
+              <div className="side-group-label">{group.label}</div>
+              {group.items.map((item) => {
+                const active = isActive(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={active ? 'side-item active' : 'side-item'}
+                    aria-current={active ? 'page' : undefined}
+                    onClick={() => setMoreOpen(false)}
+                  >
+                    <span className="side-ico" aria-hidden="true">
+                      {item.icon}
+                    </span>
+                    <span className="side-label">{item.label}</span>
+                  </Link>
+                );
+              })}
             </div>
-            {NAV_GROUPS.map((group) => (
-              <div className="side-group" key={group.label}>
-                <div className="side-group-label">{group.label}</div>
-                {group.items.map((item) => {
-                  const active = isActive(item.href);
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={active ? 'side-item active' : 'side-item'}
-                      aria-current={active ? 'page' : undefined}
-                    >
-                      <span className="side-ico" aria-hidden="true">
-                        {item.icon}
-                      </span>
-                      <span className="side-label">{item.label}</span>
-                    </Link>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </>
+          ))}
+        </Modal>
       )}
 
       <BackToTop />

@@ -131,11 +131,11 @@ export const AddHoursPanel = ({
           className="table-scroll"
           style={{ maxHeight: 200, overflow: 'auto', flex: '1 1 320px' }}
         >
-          <table>
+          <table aria-label="Daily hours">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Hours</th>
+                <th scope="col">Date</th>
+                <th scope="col">Hours</th>
               </tr>
             </thead>
             <tbody>
@@ -148,6 +148,7 @@ export const AddHoursPanel = ({
                       step="0.01"
                       style={{ width: 90 }}
                       placeholder="0"
+                      aria-label={`Hours for ${dt}`}
                       value={dailyMap[dt] ?? ''}
                       onChange={(e) =>
                         setDailyMap((prev) => ({

@@ -63,11 +63,18 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
         {pay.status}
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 16 }}>
+      <table
+        aria-label="Pay statement"
+        style={{ width: '100%', borderCollapse: 'collapse', marginTop: 16 }}
+      >
         <thead>
           <tr>
-            <th style={cell}>Item</th>
-            <th style={cellRight}>Amount (PHP)</th>
+            <th scope="col" style={cell}>
+              Item
+            </th>
+            <th scope="col" style={cellRight}>
+              Amount (PHP)
+            </th>
           </tr>
         </thead>
         <tbody>

@@ -373,15 +373,15 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
           <EmptyState message="No contractors in this view — switch the channel filter above." />
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Pay list">
               <thead>
                 <tr>
-                  <th>Contractor</th>
-                  <th>Net ₱</th>
-                  <th>Via</th>
-                  <th>Status</th>
-                  <th>Wise transfer</th>
-                  <th className="no-print" aria-label="Actions" />
+                  <th scope="col">Contractor</th>
+                  <th scope="col">Net ₱</th>
+                  <th scope="col">Via</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Wise transfer</th>
+                  <th scope="col" className="no-print" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -440,7 +440,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
                   {i > 0 && ', '}
                   <Link
                     href={`/contractors/${r.workerId}`}
-                    style={{ color: '#b91c1c', textDecoration: 'underline' }}
+                    style={{ color: 'var(--bad)', textDecoration: 'underline' }}
                   >
                     {r.name}
                   </Link>

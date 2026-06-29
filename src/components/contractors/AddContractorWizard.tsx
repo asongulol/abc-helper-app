@@ -285,7 +285,7 @@ export function AddContractorWizard({
               flex: 1,
               height: 4,
               borderRadius: 2,
-              background: n <= step ? '#1F3A68' : '#e5e7eb',
+              background: n <= step ? 'var(--navy)' : '#e5e7eb',
             }}
           />
         ))}
@@ -574,6 +574,7 @@ export function AddContractorWizard({
             <textarea
               rows={3}
               value={form.icAddendumText}
+              aria-label="IC addendum text"
               placeholder="Addendum text"
               onChange={(e) => set('icAddendumText', e.target.value)}
               style={{ width: '100%', marginTop: 6 }}

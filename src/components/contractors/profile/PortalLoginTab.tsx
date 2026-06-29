@@ -93,9 +93,9 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
           className="banner"
           style={{
             marginTop: 8,
-            background: '#ecfdf5',
-            borderColor: '#a7f3d0',
-            color: '#065f46',
+            background: 'var(--good-soft)',
+            borderColor: 'var(--good)',
+            color: 'var(--good)',
           }}
         >
           Portal credentials — share these <b>once</b> (the contractor should change the password
@@ -109,9 +109,9 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
           className="banner"
           style={{
             marginTop: 8,
-            background: '#eff6ff',
+            background: 'var(--navy-50)',
             borderColor: '#bfdbfe',
-            color: '#1e40af',
+            color: 'var(--navy)',
           }}
         >
           <b>Wise Tag from contractor:</b> <code>{worker.wiseTag}</code> — use this to set up their

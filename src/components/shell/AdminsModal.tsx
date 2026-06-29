@@ -194,6 +194,7 @@ export const AdminsModal = ({ admins, companyOptions, meId, onClose }: AdminsMod
       >
         <EmailInput
           pin={['abckidsny.com', 'abbilabs.com']}
+          aria-label="Admin work email"
           style={{ flex: 1, minWidth: 200, padding: '6px 8px' }}
           placeholder="name@abckidsny.com"
           value={email}

@@ -266,14 +266,20 @@ export default async function OverviewPage() {
             target, or their weekly hours × weeks in the period).
           </div>
           <div className="table-scroll">
-            <table>
+            <table aria-label="Coverage gaps this period">
               <thead>
                 <tr>
-                  <th>Contractor</th>
-                  <th style={{ textAlign: 'right' }}>Worked</th>
-                  <th style={{ textAlign: 'right' }}>Expected</th>
-                  <th style={{ textAlign: 'right' }}>%</th>
-                  <th>Status</th>
+                  <th scope="col">Contractor</th>
+                  <th scope="col" style={{ textAlign: 'right' }}>
+                    Worked
+                  </th>
+                  <th scope="col" style={{ textAlign: 'right' }}>
+                    Expected
+                  </th>
+                  <th scope="col" style={{ textAlign: 'right' }}>
+                    %
+                  </th>
+                  <th scope="col">Status</th>
                 </tr>
               </thead>
               <tbody>

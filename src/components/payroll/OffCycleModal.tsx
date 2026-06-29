@@ -350,7 +350,7 @@ export const OffCycleModal = ({
       )}
 
       {error && (
-        <p style={{ color: '#b91c1c', fontSize: 13, marginTop: 10 }} role="alert">
+        <p style={{ color: 'var(--bad)', fontSize: 13, marginTop: 10 }} role="alert">
           {error}
         </p>
       )}

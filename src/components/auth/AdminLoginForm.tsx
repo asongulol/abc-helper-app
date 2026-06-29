@@ -80,6 +80,8 @@ export const AdminLoginForm = () => {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          aria-invalid={err ? 'true' : undefined}
+          aria-describedby={err ? 'admin-login-err' : undefined}
           style={{ width: '100%' }}
         />
       </div>
@@ -93,6 +95,8 @@ export const AdminLoginForm = () => {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
+          aria-invalid={err ? 'true' : undefined}
+          aria-describedby={err ? 'admin-login-err' : undefined}
           style={{ width: '100%', marginBottom: 0 }}
         />
       </div>
@@ -138,7 +142,12 @@ export const AdminLoginForm = () => {
       )}
 
       {err && (
-        <div className="banner error" style={{ textAlign: 'left', margin: 0 }} role="alert">
+        <div
+          id="admin-login-err"
+          className="banner error"
+          style={{ textAlign: 'left', margin: 0 }}
+          role="alert"
+        >
           {err}
         </div>
       )}

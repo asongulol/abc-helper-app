@@ -158,6 +158,7 @@ export const BulkImportModal = ({ companyId, onClose }: Props) => {
       <textarea
         rows={6}
         value={raw}
+        aria-label="Paste contractor rows"
         onChange={(e) => setRaw(e.target.value)}
         placeholder="Name	Wise recipient id	Wise UUID	Rate	Email&#10;Manuella Gamboa	79bf2801	33e5...	18000	manuella@x.com"
         style={{ width: '100%' }}
@@ -219,15 +220,15 @@ export const BulkImportModal = ({ companyId, onClose }: Props) => {
 
       {rows.length > 0 && (
         <div className="table-scroll" style={{ marginTop: 12, maxHeight: 260 }}>
-          <table>
+          <table aria-label="Contractors to import">
             <thead>
               <tr>
-                <th>First</th>
-                <th>Last</th>
-                <th>Email</th>
-                <th>Rate</th>
-                <th>Wise id</th>
-                <th>Hubstaff</th>
+                <th scope="col">First</th>
+                <th scope="col">Last</th>
+                <th scope="col">Email</th>
+                <th scope="col">Rate</th>
+                <th scope="col">Wise id</th>
+                <th scope="col">Hubstaff</th>
               </tr>
             </thead>
             <tbody>

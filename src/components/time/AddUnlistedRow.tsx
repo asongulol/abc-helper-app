@@ -160,6 +160,7 @@ export const AddUnlistedRow = ({
               onChange={(e) => setSelectedWorkerId(e.target.value)}
               style={{ maxWidth: 240 }}
               disabled={pending}
+              aria-label="Add a contractor not listed above"
             >
               <option value="">Select contractor…</option>
               {contractorOptions.map((o) => (
@@ -266,11 +267,11 @@ export const AddUnlistedRow = ({
                     flex: '1 1 320px',
                   }}
                 >
-                  <table>
+                  <table aria-label="Daily hours">
                     <thead>
                       <tr>
-                        <th>Date</th>
-                        <th>Hours</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">Hours</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -282,6 +283,7 @@ export const AddUnlistedRow = ({
                               type="number"
                               step="0.01"
                               style={{ width: 90 }}
+                              aria-label={`Hours for ${dt}`}
                               value={dailyMap[dt] ?? ''}
                               onChange={(e) =>
                                 setDailyMap((prev) => ({

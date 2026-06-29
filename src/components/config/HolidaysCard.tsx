@@ -189,12 +189,14 @@ export const HolidaysCard = () => {
         </p>
       ) : (
         <div className="table-scroll" style={{ marginBottom: 12 }}>
-          <table>
+          <table aria-label="Holidays">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Name</th>
-                <th style={{ width: 80 }}>Remove</th>
+                <th scope="col">Date</th>
+                <th scope="col">Name</th>
+                <th scope="col" style={{ width: 80 }}>
+                  Remove
+                </th>
               </tr>
             </thead>
             <tbody>

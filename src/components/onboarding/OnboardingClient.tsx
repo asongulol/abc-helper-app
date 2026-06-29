@@ -115,7 +115,7 @@ export const OnboardingClient = ({
                 style={{
                   width: `${pct}%`,
                   height: '100%',
-                  background: '#1F3A68',
+                  background: 'var(--navy)',
                 }}
               />
             </div>

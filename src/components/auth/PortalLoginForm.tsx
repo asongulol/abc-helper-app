@@ -86,6 +86,8 @@ export const PortalLoginForm = () => {
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         required
+        aria-invalid={err ? 'true' : undefined}
+        aria-describedby={err ? 'portal-login-err' : undefined}
       />
       <label className="sub" htmlFor={passwordId}>
         Password
@@ -98,6 +100,8 @@ export const PortalLoginForm = () => {
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         required
+        aria-invalid={err ? 'true' : undefined}
+        aria-describedby={err ? 'portal-login-err' : undefined}
       />
       {TURNSTILE_SITE_KEY && (
         <>
@@ -111,7 +115,7 @@ export const PortalLoginForm = () => {
         </>
       )}
       {err && (
-        <div className="err" role="alert">
+        <div id="portal-login-err" className="err" role="alert">
           {err}
         </div>
       )}

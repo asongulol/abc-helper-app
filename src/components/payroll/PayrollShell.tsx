@@ -11,6 +11,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PeriodSummaryRow, SavedPayment } from '@/db/queries/payroll';
@@ -552,15 +553,15 @@ export const PayrollShell = ({
           </EmptyState>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Pay periods">
               <thead>
                 <tr>
-                  <th>Period</th>
-                  <th>Pay date</th>
-                  <th>Contractors</th>
-                  <th>Net total</th>
-                  <th>State</th>
-                  <th />
+                  <th scope="col">Period</th>
+                  <th scope="col">Pay date</th>
+                  <th scope="col">Contractors</th>
+                  <th scope="col">Net total</th>
+                  <th scope="col">State</th>
+                  <th scope="col" />
                 </tr>
               </thead>
               <tbody>
@@ -620,9 +621,9 @@ export const PayrollShell = ({
             <div
               className="banner"
               style={{
-                background: '#fef2f2',
+                background: 'var(--bad-soft)',
                 borderColor: '#fecaca',
-                color: '#b91c1c',
+                color: 'var(--bad)',
                 marginBottom: 8,
               }}
             >
@@ -636,9 +637,9 @@ export const PayrollShell = ({
             <div
               className="banner"
               style={{
-                background: '#fef2f2',
+                background: 'var(--bad-soft)',
                 borderColor: '#fecaca',
-                color: '#b91c1c',
+                color: 'var(--bad)',
                 marginBottom: 8,
               }}
             >
@@ -652,9 +653,9 @@ export const PayrollShell = ({
             <div
               className="banner"
               style={{
-                background: '#fef3c7',
-                borderColor: '#fcd34d',
-                color: '#92400e',
+                background: 'var(--warn-soft)',
+                borderColor: 'var(--warn)',
+                color: 'var(--warn)',
               }}
             >
               <b>⚠ {skippedNoRate.length} contractor(s) skipped (no rate):</b>{' '}
@@ -728,7 +729,7 @@ export const PayrollShell = ({
                 type="button"
                 className="btn ghost"
                 disabled={busy || isPaid}
-                style={{ borderColor: '#b91c1c', color: '#b91c1c' }}
+                style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
                 onClick={() => {
                   if (isPaid) {
                     notify('Period is marked PAID — go to Process & Pay → Mark all unpaid first.', {
@@ -896,24 +897,24 @@ export const PayrollShell = ({
             {tableOpen && (
               <>
                 <div className="table-scroll keep-table">
-                  <table>
+                  <table aria-label="Pay statements">
                     <thead>
                       <tr>
-                        <th>Contractor</th>
-                        <th>Worked h</th>
-                        <th>Exp h</th>
-                        <th>Ratio</th>
-                        <th>Rate ₱</th>
-                        <th>Gross ₱</th>
-                        <th>HA ₱</th>
-                        <th>13th ₱</th>
-                        <th>Lunch ₱</th>
-                        <th>Bonus ₱</th>
-                        <th>Misc ₱</th>
-                        <th>Net ₱</th>
-                        <th>≈ USD</th>
-                        <th>Via</th>
-                        {isOpen && <th />}
+                        <th scope="col">Contractor</th>
+                        <th scope="col">Worked h</th>
+                        <th scope="col">Exp h</th>
+                        <th scope="col">Ratio</th>
+                        <th scope="col">Rate ₱</th>
+                        <th scope="col">Gross ₱</th>
+                        <th scope="col">HA ₱</th>
+                        <th scope="col">13th ₱</th>
+                        <th scope="col">Lunch ₱</th>
+                        <th scope="col">Bonus ₱</th>
+                        <th scope="col">Misc ₱</th>
+                        <th scope="col">Net ₱</th>
+                        <th scope="col">≈ USD</th>
+                        <th scope="col">Via</th>
+                        {isOpen && <th scope="col" />}
                       </tr>
                     </thead>
                     <tbody>
@@ -931,7 +932,7 @@ export const PayrollShell = ({
                             key={r.workerId}
                             style={
                               r.inactive
-                                ? { background: '#fef2f2' }
+                                ? { background: 'var(--bad-soft)' }
                                 : r.ratePhp == null
                                   ? { background: 'var(--warn-soft)' }
                                   : undefined
@@ -965,6 +966,7 @@ export const PayrollShell = ({
                                   <input
                                     type="number"
                                     step="0.01"
+                                    aria-label="Gross pay (₱)"
                                     value={r.grossPhp ?? ''}
                                     onChange={(e) => {
                                       const val = e.target.value;
@@ -1031,7 +1033,7 @@ export const PayrollShell = ({
                                 {Math.abs(miscSum) > 0.005 ? (
                                   <span
                                     style={{
-                                      color: miscSum < 0 ? '#b91c1c' : 'inherit',
+                                      color: miscSum < 0 ? 'var(--bad)' : 'inherit',
                                     }}
                                   >
                                     {miscSum < 0 ? '-' : ''}
@@ -1084,6 +1086,7 @@ export const PayrollShell = ({
                             <td data-label="Via">
                               {isOpen ? (
                                 <select
+                                  aria-label="Payout method"
                                   value={r.payoutMethod ?? ''}
                                   onChange={(e) =>
                                     patchRow(r.workerId, {
@@ -1241,94 +1244,71 @@ export const PayrollShell = ({
       )}
 
       {confirmModal?.kind === 'unlock' && (
-        <>
-          {/* Reason field shown before the modal so user fills it before confirming */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: overlay only stops event propagation; it exposes no action and adds no keyboard semantics. */}
+        <Modal
+          title="Unlock period for editing?"
+          maxWidth={480}
+          onClose={() => {
+            setConfirmModal(null);
+            setUnlockReason('');
+          }}
+        >
+          <p>
+            Period:{' '}
+            <b>
+              {periodStart} → {periodEnd}
+            </b>
+          </p>
           <div
             style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 49,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'rgba(0,0,0,0.45)',
+              background: 'var(--warn-soft)',
+              border: '1px solid var(--warn)',
+              borderRadius: 6,
+              padding: '10px 14px',
+              marginBottom: 12,
+              fontSize: 13,
             }}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => e.stopPropagation()}
           >
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: card only stops event propagation; it exposes no action and adds no keyboard semantics. */}
-            <div
-              className="card"
-              style={{ width: '100%', maxWidth: 480, zIndex: 50, margin: 16 }}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => e.stopPropagation()}
-            >
-              <h3 style={{ marginTop: 0 }}>Unlock period for editing?</h3>
-              <p>
-                Period:{' '}
-                <b>
-                  {periodStart} → {periodEnd}
-                </b>
-              </p>
-              <div
-                style={{
-                  background: '#fef3c7',
-                  border: '1px solid #fcd34d',
-                  borderRadius: 6,
-                  padding: '10px 14px',
-                  marginBottom: 12,
-                  fontSize: 13,
-                }}
-              >
-                Recalculating after unlock will REBUILD net amounts from hours — manual overrides
-                (gross, PDD lunch, 13th, bonus) will be wiped. Re-lock when done.
-              </div>
-              <div className="field">
-                <label htmlFor="unlock-reason">Reason (required — typed text enables Unlock)</label>
-                <input
-                  id="unlock-reason"
-                  value={unlockReason}
-                  onChange={(e) => setUnlockReason(e.target.value)}
-                  placeholder="e.g. Rate correction for Maria Santos"
-                />
-              </div>
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  justifyContent: 'flex-end',
-                  marginTop: 12,
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    setConfirmModal(null);
-                    setUnlockReason('');
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  style={{
-                    background: '#b91c1c',
-                    color: '#fff',
-                    borderColor: '#b91c1c',
-                  }}
-                  disabled={busy || !unlockReason.trim()}
-                  onClick={handleUnlock}
-                >
-                  {busy ? 'Unlocking…' : 'Unlock'}
-                </button>
-              </div>
-            </div>
+            Recalculating after unlock will REBUILD net amounts from hours — manual overrides
+            (gross, PDD lunch, 13th, bonus) will be wiped. Re-lock when done.
           </div>
-        </>
+          <div className="field">
+            <label htmlFor="unlock-reason">Reason (required — typed text enables Unlock)</label>
+            <input
+              id="unlock-reason"
+              value={unlockReason}
+              onChange={(e) => setUnlockReason(e.target.value)}
+              placeholder="e.g. Rate correction for Maria Santos"
+            />
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              justifyContent: 'flex-end',
+              marginTop: 12,
+            }}
+          >
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={busy}
+              onClick={() => {
+                setConfirmModal(null);
+                setUnlockReason('');
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn danger"
+              disabled={busy || !unlockReason.trim()}
+              onClick={handleUnlock}
+            >
+              {busy ? 'Unlocking…' : 'Unlock'}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

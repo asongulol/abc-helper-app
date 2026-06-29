@@ -89,6 +89,7 @@ export const HubstaffProjectsCard = ({
           value={r.companyId}
           onChange={(e) => handleAssign(r, e.target.value)}
           disabled={isPending}
+          aria-label={`Assigned client for ${r.name ?? 'project'}`}
         >
           {companyOptions.map((c) => (
             <option key={c.id} value={c.id}>

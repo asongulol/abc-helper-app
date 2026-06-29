@@ -99,13 +99,13 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
         </div>
       ) : (
         <div className="table-scroll" style={{ marginTop: 4 }}>
-          <table>
+          <table aria-label="Payrolls ready to pay">
             <thead>
               <tr>
-                <th>Pay period</th>
-                <th>Pay date</th>
-                <th>Status</th>
-                <th />
+                <th scope="col">Pay period</th>
+                <th scope="col">Pay date</th>
+                <th scope="col">Status</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>

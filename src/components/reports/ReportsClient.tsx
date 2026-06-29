@@ -15,6 +15,7 @@
  */
 
 import { Fragment, useEffect, useState, useTransition } from 'react';
+import { StatTile } from '@/components/overview/StatTile';
 import { ContractorPicker } from '@/components/ui';
 import { money } from '@/lib/format';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
@@ -107,42 +108,15 @@ export const ReportsClient = ({ companyId, data }: Props) => {
           Totals come from locked/saved pay statements. Showing the selected company. Click a period
           to see the per-contractor breakdown.
         </p>
-        <div className="row dash-stats">
-          <div className="field dash-stat">
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: decorative stat caption (legacy .dash-stat markup) */}
-            <label>Total net (all periods)</label>
-            <div className="val dash-stat-num" style={{ fontSize: 20, fontWeight: 700 }}>
-              {money(grandNet, 'PHP')}
-            </div>
-          </div>
-          <div className="field dash-stat">
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: decorative stat caption (legacy .dash-stat markup) */}
-            <label>Total ≈ USD ref</label>
-            <div className="val dash-stat-num" style={{ fontSize: 20, fontWeight: 700 }}>
-              {money(grandUsd, 'USD')}
-            </div>
-          </div>
-          <div className="field dash-stat">
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: decorative stat caption (legacy .dash-stat markup) */}
-            <label>Unpaid / not yet sent</label>
-            <div
-              className="val dash-stat-num"
-              style={{
-                fontSize: 20,
-                fontWeight: 700,
-                color: grandUnpaid > 0 ? 'var(--warn)' : 'var(--good)',
-              }}
-            >
-              {money(grandUnpaid, 'PHP')}
-            </div>
-          </div>
-          <div className="field dash-stat">
-            {/* biome-ignore lint/a11y/noLabelWithoutControl: decorative stat caption (legacy .dash-stat markup) */}
-            <label>Pay periods recorded</label>
-            <div className="val dash-stat-num" style={{ fontSize: 20, fontWeight: 700 }}>
-              {periods.length}
-            </div>
-          </div>
+        <div className="ov-grid">
+          <StatTile label="Total net (all periods)" value={money(grandNet, 'PHP')} />
+          <StatTile label="Total ≈ USD ref" value={money(grandUsd, 'USD')} />
+          <StatTile
+            label="Unpaid / not yet sent"
+            value={money(grandUnpaid, 'PHP')}
+            tone={grandUnpaid > 0 ? 'warn' : 'good'}
+          />
+          <StatTile label="Pay periods recorded" value={periods.length} />
         </div>
       </div>
 
@@ -234,18 +208,21 @@ export const ReportsClient = ({ companyId, data }: Props) => {
           <div className="empty">No periods match this Year/Month filter.</div>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Payout by pay period">
               <thead>
                 <tr>
-                  <th style={{ width: 24 }} />
-                  <th>Period</th>
-                  <th>Pay date</th>
-                  <th>Contractors</th>
-                  <th>Net ₱</th>
-                  <th title="USD reference only — contractors are paid in PHP. Computed as Net ₱ ÷ FX. FX is the rate Wise locked at transfer time (USD→PHP) where available, otherwise a market approximation.">
+                  <th scope="col" style={{ width: 24 }} />
+                  <th scope="col">Period</th>
+                  <th scope="col">Pay date</th>
+                  <th scope="col">Contractors</th>
+                  <th scope="col">Net ₱</th>
+                  <th
+                    scope="col"
+                    title="USD reference only — contractors are paid in PHP. Computed as Net ₱ ÷ FX. FX is the rate Wise locked at transfer time (USD→PHP) where available, otherwise a market approximation."
+                  >
                     ≈ USD ref
                   </th>
-                  <th>Unpaid ₱</th>
+                  <th scope="col">Unpaid ₱</th>
                 </tr>
               </thead>
               <tbody>
@@ -295,24 +272,27 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                           <td
                             colSpan={nCols}
                             style={{
-                              background: '#f8fafc',
+                              background: 'var(--surface-2)',
                               padding: '8px 10px',
                             }}
                           >
                             <div style={{ maxHeight: 320, overflow: 'auto' }}>
-                              <table className="keep-table">
+                              <table
+                                className="keep-table"
+                                aria-label="Per-contractor breakdown for this pay period"
+                              >
                                 <thead>
                                   <tr>
-                                    <th>Contractor</th>
-                                    <th>Hours</th>
-                                    <th>Rate ₱</th>
-                                    <th>Gross ₱</th>
-                                    <th>Health ₱</th>
-                                    <th>13th ₱</th>
-                                    <th>Lunch ₱</th>
-                                    <th>Bonus ₱</th>
-                                    <th>Misc earn ₱</th>
-                                    <th>
+                                    <th scope="col">Contractor</th>
+                                    <th scope="col">Hours</th>
+                                    <th scope="col">Rate ₱</th>
+                                    <th scope="col">Gross ₱</th>
+                                    <th scope="col">Health ₱</th>
+                                    <th scope="col">13th ₱</th>
+                                    <th scope="col">Lunch ₱</th>
+                                    <th scope="col">Bonus ₱</th>
+                                    <th scope="col">Misc earn ₱</th>
+                                    <th scope="col">
                                       <span
                                         className="tip-wrap"
                                         // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so the hover tooltip is keyboard-reachable (legacy tip-wrap)
@@ -326,7 +306,7 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                         </span>
                                       </span>
                                     </th>
-                                    <th>
+                                    <th scope="col">
                                       <span
                                         className="tip-wrap"
                                         // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable so the hover tooltip is keyboard-reachable (legacy tip-wrap)
@@ -340,9 +320,9 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                         </span>
                                       </span>
                                     </th>
-                                    <th>Net ₱</th>
-                                    <th>Method</th>
-                                    <th>Status</th>
+                                    <th scope="col">Net ₱</th>
+                                    <th scope="col">Method</th>
+                                    <th scope="col">Status</th>
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -363,7 +343,7 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                         <td>{money(r.lunch, 'PHP')}</td>
                                         <td>{money(r.bonus, 'PHP')}</td>
                                         <td>{r.miscEarn ? money(r.miscEarn, 'PHP') : '—'}</td>
-                                        <td style={r.miscDeduct ? { color: '#b91c1c' } : {}}>
+                                        <td style={r.miscDeduct ? { color: 'var(--bad)' } : {}}>
                                           {r.miscDeduct ? `-${money(r.miscDeduct, 'PHP')}` : '—'}
                                         </td>
                                         <td className="muted">
@@ -379,8 +359,8 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                                             style={
                                               PAID(r.status)
                                                 ? {
-                                                    background: '#dcfce7',
-                                                    color: '#065f46',
+                                                    background: 'var(--good-soft)',
+                                                    color: 'var(--good)',
                                                   }
                                                 : {
                                                     background: '#f3f4f6',
@@ -604,16 +584,28 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
         }}
       >
         <div>
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: caption above the sibling date input (legacy markup) */}
-          <label style={{ fontSize: 10, color: 'var(--muted)' }}>From (period start)</label>
+          <label htmlFor="rpt-summary-from" style={{ fontSize: 10, color: 'var(--muted)' }}>
+            From (period start)
+          </label>
           <br />
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <input
+            id="rpt-summary-from"
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
         </div>
         <div>
-          {/* biome-ignore lint/a11y/noLabelWithoutControl: caption above the sibling date input (legacy markup) */}
-          <label style={{ fontSize: 10, color: 'var(--muted)' }}>To</label>
+          <label htmlFor="rpt-summary-to" style={{ fontSize: 10, color: 'var(--muted)' }}>
+            To
+          </label>
           <br />
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <input
+            id="rpt-summary-to"
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
         </div>
         <div>
           {/* biome-ignore lint/a11y/noLabelWithoutControl: caption above the contractor picker (legacy markup) */}
@@ -666,16 +658,16 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
         <div className="empty">No pay statements for the selected contractor(s) in this range.</div>
       ) : (
         <div className="table-scroll">
-          <table>
+          <table aria-label="Contractor pay summary totals">
             <thead>
               <tr>
-                <th>Contractor</th>
-                <th>Periods</th>
-                <th>Hours</th>
-                <th>Gross ₱</th>
-                <th>Misc ₱</th>
-                <th>Net ₱</th>
-                <th>Paid ₱</th>
+                <th scope="col">Contractor</th>
+                <th scope="col">Periods</th>
+                <th scope="col">Hours</th>
+                <th scope="col">Gross ₱</th>
+                <th scope="col">Misc ₱</th>
+                <th scope="col">Net ₱</th>
+                <th scope="col">Paid ₱</th>
               </tr>
             </thead>
             <tbody>
@@ -684,7 +676,16 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                 return (
                   <Fragment key={r.gkey}>
                     <tr
+                      className="clickable"
+                      tabIndex={0}
+                      aria-expanded={open}
                       onClick={() => setOpenKey(open ? null : r.gkey)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setOpenKey(open ? null : r.gkey);
+                        }
+                      }}
                       style={{
                         cursor: 'pointer',
                         background: open ? '#f1f5f9' : undefined,
@@ -699,7 +700,7 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                       <td data-label="Periods">{r.periods}</td>
                       <td data-label="Hours">{num(r.hours)}</td>
                       <td data-label="Gross ₱">{money(r.gross, 'PHP')}</td>
-                      <td data-label="Misc ₱" style={r.misc < 0 ? { color: '#b91c1c' } : {}}>
+                      <td data-label="Misc ₱" style={r.misc < 0 ? { color: 'var(--bad)' } : {}}>
                         {money(r.misc, 'PHP')}
                       </td>
                       <td data-label="Net ₱">
@@ -714,25 +715,31 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                     </tr>
                     {open && (
                       <tr>
-                        <td colSpan={7} style={{ background: '#f8fafc', padding: '8px 10px' }}>
+                        <td
+                          colSpan={7}
+                          style={{ background: 'var(--surface-2)', padding: '8px 10px' }}
+                        >
                           <div className="sub" style={{ margin: '0 0 6px' }}>
                             Individual pay statements ({r.statements.length}) — each pay period that
                             makes up the totals above.
                           </div>
-                          <table className="keep-table">
+                          <table
+                            className="keep-table"
+                            aria-label="Individual pay statements for this contractor"
+                          >
                             <thead>
                               <tr>
-                                <th>Pay period</th>
-                                <th>Pay date</th>
-                                <th>Hours</th>
-                                <th>Gross ₱</th>
-                                <th>Health ₱</th>
-                                <th>13th ₱</th>
-                                <th>Lunch ₱</th>
-                                <th>Bonus ₱</th>
-                                <th>Misc ₱</th>
-                                <th>Net ₱</th>
-                                <th>Status</th>
+                                <th scope="col">Pay period</th>
+                                <th scope="col">Pay date</th>
+                                <th scope="col">Hours</th>
+                                <th scope="col">Gross ₱</th>
+                                <th scope="col">Health ₱</th>
+                                <th scope="col">13th ₱</th>
+                                <th scope="col">Lunch ₱</th>
+                                <th scope="col">Bonus ₱</th>
+                                <th scope="col">Misc ₱</th>
+                                <th scope="col">Net ₱</th>
+                                <th scope="col">Status</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -750,7 +757,7 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                                     <td>{s.t13 ? money(s.t13, 'PHP') : '—'}</td>
                                     <td>{s.lunch ? money(s.lunch, 'PHP') : '—'}</td>
                                     <td>{s.bonus ? money(s.bonus, 'PHP') : '—'}</td>
-                                    <td style={s.misc < 0 ? { color: '#b91c1c' } : {}}>
+                                    <td style={s.misc < 0 ? { color: 'var(--bad)' } : {}}>
                                       {s.misc ? money(s.misc, 'PHP') : '—'}
                                     </td>
                                     <td>
@@ -762,8 +769,8 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
                                         style={
                                           isPaid
                                             ? {
-                                                background: '#dcfce7',
-                                                color: '#065f46',
+                                                background: 'var(--good-soft)',
+                                                color: 'var(--good)',
                                               }
                                             : {
                                                 background: '#f3f4f6',
@@ -893,6 +900,7 @@ const ContractorHistory = ({
         )}
       </div>
       <select
+        aria-label="Select contractor for pay and hours history"
         value={wid}
         onChange={(e) => loadHistory(e.target.value)}
         style={{ maxWidth: 340, margin: '6px 0' }}
@@ -910,19 +918,19 @@ const ContractorHistory = ({
         <div className="empty">No hours or pay records for this contractor.</div>
       ) : (
         <div className="table-scroll">
-          <table>
+          <table aria-label="Contractor pay and hours history">
             <thead>
               <tr>
-                <th>Pay period</th>
-                <th>Worked h</th>
-                <th>PTO h</th>
-                <th>Health ₱</th>
-                <th>Lunch ₱</th>
-                <th>13th ₱</th>
-                <th>Gross ₱</th>
-                <th>Net ₱</th>
-                <th>Method</th>
-                <th>Status</th>
+                <th scope="col">Pay period</th>
+                <th scope="col">Worked h</th>
+                <th scope="col">PTO h</th>
+                <th scope="col">Health ₱</th>
+                <th scope="col">Lunch ₱</th>
+                <th scope="col">13th ₱</th>
+                <th scope="col">Gross ₱</th>
+                <th scope="col">Net ₱</th>
+                <th scope="col">Method</th>
+                <th scope="col">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -932,7 +940,16 @@ const ContractorHistory = ({
                 return (
                   <Fragment key={`${r.start}-${r.end || ''}`}>
                     <tr
+                      className={hasDays ? 'clickable' : undefined}
+                      tabIndex={hasDays ? 0 : undefined}
+                      aria-expanded={hasDays ? open : undefined}
                       onClick={() => hasDays && setOpenKey(open ? null : i)}
+                      onKeyDown={(e) => {
+                        if (hasDays && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          setOpenKey(open ? null : i);
+                        }
+                      }}
                       style={{
                         cursor: hasDays ? 'pointer' : 'default',
                         background: open ? '#f1f5f9' : undefined,
@@ -962,7 +979,7 @@ const ContractorHistory = ({
                             className="pill"
                             style={
                               PAID(r.status)
-                                ? { background: '#dcfce7', color: '#065f46' }
+                                ? { background: 'var(--good-soft)', color: 'var(--good)' }
                                 : {
                                     background: '#f3f4f6',
                                     color: 'var(--muted)',
@@ -980,14 +997,20 @@ const ContractorHistory = ({
                     </tr>
                     {open && hasDays && (
                       <tr>
-                        <td colSpan={10} style={{ background: '#f8fafc', padding: '8px 10px' }}>
+                        <td
+                          colSpan={10}
+                          style={{ background: 'var(--surface-2)', padding: '8px 10px' }}
+                        >
                           <div>
-                            <table className="keep-table">
+                            <table
+                              className="keep-table"
+                              aria-label="Per-day worked and PTO hours for this pay period"
+                            >
                               <thead>
                                 <tr>
-                                  <th>Day</th>
-                                  <th>Worked h</th>
-                                  <th>PTO h</th>
+                                  <th scope="col">Day</th>
+                                  <th scope="col">Worked h</th>
+                                  <th scope="col">PTO h</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1099,13 +1122,13 @@ const UtilizationReport = ({ companyId }: { companyId: string }) => {
         </div>
       ) : (
         <div className="table-scroll">
-          <table>
+          <table aria-label="Average weekly activity">
             <thead>
               <tr>
-                <th>Contractor</th>
-                <th>Week of</th>
-                <th>Avg activity</th>
-                <th>Hours</th>
+                <th scope="col">Contractor</th>
+                <th scope="col">Week of</th>
+                <th scope="col">Avg activity</th>
+                <th scope="col">Hours</th>
               </tr>
             </thead>
             <tbody>

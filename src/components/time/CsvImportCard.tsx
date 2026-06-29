@@ -240,8 +240,8 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
               style={{
                 marginBottom: 10,
                 background: 'var(--warn-soft)',
-                borderColor: '#fcd34d',
-                color: '#92400e',
+                borderColor: 'var(--warn)',
+                color: 'var(--warn)',
               }}
             >
               <strong>{unmatchedCount} Hubstaff name(s) could not be matched</strong> to a
@@ -284,14 +284,14 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
           )}
 
           <div className="table-scroll">
-            <table>
+            <table aria-label="Hubstaff time import preview">
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Attribution</th>
-                  <th>Total tracked</th>
-                  <th>Activity</th>
-                  <th>Days</th>
+                  <th scope="col">Name</th>
+                  <th scope="col">Attribution</th>
+                  <th scope="col">Total tracked</th>
+                  <th scope="col">Activity</th>
+                  <th scope="col">Days</th>
                 </tr>
               </thead>
               <tbody>

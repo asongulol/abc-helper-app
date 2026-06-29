@@ -406,50 +406,7 @@ a.side-item:hover {
   .sidebar {
     display: none;
   }
-  .more-sheet-bg {
-    display: block;
-  }
 }
-.more-sheet-bg {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 28, 51, 0.42);
-  z-index: 60;
-  display: none;
-}
-.more-sheet {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 82vh;
-  overflow-y: auto;
-  background: var(--card);
-  border-radius: 16px 16px 0 0;
-  padding: 12px 12px calc(18px + env(safe-area-inset-bottom, 0px));
-  box-shadow: var(--shadow-lg);
-  animation: sheetup 0.2s var(--ease);
-}
-@keyframes sheetup {
-  from {
-    transform: translateY(100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .more-sheet {
-    animation: none;
-  }
-}
-.more-sheet-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 2px 4px 8px;
-}
-
 /* ===== Content wrap, cards, headings ===================================== */
 .wrap {
   max-width: 1180px;
@@ -925,7 +882,6 @@ a.btn:hover {
   text-align: left;
   background: var(--card);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 16px 18px;
   cursor: pointer;
@@ -945,17 +901,19 @@ a.btn:hover {
   box-shadow: none;
   transform: none;
 }
-.ov-tile.t-good {
-  border-left-color: var(--good);
+/* Status reads from the figure itself (money is exact + colored), not a
+   side-stripe border. */
+.ov-tile.t-good .ov-tile-num {
+  color: var(--good);
 }
-.ov-tile.t-warn {
-  border-left-color: var(--warn);
+.ov-tile.t-warn .ov-tile-num {
+  color: var(--warn);
 }
-.ov-tile.t-bad {
-  border-left-color: var(--bad);
+.ov-tile.t-bad .ov-tile-num {
+  color: var(--bad);
 }
-.ov-tile.t-info {
-  border-left-color: var(--navy);
+.ov-tile.t-info .ov-tile-num {
+  color: var(--navy);
 }
 .ov-tile-label {
   font-size: 12px;
@@ -1201,9 +1159,8 @@ a.btn:hover {
 /* ===== Messages: banners + toasts ======================================== */
 .banner {
   background: var(--warn-soft);
-  border: 1px solid #fcd34d;
-  border-left: 5px solid #f59e0b;
-  color: #92400e;
+  border: 1px solid var(--warn);
+  color: var(--warn);
   padding: 13px 16px;
   border-radius: var(--radius-sm);
   margin-bottom: 18px;
@@ -1222,7 +1179,7 @@ a.btn:hover {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #f59e0b;
+  background: var(--warn);
   color: #fff;
   font-weight: 800;
   font-size: 14px;
@@ -1231,36 +1188,33 @@ a.btn:hover {
   justify-content: center;
 }
 .banner.success {
-  background: #dcfce7;
-  border-color: #86efac;
-  border-left-color: #16a34a;
-  color: #065f46;
+  background: var(--good-soft);
+  border-color: var(--good);
+  color: var(--good);
 }
 .banner.success::before {
   content: "\2713";
-  background: #16a34a;
+  background: var(--good);
 }
 .banner.error {
-  background: #fee2e2;
-  border-color: #fecaca;
-  border-left-color: #dc2626;
-  color: #991b1b;
+  background: var(--bad-soft);
+  border-color: var(--bad);
+  color: var(--bad);
 }
 .banner.error::before {
   content: "\2715";
-  background: #dc2626;
+  background: var(--bad);
 }
 /* Info: neutral/instructional. Important: NOT green — avoids being mistaken
-   for a success message. */
+   for a success message. Uses the brand navy, matching the .t-info tone. */
 .banner.info {
-  background: #dbeafe;
-  border-color: #bfdbfe;
-  border-left-color: #2563eb;
-  color: #1e3a8a;
+  background: var(--navy-50);
+  border-color: var(--navy);
+  color: var(--navy-700);
 }
 .banner.info::before {
   content: "\2139";
-  background: #2563eb;
+  background: var(--navy);
 }
 @keyframes bannerPop {
   from {
@@ -1553,8 +1507,14 @@ dialog.modal::backdrop {
 }
 .modal-head .x {
   float: none;
-  margin: -2px -2px 0 0;
+  margin: -10px -10px 0 0;
   line-height: 1;
+  /* 44px tap target at every breakpoint (not only the <=640px sheet). */
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 /* Hairline-separated sub-section inside a modal or card. */
 .modal-section {
@@ -2016,11 +1976,9 @@ dialog.modal::backdrop {
   --line: #e3e6ec;
   --text: #1a1d21;
   --muted: #6b7280;
-  --accent: #1f3a68;
+  /* --accent/--gold/--good/--warn inherit the base :root brand tokens (they
+     were identical literals — re-skinning --navy now flows through to portal). */
   --accent-soft: #eaf0fb;
-  --gold: #d4a24c;
-  --good: #0a7d3c;
-  --warn: #b45309;
   --radius: 12px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--bg);
@@ -2044,8 +2002,11 @@ dialog.modal::backdrop {
   justify-content: space-between;
   z-index: 5;
 }
-.portal .top b {
+.portal .top .ws-title {
   font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.2;
 }
 .portal .top small {
   display: block;
@@ -2062,6 +2023,12 @@ dialog.modal::backdrop {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  /* Touch floor: portal is the contractor phone surface. Covers .ghost/.link
+     and per-instance padding overrides via min-height. */
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .portal .btn:disabled {
   opacity: 0.5;
@@ -2089,6 +2056,7 @@ dialog.modal::backdrop {
   border: 0;
   border-bottom: 2px solid transparent;
   padding: 9px 4px;
+  min-height: 44px;
   font-size: 14px;
   font-weight: 600;
   color: var(--muted);

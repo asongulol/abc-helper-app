@@ -251,6 +251,7 @@ export const MiscModal = ({
             >
               <input
                 type="text"
+                aria-label="Earning label"
                 placeholder="Description (required)"
                 value={e.label}
                 onChange={(ev) => setEarn(i, { label: ev.target.value })}
@@ -259,6 +260,7 @@ export const MiscModal = ({
               <input
                 type="number"
                 step="0.01"
+                aria-label="Earning amount"
                 placeholder="₱ amount"
                 value={e.amount}
                 onChange={(ev) => setEarn(i, { amount: ev.target.value })}
@@ -318,6 +320,7 @@ export const MiscModal = ({
             >
               <input
                 type="text"
+                aria-label="Hours label"
                 placeholder="Description (required)"
                 value={e.label}
                 onChange={(ev) => setHr(i, { label: ev.target.value })}
@@ -326,6 +329,7 @@ export const MiscModal = ({
               <input
                 type="number"
                 step="0.01"
+                aria-label="Hours worked"
                 placeholder="hours"
                 value={e.hours}
                 onChange={(ev) => setHr(i, { hours: ev.target.value })}
@@ -391,6 +395,7 @@ export const MiscModal = ({
             >
               <input
                 type="text"
+                aria-label="Deduction label"
                 placeholder="Reason (required)"
                 value={e.label}
                 onChange={(ev) => setDed(i, { label: ev.target.value })}
@@ -399,6 +404,7 @@ export const MiscModal = ({
               <input
                 type="number"
                 step="0.01"
+                aria-label="Deduction amount"
                 placeholder="₱ amount"
                 value={e.amount}
                 onChange={(ev) => setDed(i, { amount: ev.target.value })}
@@ -421,7 +427,7 @@ export const MiscModal = ({
       <div className="actions between">
         <div style={{ fontSize: 13 }}>
           Net impact:{' '}
-          <b style={{ color: netImpact < 0 ? '#b91c1c' : '#166534' }}>
+          <b style={{ color: netImpact < 0 ? 'var(--bad)' : 'var(--good)' }}>
             {netImpact < 0 ? '-' : '+'}₱
             {Math.abs(netImpact).toLocaleString('en-US', {
               minimumFractionDigits: 2,
