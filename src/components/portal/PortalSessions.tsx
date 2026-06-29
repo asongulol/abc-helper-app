@@ -160,26 +160,26 @@ export const PortalSessions = ({ clients, sessions, defaultDate }: Props) => {
           </p>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Your sessions">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Client</th>
-                  <th>Item</th>
-                  <th>Child</th>
-                  <th>EIID</th>
-                  <th>Status</th>
+                  <th scope="col">Date</th>
+                  <th scope="col">Client</th>
+                  <th scope="col">Item</th>
+                  <th scope="col">Child</th>
+                  <th scope="col">EIID</th>
+                  <th scope="col">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {sessions.map((s) => (
                   <tr key={s.id}>
-                    <td>{fmtDate(s.sessionDate)}</td>
-                    <td>{s.companyName}</td>
-                    <td>{s.item ?? '—'}</td>
-                    <td>{s.childInitials ?? '—'}</td>
-                    <td>{s.eiid ?? '—'}</td>
-                    <td>
+                    <td data-label="Date">{fmtDate(s.sessionDate)}</td>
+                    <td data-label="Client">{s.companyName}</td>
+                    <td data-label="Item">{s.item ?? '—'}</td>
+                    <td data-label="Child">{s.childInitials ?? '—'}</td>
+                    <td data-label="EIID">{s.eiid ?? '—'}</td>
+                    <td data-label="Status">
                       <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
                     </td>
                   </tr>

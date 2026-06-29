@@ -18,6 +18,7 @@ import {
   decideRefresh,
   filterLive,
 } from '@/lib/wise/matcher';
+import { missingRecipientReason } from '@/lib/wise/recipient-miss';
 import type { MatchDecision, MatchResult, WiseDates, WiseTransfer } from '@/lib/wise/types';
 import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
@@ -820,6 +821,24 @@ export async function serviceRecipients(profileId?: number): Promise<{
   });
 
   return { profileId: pid, recipients };
+}
+
+/**
+ * Build an admin-facing reason for a recipient that came back missing,
+ * distinguishing a stale/deleted id from a systemic credential/environment
+ * problem (when the token sees zero recipients). Call this ONLY on the miss
+ * path — it performs one extra recipient-list request.
+ */
+export async function explainMissingRecipient(recipientId: number): Promise<string> {
+  try {
+    const { recipients } = await serviceRecipients();
+    return missingRecipientReason(recipientId, recipients.length);
+  } catch (e) {
+    return (
+      `Recipient ${recipientId} not found, and the Wise recipient list could not be loaded ` +
+      `(${e instanceof Error ? e.message : String(e)}). Check WISE_API_TOKEN and connectivity.`
+    );
+  }
 }
 
 export async function serviceGetRecipient(recipientId: number): Promise<WiseRecipient | null> {

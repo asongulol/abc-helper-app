@@ -106,12 +106,12 @@ export function RateCard({ workerId, companyId }: Props) {
 
       {history != null && history.length > 0 && (
         <div className="table-scroll" style={{ marginBottom: 20 }}>
-          <table>
+          <table aria-label="Rate history">
             <thead>
               <tr>
-                <th>Amount (PHP/period)</th>
-                <th>Effective start</th>
-                <th>Effective end</th>
+                <th scope="col">Amount (PHP/period)</th>
+                <th scope="col">Effective start</th>
+                <th scope="col">Effective end</th>
               </tr>
             </thead>
             <tbody>

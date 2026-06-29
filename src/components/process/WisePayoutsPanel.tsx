@@ -139,10 +139,10 @@ export function WisePayoutsPanel({
         {selected.length} selected · total to batch <b>{peso(total)}</b>
       </p>
       <div className="table-scroll">
-        <table>
+        <table aria-label="Wise payouts">
           <thead>
             <tr>
-              <th>
+              <th scope="col">
                 <label
                   style={{ display: 'inline-flex', gap: 4, alignItems: 'center', fontWeight: 600 }}
                 >
@@ -155,10 +155,10 @@ export function WisePayoutsPanel({
                   All
                 </label>
               </th>
-              <th>Contractor</th>
-              <th>Amount ₱</th>
-              <th>Wise recipient</th>
-              <th>Status</th>
+              <th scope="col">Contractor</th>
+              <th scope="col">Amount ₱</th>
+              <th scope="col">Wise recipient</th>
+              <th scope="col">Status</th>
             </tr>
           </thead>
           <tbody>

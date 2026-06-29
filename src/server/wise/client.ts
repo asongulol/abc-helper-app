@@ -58,8 +58,14 @@ export async function wiseRequest<T = unknown>(path: string, init?: WiseRequestI
 }
 
 /**
- * Same as wiseRequest but returns null instead of throwing when the server
- * responds with 404. Used for single-resource lookups (GET /v1/accounts/:id).
+ * Same as wiseRequest but returns null instead of throwing when the resource
+ * is absent. Used for single-resource lookups (GET /v1/accounts/:id).
+ *
+ * "Absent" is two cases: a plain 404, and a 403 `RECIPIENT_MISSING` — Wise
+ * returns the latter when a recipient id is no longer among yours (deleted in
+ * Wise, or a stale/foreign id). For a single-resource lookup both mean the same
+ * thing ("not found"), so both resolve to null. Any OTHER 403 (bad token or
+ * insufficient scope) is a real auth failure and still throws.
  */
 export async function wiseRequestNullable<T = unknown>(
   path: string,
@@ -75,6 +81,7 @@ export async function wiseRequestNullable<T = unknown>(
   if (res.status === 404) return null;
   if (!res.ok) {
     const text = await res.text().catch(() => '(unreadable body)');
+    if (res.status === 403 && text.includes('RECIPIENT_MISSING')) return null;
     throw new Error(`Wise API ${method} ${path} → ${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;

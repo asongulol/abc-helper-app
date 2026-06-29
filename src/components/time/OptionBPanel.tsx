@@ -107,6 +107,7 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
               value={orgId}
               onChange={(e) => setOrgId(e.target.value)}
               style={{ minWidth: 140 }}
+              aria-label="Organization"
             >
               <option value="">Select…</option>
               {orgs.map((o) => (
@@ -121,6 +122,7 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
               value={orgId}
               onChange={(e) => setOrgId(e.target.value)}
               placeholder="org id"
+              aria-label="Organization"
             />
           )}
         </div>
@@ -133,6 +135,7 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
           <input
             type="date"
             value={syncStart}
+            aria-label="Start"
             onChange={(e) => {
               const v = e.target.value;
               setSyncStart(v);
@@ -153,7 +156,12 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
             Stop <span style={{ fontWeight: 400 }}>(auto)</span>
           </span>
           <br />
-          <input type="date" value={syncStop} onChange={(e) => setSyncStop(e.target.value)} />
+          <input
+            type="date"
+            value={syncStop}
+            onChange={(e) => setSyncStop(e.target.value)}
+            aria-label="Stop"
+          />
         </div>
         <button type="button" className="btn" disabled={syncing} onClick={syncFromHubstaff}>
           {syncing ? 'Importing…' : 'Import Time'}

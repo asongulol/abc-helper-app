@@ -329,15 +329,21 @@ export const InvoicingClient = ({
         {preview && preview.lines.length > 0 && (
           <div style={{ marginTop: 16 }}>
             <div className="table-scroll">
-              <table>
+              <table aria-label="Invoice preview lines">
                 <thead>
                   <tr>
-                    <th>Contractor</th>
-                    <th>Position</th>
-                    <th>Type</th>
-                    <th style={rightAlign}>Qty</th>
-                    <th style={rightAlign}>Unit rate</th>
-                    <th style={rightAlign}>Amount</th>
+                    <th scope="col">Contractor</th>
+                    <th scope="col">Position</th>
+                    <th scope="col">Type</th>
+                    <th scope="col" style={rightAlign}>
+                      Qty
+                    </th>
+                    <th scope="col" style={rightAlign}>
+                      Unit rate
+                    </th>
+                    <th scope="col" style={rightAlign}>
+                      Amount
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -410,16 +416,20 @@ export const InvoicingClient = ({
         ) : (
           <>
             <div className="table-scroll">
-              <table>
+              <table aria-label="Invoice history">
                 <thead>
                   <tr>
-                    <th>Invoice #</th>
-                    <th>Client</th>
-                    <th>Period</th>
-                    <th style={rightAlign}>Total</th>
-                    <th style={rightAlign}>Received</th>
-                    <th>Status</th>
-                    <th>Actions</th>
+                    <th scope="col">Invoice #</th>
+                    <th scope="col">Client</th>
+                    <th scope="col">Period</th>
+                    <th scope="col" style={rightAlign}>
+                      Total
+                    </th>
+                    <th scope="col" style={rightAlign}>
+                      Received
+                    </th>
+                    <th scope="col">Status</th>
+                    <th scope="col">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -608,7 +618,7 @@ const InvoiceReceiptModal = ({
         />
       </div>
       {validAmount && delta !== 0 && (
-        <p className="sub" style={{ color: delta < 0 ? '#b45309' : '#3730a3' }}>
+        <p className="sub" style={{ color: delta < 0 ? 'var(--warn)' : '#3730a3' }}>
           {delta < 0 ? `Short by ${money(-delta, 'USD')}` : `Over by ${money(delta, 'USD')}`}
         </p>
       )}

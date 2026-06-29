@@ -75,13 +75,17 @@ export const CoverageClient = ({ companyId, roster }: Props) => {
           <p className="sub">No active contractors for this company.</p>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Coverage targets by contractor">
               <thead>
                 <tr>
-                  <th>Contractor</th>
-                  <th style={rightAlign}>Weekly hours</th>
-                  <th style={rightAlign}>Target / period (hrs)</th>
-                  <th>Actions</th>
+                  <th scope="col">Contractor</th>
+                  <th scope="col" style={rightAlign}>
+                    Weekly hours
+                  </th>
+                  <th scope="col" style={rightAlign}>
+                    Target / period (hrs)
+                  </th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody>

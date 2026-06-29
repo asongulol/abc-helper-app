@@ -474,6 +474,7 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
             min={new Date().toISOString().slice(0, 10)}
             onChange={(e) => setDeferDate(e.target.value)}
             style={{ fontSize: 12 }}
+            aria-label="Defer until"
           />
           <button
             type="button"
@@ -635,14 +636,14 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
         <div style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>1 · Agreements</h3>
           <div className="table-scroll">
-            <table>
+            <table aria-label="Signed agreements">
               <thead>
                 <tr>
-                  <th>Agreement</th>
-                  <th>Signed name</th>
-                  <th>When</th>
-                  <th>IP</th>
-                  <th>Ver</th>
+                  <th scope="col">Agreement</th>
+                  <th scope="col">Signed name</th>
+                  <th scope="col">When</th>
+                  <th scope="col">IP</th>
+                  <th scope="col">Ver</th>
                 </tr>
               </thead>
               <tbody>
@@ -943,13 +944,16 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
             </div>
           ) : (
             <div>
-              <div className="banner" style={{ background: '#dcfce7', borderColor: '#86efac' }}>
+              <div
+                className="banner"
+                style={{ background: 'var(--good-soft)', borderColor: '#86efac' }}
+              >
                 ✓{' '}
                 {resend.done.changed
                   ? 'Login email updated and welcome re-sent.'
                   : 'Welcome re-sent with a fresh password.'}
               </div>
-              <div className="card" style={{ background: '#f8fafc' }}>
+              <div className="card" style={{ background: 'var(--surface-2)' }}>
                 <div className="row">
                   <span className="muted">Email</span>
                   <b>{resend.done.email}</b>
@@ -1049,6 +1053,7 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
             rows={3}
             style={{ width: '100%', marginBottom: 12 }}
             placeholder="Full legal name or data:image/... URI"
+            aria-label="Countersignature"
           />
           <div style={{ display: 'flex', gap: 8 }}>
             <button

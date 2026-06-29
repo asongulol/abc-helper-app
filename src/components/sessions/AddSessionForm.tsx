@@ -548,17 +548,19 @@ export const AddSessionForm = ({
 
       {controlled && workerId && recent.length > 0 && (
         <div className="table-scroll" style={{ marginTop: 14 }}>
-          <table>
+          <table aria-label="Recent sessions for this contractor">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Client</th>
-                <th>Type</th>
-                <th>Child</th>
-                <th>EIID</th>
-                <th style={{ textAlign: 'right' }}>Units</th>
-                <th>Status</th>
-                <th />
+                <th scope="col">Date</th>
+                <th scope="col">Client</th>
+                <th scope="col">Type</th>
+                <th scope="col">Child</th>
+                <th scope="col">EIID</th>
+                <th scope="col" style={{ textAlign: 'right' }}>
+                  Units
+                </th>
+                <th scope="col">Status</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
@@ -673,19 +675,21 @@ export const AddSessionForm = ({
             </p>
           ) : (
             <div className="table-scroll">
-              <table>
+              <table aria-label="Recently added sessions">
                 <thead>
                   <tr>
-                    <th style={{ width: 28 }} />
-                    <th>Contractor</th>
-                    <th>Client</th>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Child</th>
-                    <th>EIID</th>
-                    <th style={{ textAlign: 'right' }}>Units</th>
-                    <th>Status</th>
-                    <th />
+                    <th scope="col" style={{ width: 28 }} />
+                    <th scope="col">Contractor</th>
+                    <th scope="col">Client</th>
+                    <th scope="col">Date</th>
+                    <th scope="col">Type</th>
+                    <th scope="col">Child</th>
+                    <th scope="col">EIID</th>
+                    <th scope="col" style={{ textAlign: 'right' }}>
+                      Units
+                    </th>
+                    <th scope="col">Status</th>
+                    <th scope="col" />
                   </tr>
                 </thead>
                 <tbody>

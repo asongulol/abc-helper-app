@@ -259,7 +259,12 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
     if (f.opts) {
       const showCustom = !!value && !f.opts.includes(value);
       return (
-        <select value={value} disabled={isPending} onChange={(e) => set(f.k, e.target.value)}>
+        <select
+          id={f.k}
+          value={value}
+          disabled={isPending}
+          onChange={(e) => set(f.k, e.target.value)}
+        >
           <option value="">Select…</option>
           {f.opts.map((o) => (
             <option key={o} value={o}>
@@ -273,6 +278,7 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
     if (f.type === 'tel') {
       return (
         <PhoneInput
+          id={f.k}
           value={value}
           onChange={(v) => set(f.k, v)}
           defaultCountry="PH"
@@ -283,6 +289,7 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
     const mirrored = !!f.sameAs && sameAddr;
     return (
       <input
+        id={f.k}
         type={f.type === 'date' ? 'date' : 'text'}
         value={value}
         disabled={isPending || mirrored}
@@ -364,9 +371,15 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
 
         {secFields.map((f) => (
           <div key={f.k} style={{ margin: '8px 0' }}>
-            <span className="sub" style={{ display: 'block' }}>
-              {f.label}
-            </span>
+            {isEditable(f.k) ? (
+              <label htmlFor={f.k} className="sub" style={{ display: 'block' }}>
+                {f.label}
+              </label>
+            ) : (
+              <span className="sub" style={{ display: 'block' }}>
+                {f.label}
+              </span>
+            )}
             {f.sameAs && isEditable(f.k) && (
               <label
                 className="sub"

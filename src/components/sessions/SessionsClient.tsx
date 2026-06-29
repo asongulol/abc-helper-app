@@ -382,10 +382,10 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
           ) : (
             <>
               <div className="table-scroll">
-                <table>
+                <table aria-label="Sessions">
                   <thead>
                     <tr>
-                      <th style={{ width: 28 }}>
+                      <th scope="col" style={{ width: 28 }}>
                         <input
                           type="checkbox"
                           aria-label="Select all sessions"
@@ -401,15 +401,17 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
                           }
                         />
                       </th>
-                      <th>Date</th>
-                      <th>Contractor</th>
-                      <th>Item</th>
-                      <th>Child</th>
-                      <th>EIID</th>
-                      <th style={rightAlign}>Units</th>
-                      <th>Case</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+                      <th scope="col">Date</th>
+                      <th scope="col">Contractor</th>
+                      <th scope="col">Item</th>
+                      <th scope="col">Child</th>
+                      <th scope="col">EIID</th>
+                      <th scope="col" style={rightAlign}>
+                        Units
+                      </th>
+                      <th scope="col">Case</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Actions</th>
                     </tr>
                   </thead>
                   <tbody>

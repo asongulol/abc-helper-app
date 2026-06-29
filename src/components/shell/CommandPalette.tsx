@@ -147,7 +147,7 @@ export const CommandPalette = ({
           placeholder="Search contractors, periods, sections…"
           aria-label="Quick find"
         />
-        <div className="cmdk-list" ref={listRef} role="listbox" aria-label="Results">
+        <div className="cmdk-list" ref={listRef}>
           {results.length === 0 && <div className="cmdk-empty">No matches</div>}
           {results.map((it, i) => (
             <button

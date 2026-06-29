@@ -99,7 +99,7 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
             <Mark height={26} priority />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <b>{workerName ? `${workerName}'s Workspace` : 'Workspace'}</b>
+            <h1 className="ws-title">{workerName ? `${workerName}'s Workspace` : 'Workspace'}</h1>
             {email && <small>{email}</small>}
           </div>
           <button
@@ -154,7 +154,7 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
                           position: 'absolute',
                           top: -6,
                           right: -11,
-                          background: '#dc2626',
+                          background: 'var(--bad)',
                           color: '#fff',
                           borderRadius: 999,
                           fontSize: 10,

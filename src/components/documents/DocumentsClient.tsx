@@ -175,15 +175,15 @@ export const DocumentsClient = ({ documents, workerOptions, companyId, consolida
           <div className="empty">No documents yet. Add one above.</div>
         ) : (
           <div className="table-scroll">
-            <table>
+            <table aria-label="Tracked documents">
               <thead>
                 <tr>
-                  <th>Contractor</th>
-                  <th>Type</th>
-                  <th>Title</th>
-                  <th>Signed</th>
-                  <th>Expires</th>
-                  <th>Status</th>
+                  <th scope="col">Contractor</th>
+                  <th scope="col">Type</th>
+                  <th scope="col">Title</th>
+                  <th scope="col">Signed</th>
+                  <th scope="col">Expires</th>
+                  <th scope="col">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -196,7 +196,7 @@ export const DocumentsClient = ({ documents, workerOptions, companyId, consolida
                       key={d.id}
                       style={
                         overdue
-                          ? { background: '#fee2e2' }
+                          ? { background: 'var(--bad-soft)' }
                           : soon
                             ? { background: 'var(--warn-soft)' }
                             : {}

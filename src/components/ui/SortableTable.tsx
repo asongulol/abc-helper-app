@@ -138,6 +138,7 @@ export const SortableTable = <T,>({
                 {columns.map((col) => (
                   <th
                     key={col.key}
+                    scope="col"
                     aria-sort={
                       sortKey === col.key ? (dir === 1 ? 'ascending' : 'descending') : undefined
                     }
@@ -162,6 +163,18 @@ export const SortableTable = <T,>({
                   key={rowKey(row)}
                   className={onRowClick ? 'clickable' : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  role={onRowClick ? 'button' : undefined}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  onKeyDown={
+                    onRowClick
+                      ? (e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onRowClick(row);
+                          }
+                        }
+                      : undefined
+                  }
                 >
                   {columns.map((col) => (
                     <td

@@ -17,7 +17,11 @@
 import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
-import { serviceGetRecipient, serviceSearchContacts } from '@/server/wise/service';
+import {
+  explainMissingRecipient,
+  serviceGetRecipient,
+  serviceSearchContacts,
+} from '@/server/wise/service';
 
 export type WiseRecipientRow = { id: number; label: string };
 export interface WisePayoutState {
@@ -223,7 +227,7 @@ export async function applyWiseDriftToWorker(args: {
   try {
     await requireAdmin();
     const rec = await serviceGetRecipient(Number(args.recipientId));
-    if (!rec) return fail(`Recipient ${args.recipientId} not found in Wise.`);
+    if (!rec) return fail(await explainMissingRecipient(Number(args.recipientId)));
 
     const db = createServiceClient();
     let error: { message: string } | null;

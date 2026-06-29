@@ -22,6 +22,7 @@ import { createServiceClient } from '@/db/clients/service';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
+  explainMissingRecipient,
   serviceBatch,
   serviceDraft,
   serviceFindTransfersByRecipient,
@@ -353,7 +354,7 @@ export async function wiseGetRecipient(recipientId: number): Promise<WiseActionR
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const recipient = await serviceGetRecipient(parsed.data.recipientId);
-    if (!recipient) return fail(`Recipient ${recipientId} not found`);
+    if (!recipient) return fail(await explainMissingRecipient(recipientId));
     return ok(recipient);
   } catch (e) {
     return fail(e);

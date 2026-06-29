@@ -185,6 +185,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                 </span>
                 <input
                   type="text"
+                  aria-label="Type DELETE to confirm"
                   placeholder="type DELETE"
                   value={confirmText}
                   onChange={(e) => setConfirmText(e.target.value)}
@@ -247,7 +248,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
             style={{
               marginTop: 8,
               padding: '8px 10px',
-              background: '#f8fafc',
+              background: 'var(--surface-2)',
               border: '1px solid var(--border)',
               borderRadius: 4,
             }}
@@ -256,19 +257,18 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
               Will delete {armed.count} row(s) across {armed.preview.length} contractor(s):
             </div>
             <div className="table-scroll" style={{ maxHeight: 180 }}>
-              <table style={{ fontSize: 12 }}>
+              <table style={{ fontSize: 12 }} aria-label="Rows to delete by contractor">
                 <thead>
                   <tr>
-                    <th>Contractor</th>
-                    <th>Rows</th>
-                    <th>Hours</th>
-                    <th>Date span</th>
+                    <th scope="col">Contractor</th>
+                    <th scope="col">Rows</th>
+                    <th scope="col">Hours</th>
+                    <th scope="col">Date span</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {armed.preview.slice(0, 30).map((g, i) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: preview rows have no stable id
-                    <tr key={i}>
+                  {armed.preview.slice(0, 30).map((g) => (
+                    <tr key={g.name}>
                       <td>{g.name}</td>
                       <td>{g.rows}</td>
                       <td>
@@ -299,8 +299,8 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
             style={{
               marginTop: 8,
               padding: '8px 10px',
-              background: '#fef3c7',
-              border: '1px solid #fcd34d',
+              background: 'var(--warn-soft)',
+              border: '1px solid var(--warn)',
               borderRadius: 4,
             }}
           >
@@ -309,7 +309,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                 fontSize: 12,
                 fontWeight: 600,
                 marginBottom: 4,
-                color: '#92400e',
+                color: 'var(--warn)',
               }}
             >
               This range overlaps {armed.overlap.length}{' '}
@@ -321,18 +321,17 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                 margin: 0,
                 paddingLeft: 18,
                 fontSize: 12,
-                color: '#92400e',
+                color: 'var(--warn)',
               }}
             >
-              {armed.overlap.slice(0, 10).map((p, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: overlap periods have no stable id
-                <li key={i}>
+              {armed.overlap.slice(0, 10).map((p) => (
+                <li key={`${p.periodStart}-${p.periodEnd}`}>
                   {p.periodStart} → {p.periodEnd} <b>· {p.state}</b>
                 </li>
               ))}
               {armed.overlap.length > 10 && <li>…and {armed.overlap.length - 10} more</li>}
             </ul>
-            <p style={{ margin: '6px 0 0', fontSize: 11, color: '#92400e' }}>
+            <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--warn)' }}>
               Deleting time entries here won't unwind the payments themselves, but it will break
               re-calculation, audit reports, and any future re-locking of these periods. If these
               are real paid periods, <b>cancel</b> and narrow your range.
@@ -348,13 +347,13 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
         </div>
       ) : (
         <div className="table-scroll">
-          <table style={{ marginTop: 6 }}>
+          <table style={{ marginTop: 6 }} aria-label="Imports to delete">
             <thead>
               <tr>
-                <th>Imported</th>
-                <th>Date range</th>
-                <th>Rows</th>
-                <th />
+                <th scope="col">Imported</th>
+                <th scope="col">Date range</th>
+                <th scope="col">Rows</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>

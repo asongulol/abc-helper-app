@@ -55,15 +55,30 @@ export default async function InvoicePrintPage({ params }: { params: Promise<{ i
         <strong>Status:</strong> {invoice.status}
       </div>
 
-      <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 16 }}>
+      <table
+        style={{ width: '100%', borderCollapse: 'collapse', marginTop: 16 }}
+        aria-label="Invoice lines"
+      >
         <thead>
           <tr>
-            <th style={cell}>Contractor</th>
-            <th style={cell}>Position</th>
-            <th style={cell}>Type</th>
-            <th style={cellRight}>Qty</th>
-            <th style={cellRight}>Unit rate</th>
-            <th style={cellRight}>Amount</th>
+            <th scope="col" style={cell}>
+              Contractor
+            </th>
+            <th scope="col" style={cell}>
+              Position
+            </th>
+            <th scope="col" style={cell}>
+              Type
+            </th>
+            <th scope="col" style={cellRight}>
+              Qty
+            </th>
+            <th scope="col" style={cellRight}>
+              Unit rate
+            </th>
+            <th scope="col" style={cellRight}>
+              Amount
+            </th>
           </tr>
         </thead>
         <tbody>

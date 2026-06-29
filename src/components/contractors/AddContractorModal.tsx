@@ -126,6 +126,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
             onChange={(e) => setFirstName(e.target.value)}
             placeholder="First name"
             aria-invalid={error && !firstName.trim() ? 'true' : undefined}
+            aria-describedby={error ? 'ac-error' : undefined}
             disabled={isPending}
           />
         </div>
@@ -139,6 +140,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
             onChange={(e) => setLastName(e.target.value)}
             placeholder="Last name"
             aria-invalid={error && !lastName.trim() ? 'true' : undefined}
+            aria-describedby={error ? 'ac-error' : undefined}
             disabled={isPending}
           />
         </div>
@@ -182,7 +184,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
           </div>
         )}
         {error && (
-          <div className="field-err" style={{ marginBottom: 8 }}>
+          <div id="ac-error" role="alert" className="field-err" style={{ marginBottom: 8 }}>
             {error}
           </div>
         )}

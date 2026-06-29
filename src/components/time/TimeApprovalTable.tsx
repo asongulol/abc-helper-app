@@ -191,8 +191,8 @@ export const TimeApprovalTable = ({
           style={{
             marginBottom: 10,
             background: 'var(--warn-soft)',
-            borderColor: '#fcd34d',
-            color: '#92400e',
+            borderColor: 'var(--warn)',
+            color: 'var(--warn)',
           }}
         >
           <strong>
@@ -214,18 +214,24 @@ export const TimeApprovalTable = ({
         <EmptyState message="No time entries for this period. Import or add hours above." />
       ) : (
         <div className="table-scroll">
-          <table>
+          <table aria-label="Tracked hours by contractor">
             <thead>
               <tr>
-                <th>Contractor</th>
-                <th>Days in period</th>
-                <th>Working days</th>
-                <th>Days worked</th>
-                <th title="Time clocked into Hubstaff timer">Tracked (h)</th>
-                <th title="Paid time off (from Hubstaff API sync)">PTO (h)</th>
-                <th title="Tracked + PTO — used by payroll">Total (h)</th>
-                <th>Status</th>
-                <th />
+                <th scope="col">Contractor</th>
+                <th scope="col">Days in period</th>
+                <th scope="col">Working days</th>
+                <th scope="col">Days worked</th>
+                <th scope="col" title="Time clocked into Hubstaff timer">
+                  Tracked (h)
+                </th>
+                <th scope="col" title="Paid time off (from Hubstaff API sync)">
+                  PTO (h)
+                </th>
+                <th scope="col" title="Tracked + PTO — used by payroll">
+                  Total (h)
+                </th>
+                <th scope="col">Status</th>
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
@@ -297,14 +303,16 @@ export const TimeApprovalTable = ({
                             <button
                               type="button"
                               className="btn sm"
+                              aria-label="Save tracked hours"
                               disabled={pendingTx}
                               onClick={() => handleEditTotal(row)}
                             >
-                              ✓
+                              <span aria-hidden="true">✓</span>
                             </button>
                             <button
                               type="button"
                               className="btn ghost sm"
+                              aria-label="Cancel edit"
                               onClick={() =>
                                 setEditMap((prev) => {
                                   const next = { ...prev };
@@ -313,7 +321,7 @@ export const TimeApprovalTable = ({
                                 })
                               }
                             >
-                              ✕
+                              <span aria-hidden="true">✕</span>
                             </button>
                           </span>
                         ) : (
