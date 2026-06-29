@@ -5,6 +5,7 @@ import {
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -47,6 +48,22 @@ export const useToast = (): ToastApi => {
 export const ToastProvider = ({ children }: { children: ReactNode }) => {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const nextId = useRef(0);
+  const toasterRef = useRef<HTMLElement>(null);
+
+  // Toasts must paint above open native <dialog> modals. Those call showModal()
+  // and live in the browser top layer, which z-index cannot beat — so a normal
+  // toaster renders *behind* the modal. Promote the toaster into the top layer
+  // via the popover API when the first toast appears, drop it when empty.
+  // ponytail: shows once on 0→1; a toast fired while it's already open won't
+  // re-promote above a modal opened *after* it. Upgrade: hide+show on each
+  // change if that sequence ever bites (costs a focus jump, hence avoided here).
+  useEffect(() => {
+    const el = toasterRef.current;
+    if (!el) return;
+    const open = el.matches(':popover-open');
+    if (toasts.length > 0 && !open) el.showPopover();
+    else if (toasts.length === 0 && open) el.hidePopover();
+  }, [toasts.length]);
 
   const dismiss = useCallback((id: number) => {
     setToasts((cur) => cur.filter((t) => t.id !== id));
@@ -68,27 +85,20 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      {toasts.length > 0 && (
-        <section className="toaster" aria-label="Notifications">
-          {toasts.map((t) => (
-            <div
-              key={t.id}
-              className={`toast ${t.type}`}
-              role={t.type === 'error' || t.type === 'warn' ? 'alert' : 'status'}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>{t.content}</div>
-              <button
-                type="button"
-                className="x"
-                aria-label="Dismiss"
-                onClick={() => dismiss(t.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </section>
-      )}
+      <section ref={toasterRef} className="toaster" popover="manual" aria-label="Notifications">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`toast ${t.type}`}
+            role={t.type === 'error' || t.type === 'warn' ? 'alert' : 'status'}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>{t.content}</div>
+            <button type="button" className="x" aria-label="Dismiss" onClick={() => dismiss(t.id)}>
+              ×
+            </button>
+          </div>
+        ))}
+      </section>
     </ToastContext.Provider>
   );
 };

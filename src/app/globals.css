@@ -1227,18 +1227,31 @@ a.btn:hover {
   }
 }
 /* Floating pop-up notifications (toasts) — visible regardless of scroll */
+/* Promoted into the browser top layer via the popover API (see Toast.tsx) so
+   toasts paint above open native <dialog> modals — z-index alone can't. Reset
+   the UA popover chrome (inset/margin/border/padding/background) so it stays a
+   transparent, top-centered stack; the UA hides it (display:none) when closed. */
 .toaster {
   position: fixed;
+  inset: auto;
   top: 14px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
+  width: max-content;
+  max-width: min(620px, 94vw);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  overflow: visible;
+  pointer-events: none;
+}
+.toaster:popover-open {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: max-content;
-  max-width: min(620px, 94vw);
-  pointer-events: none;
 }
 .toast {
   pointer-events: auto;

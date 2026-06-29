@@ -15,12 +15,13 @@
  */
 
 import { createServiceClient } from '@/db/clients/service';
+import { recipientMatchesTerm } from '@/lib/wise/recipient-search';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import {
   explainMissingRecipient,
   serviceGetRecipient,
-  serviceSearchContacts,
+  serviceRecipients,
 } from '@/server/wise/service';
 
 export type WiseRecipientRow = { id: number; label: string };
@@ -196,19 +197,29 @@ export async function saveWorkerWiseUuid(args: {
   }
 }
 
-/** Pull-from-Wise: look up a recipient by Wisetag (search contacts). */
+/**
+ * Pull-from-Wise: find a saved Wise recipient by name / Wisetag / email.
+ *
+ * There is no public Wise endpoint that searches by Wisetag (the only Wisetag
+ * API, POST /v2/profiles/{id}/contacts, *creates* a contact and returns a UUID
+ * the rest of this app can't pay). So we filter the recipient list — the same
+ * GET /v1/accounts?profile= the payout pipeline uses — which yields the numeric
+ * ids this app stores. A Wisetag-added recipient appears here once it exists.
+ * ponytail: substring match on name/email; a Wisetag unrelated to the legal
+ * name won't match — use "By recipient ID" with the numeric id for those.
+ */
 export async function lookupWiseByTag(
-  wisetag: string,
+  query: string,
 ): Promise<Result<{ id: number; name: string }[]>> {
   try {
     await requireAdmin();
-    const term = wisetag.trim().replace(/^@/, '');
-    if (!term) return fail('Enter a Wisetag.');
-    const { contacts } = await serviceSearchContacts(term);
+    if (!query.trim().replace(/^@/, '')) return fail('Enter a name or Wisetag.');
+    const { recipients } = await serviceRecipients();
     return ok(
-      contacts
-        .map((c) => ({ id: Number(c.id), name: c.name || c.accountHolderName }))
-        .filter((c) => Number.isInteger(c.id) && c.id > 0),
+      recipients
+        .filter((r) => recipientMatchesTerm(r.name, r.email, query))
+        .map((r) => ({ id: Number(r.id), name: r.name || `Recipient ${r.id}` }))
+        .filter((r) => Number.isInteger(r.id) && r.id > 0),
     );
   } catch (e) {
     return fail(e);

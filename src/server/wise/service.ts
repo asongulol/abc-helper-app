@@ -865,45 +865,6 @@ export async function serviceGetRecipient(recipientId: number): Promise<WiseReci
   };
 }
 
-export interface ContactResult {
-  id: unknown;
-  name: string;
-  accountHolderName: string;
-  profileId: unknown;
-  balanceRecipientId: unknown;
-  avatar: unknown;
-  hidden: boolean;
-}
-
-export async function serviceSearchContacts(
-  term: string,
-  profileId?: number,
-): Promise<{
-  profileId: number;
-  searchTerm: string;
-  contacts: ContactResult[];
-}> {
-  const pid = profileId ?? (await getBusinessProfileId());
-  const contacts = await wiseRequest<Record<string, unknown>[]>(
-    `/v1/profiles/${pid}/contacts?searchTerm=${encodeURIComponent(term)}`,
-  );
-  const list = (Array.isArray(contacts) ? contacts : []).map(
-    (c): ContactResult => ({
-      id: c.id,
-      name:
-        (c.name as string | null | undefined) ??
-        (c.accountHolderName as string | null | undefined) ??
-        '',
-      accountHolderName: (c.accountHolderName as string | null | undefined) ?? '',
-      profileId: c.profileId,
-      balanceRecipientId: c.balanceRecipientId,
-      avatar: c.avatar ?? null,
-      hidden: !!(c.hidden as boolean | null | undefined),
-    }),
-  );
-  return { profileId: pid, searchTerm: term, contacts: list };
-}
-
 export interface TransferMatch {
   id: number;
   status: string;
