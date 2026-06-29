@@ -9,6 +9,7 @@ import {
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
 import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
+import { classifyDraftError } from '@/lib/wise/draft-error';
 import { resolveDraftRow } from '@/lib/wise/draft-row';
 import {
   annotateOrphans,
@@ -140,7 +141,7 @@ async function draftOne(
       },
     });
   } catch (e) {
-    return { paymentId, status: 'failed', error: `transfer: ${String(e)}` };
+    return { paymentId, status: 'failed', error: classifyDraftError('transfer: ', e) };
   }
 
   // IMPORTANT: we stop here. No POST .../payments. Money has NOT moved.
@@ -298,7 +299,7 @@ export async function serviceBatch(
         status: 'drafted',
       });
     } catch (e) {
-      results.push({ paymentId: row.id, status: 'failed', error: String(e) });
+      results.push({ paymentId: row.id, status: 'failed', error: classifyDraftError('', e) });
     }
   }
 
