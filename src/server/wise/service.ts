@@ -826,6 +826,39 @@ export async function serviceRecipients(profileId?: number): Promise<{
 }
 
 /**
+ * Search Wise CONTACTS (Wise-to-Wise / balance recipients) by Wisetag or name.
+ *
+ * GET /v1/profiles/{pid}/contacts?searchTerm= returns each contact's `id` (a
+ * UUID) and `balanceRecipientId` (numeric). Verified against live data: the
+ * contact `id` IS the manual Batch-CSV `recipientId` (== wise_recipient_uuid),
+ * and `balanceRecipientId` IS wise_recipient_id. So one lookup yields both ids
+ * a balance/Wisetag contractor needs — no manual UUID paste.
+ *
+ * ponytail: Wise IGNORES ?searchTerm here and returns the first page of contacts
+ * regardless — the caller filters by name client-side. Page-size limit unhandled
+ * (the account has ~9 balance contacts); add cursor paging if that set grows.
+ */
+export async function serviceSearchContacts(
+  term: string,
+  profileId?: number,
+): Promise<{ uuid: string; recipientId: number; name: string }[]> {
+  const pid = profileId ?? (await getBusinessProfileId());
+  const raw = await wiseRequest<Record<string, unknown>[]>(
+    `/v1/profiles/${pid}/contacts?searchTerm=${encodeURIComponent(term)}`,
+  );
+  return (Array.isArray(raw) ? raw : [])
+    .map((c) => ({
+      uuid: String((c.id as string | number | null | undefined) ?? ''),
+      recipientId: Number(c.balanceRecipientId ?? 0),
+      name:
+        (c.name as string | null | undefined) ??
+        (c.accountHolderName as string | null | undefined) ??
+        '',
+    }))
+    .filter((c) => /-/.test(c.uuid)); // keep real UUID contacts only (batch-CSV key)
+}
+
+/**
  * Build an admin-facing reason for a recipient that came back missing,
  * distinguishing a stale/deleted id from a systemic credential/environment
  * problem (when the token sees zero recipients). Call this ONLY on the miss

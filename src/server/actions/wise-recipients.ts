@@ -15,13 +15,12 @@
  */
 
 import { createServiceClient } from '@/db/clients/service';
-import { recipientMatchesTerm } from '@/lib/wise/recipient-search';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import {
   explainMissingRecipient,
   serviceGetRecipient,
-  serviceRecipients,
+  serviceSearchContacts,
 } from '@/server/wise/service';
 
 export type WiseRecipientRow = { id: number; label: string };
@@ -198,28 +197,79 @@ export async function saveWorkerWiseUuid(args: {
 }
 
 /**
- * "By name" lookup: find a Wise BANK recipient by name / email.
- *
- * Filters the same GET /v1/accounts?profile= list the payout pipeline pays
- * from, returning the numeric ids this app stores. It deliberately does NOT
- * search Wise *contacts* (GET /v1/profiles/{id}/contacts): those are Wisetag/
- * balance recipients whose payable id (balanceRecipientId) 403s on /v1/accounts
- * and can't be drafted by the current transfer flow, so surfacing them would
- * only let you add a recipient that can't be paid. Bank-recipient-only by design.
+ * "By Wisetag" lookup: search Wise CONTACTS (Wise-to-Wise / balance recipients)
+ * by Wisetag or name. Each result carries the contact UUID (== wise_recipient_uuid,
+ * the manual Batch-CSV recipientId) AND the numeric balanceRecipientId
+ * (== wise_recipient_id). Pick one and addWorkerWiseContact stores both, so the
+ * contractor lands in the downloadable Wise batch file without a manual paste.
  */
 export async function lookupWiseByTag(
   query: string,
-): Promise<Result<{ id: number; name: string }[]>> {
+): Promise<Result<{ recipientId: number; uuid: string; name: string }[]>> {
   try {
     await requireAdmin();
-    if (!query.trim().replace(/^@/, '')) return fail('Enter a name or Wisetag.');
-    const { recipients } = await serviceRecipients();
-    return ok(
-      recipients
-        .filter((r) => recipientMatchesTerm(r.name, r.email, query))
-        .map((r) => ({ id: Number(r.id), name: r.name || `Recipient ${r.id}` }))
-        .filter((r) => Number.isInteger(r.id) && r.id > 0),
-    );
+    const term = query.trim().replace(/^@/, '');
+    if (!term) return fail('Enter a Wisetag or name.');
+    // Wise ignores ?searchTerm and returns ALL balance contacts, so filter by
+    // name client-side; fall back to the full list when nothing matches (a
+    // Wisetag often differs from the display name).
+    const all = (await serviceSearchContacts(term)).map((c) => ({
+      recipientId: c.recipientId,
+      uuid: c.uuid,
+      name: c.name || `Recipient ${c.uuid.slice(0, 8)}`,
+    }));
+    const t = term.toLowerCase();
+    const flat = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+    const hits = all.filter((c) => c.name.toLowerCase().includes(t) || flat(c.name).includes(t));
+    return ok(hits.length ? hits : all);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Add a Wisetag/balance contact picked from lookupWiseByTag: store its UUID
+ * (the Batch-CSV recipientId) and, when present, its numeric balanceRecipientId
+ * (added to the recipients list + set as default for the API-draft attempt).
+ * The UUID is what actually gets a balance recipient into the batch file.
+ */
+export async function addWorkerWiseContact(args: {
+  workerId: string;
+  recipientId: number;
+  uuid: string;
+  label?: string;
+}): Promise<Result<WisePayoutState>> {
+  try {
+    await requireAdmin();
+    const uuid = args.uuid.trim();
+    if (!uuid) return fail('That Wisetag contact has no UUID.');
+    const id = Number(args.recipientId);
+    const hasId = Number.isInteger(id) && id > 0;
+
+    const db = createServiceClient();
+    const state = toState(await readWorker(db, args.workerId));
+    const label = args.label?.trim() || `Recipient ${hasId ? id : uuid.slice(0, 8)}`;
+    const recipients =
+      hasId && !state.recipients.some((r) => r.id === id)
+        ? [...state.recipients, { id, label }]
+        : state.recipients;
+    const nextDefault = hasId ? (state.defaultId ?? id) : state.defaultId;
+
+    const { error } = await db
+      .from('workers')
+      .update({
+        wise_recipient_uuid: uuid,
+        wise_recipients: recipients,
+        wise_recipient_id: nextDefault,
+      })
+      .eq('id', args.workerId);
+    if (error) return fail(error.message);
+    void logEvent({
+      action: 'wise_contact_add',
+      entity: args.workerId,
+      detail: { recipientId: hasId ? id : null, uuid },
+    });
+    return ok(toState(await readWorker(db, args.workerId)));
   } catch (e) {
     return fail(e);
   }
