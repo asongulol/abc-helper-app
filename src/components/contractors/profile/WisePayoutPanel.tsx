@@ -12,6 +12,7 @@ import { Badge, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/Toast';
 import { wiseGetRecipient } from '@/server/actions/wise';
 import {
+  addWorkerWiseContact,
   addWorkerWiseRecipient,
   applyWiseDriftToWorker,
   getWorkerWisePayout,
@@ -47,7 +48,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
   const [mode, setMode] = useState<'id' | 'tag'>('id');
   const [lookupVal, setLookupVal] = useState('');
   const [lookupBusy, setLookupBusy] = useState(false);
-  const [results, setResults] = useState<{ id: number; name: string }[]>([]);
+  const [results, setResults] = useState<{ id: number; name: string; uuid?: string }[]>([]);
 
   useEffect(() => {
     getWorkerWisePayout(workerId).then((res) => {
@@ -137,8 +138,8 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
             return;
           }
           if (res.data.length === 0)
-            notify('No saved Wise recipient matched that search.', { type: 'warn' });
-          setResults(res.data);
+            notify('No Wise contact matched that Wisetag/name.', { type: 'warn' });
+          setResults(res.data.map((c) => ({ id: c.recipientId, name: c.name, uuid: c.uuid })));
         }
       } finally {
         setLookupBusy(false);
@@ -146,11 +147,21 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
     })();
   };
 
-  const addFromLookup = (id: number, name: string) =>
+  const addFromLookup = (r: { id: number; name: string; uuid?: string }) =>
     startBusy(async () => {
-      const res = await addWorkerWiseRecipient({ workerId, recipientId: id, label: name });
-      apply(res, `Added recipient #${id}.`);
-      if (res.ok) setResults((rs) => rs.filter((r) => r.id !== id));
+      // A Wisetag contact carries a UUID (the batch-CSV key) — store both ids;
+      // a plain numeric recipient just gets added to the list.
+      const res = r.uuid
+        ? await addWorkerWiseContact({
+            workerId,
+            recipientId: r.id,
+            uuid: r.uuid,
+            label: r.name,
+          })
+        : await addWorkerWiseRecipient({ workerId, recipientId: r.id, label: r.name });
+      apply(res, `Added ${r.name}.`);
+      if (res.ok)
+        setResults((rs) => rs.filter((x) => (x.uuid ?? String(x.id)) !== (r.uuid ?? String(r.id))));
     });
 
   if (!loaded) {
@@ -298,9 +309,8 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
       <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
         These are recipient IDs <b>in your Wise account</b> (identifiers only — never bank details).
         Payouts default to the one marked default; it updates to whichever was last used. The{' '}
-        <b>UUID</b> is separate — the Wise API doesn&apos;t return it, so paste it once from the
-        Wise <i>Batch payments → Download all templates</i> CSV; it&apos;s what the Manual Wise
-        batch file uses.
+        <b>UUID</b> is what the Manual Wise batch file uses — <b>By Wisetag</b> fills it in
+        automatically, or paste it from the Wise <i>Batch payments → Download all templates</i> CSV.
       </p>
 
       {/* External sources — Wise drift */}
@@ -393,20 +403,22 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
               setResults([]);
             }}
           >
-            By name
+            By Wisetag
           </button>
         </div>
         <p className="muted" style={{ fontSize: 12, margin: '0 0 6px' }}>
           {mode === 'id'
             ? 'Paste the numeric Wise recipient ID (e.g. 1372559053) — the standard route for bank-account payouts.'
-            : 'Search your Wise bank recipients by name or email.'}
+            : 'Search your Wise contacts by Wisetag or name (Wise-to-Wise / balance recipients). Adding one stores the UUID the manual Batch CSV needs — no paste required.'}
         </p>
         <div className="row" style={{ gap: 6, alignItems: 'flex-end' }}>
           <input
             value={lookupVal}
             onChange={(e) => setLookupVal(e.target.value)}
-            placeholder={mode === 'id' ? 'numeric Wise recipient ID' : 'name or email'}
-            aria-label={mode === 'id' ? 'Wise recipient ID' : 'Search Wise recipients by name'}
+            placeholder={mode === 'id' ? 'numeric Wise recipient ID' : '@wisetag or name'}
+            aria-label={
+              mode === 'id' ? 'Wise recipient ID' : 'Search Wise contacts by Wisetag or name'
+            }
             style={{ maxWidth: 260 }}
             disabled={lookupBusy}
           />
@@ -422,23 +434,31 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
         {results.length > 0 && (
           <table style={{ marginTop: 8 }}>
             <tbody>
-              {results.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <b>{r.name}</b> <span className="muted">#{r.id}</span>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <button
-                      type="button"
-                      className="btn sm"
-                      disabled={busy || state.recipients.some((x) => x.id === r.id)}
-                      onClick={() => addFromLookup(r.id, r.name)}
-                    >
-                      {state.recipients.some((x) => x.id === r.id) ? 'Added' : 'Add'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {results.map((r) => {
+                const added = r.uuid
+                  ? state.uuid === r.uuid
+                  : state.recipients.some((x) => x.id === r.id);
+                return (
+                  <tr key={r.uuid ?? r.id}>
+                    <td>
+                      <b>{r.name}</b>{' '}
+                      <span className="muted">
+                        {r.uuid ? `${r.uuid.slice(0, 8)}…` : `#${r.id}`}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={busy || added}
+                        onClick={() => addFromLookup(r)}
+                      >
+                        {added ? 'Added' : 'Add'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
