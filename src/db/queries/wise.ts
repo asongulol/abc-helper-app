@@ -37,6 +37,8 @@ export interface MatchPayment {
   net_php: number | null;
   original_net_php: number | null;
   payout_method: Database['public']['Enums']['payout_method'] | null;
+  /** When the app marked the payment paid — anchors the matcher's window. */
+  paid_at: string | null;
   workers: {
     wise_recipient_id: number | null;
     wise_recipient_uuid: string | null;
@@ -137,7 +139,7 @@ export const fetchMatchPayments = async (
   let q = db
     .from('payments')
     .select(
-      'id,worker_id,pay_period_id,wise_transfer_id,status,net_php,original_net_php,payout_method,workers(wise_recipient_id,wise_recipient_uuid,wise_recipients),pay_periods(pay_date,period_start,period_end,state)',
+      'id,worker_id,pay_period_id,wise_transfer_id,status,net_php,original_net_php,payout_method,paid_at,workers(wise_recipient_id,wise_recipient_uuid,wise_recipients),pay_periods(pay_date,period_start,period_end,state)',
     )
     .eq('payout_method', 'wise');
 
@@ -164,6 +166,7 @@ export const fetchMatchPayments = async (
       net_php: row.net_php,
       original_net_php: row.original_net_php,
       payout_method: row.payout_method,
+      paid_at: row.paid_at ?? null,
       workers: w
         ? {
             wise_recipient_id: w.wise_recipient_id ?? null,

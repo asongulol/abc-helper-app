@@ -23,6 +23,7 @@ import {
   type ReconcileOverview,
   reconcileAllPending,
 } from '@/server/actions/reconcile';
+import { wiseMatch, wisePoll } from '@/server/actions/wise';
 
 interface BatchesClientProps {
   companyId: string;
@@ -78,14 +79,55 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
   };
 
   const ovPeriods = overview?.periods ?? [];
+  const selected = ovPeriods.find((p) => p.id === periodId) ?? null;
+
+  // Backfill missing wise_transfer_ids for the selected period (recipient +
+  // amount + payment-date match; windows around paid_at when set).
+  const runMatch = async () => {
+    if (!periodId) return;
+    setBusy(true);
+    try {
+      const res = await wiseMatch({ payPeriodId: periodId });
+      if (!res.ok) {
+        notify(`Match failed: ${res.error}`, { type: 'error' });
+        return;
+      }
+      const left = res.data.suggestions.length;
+      notify(
+        `Matched ${res.data.matched} transfer(s)${left > 0 ? ` — ${left} still unmatched (no Wise transfer found near the payment date)` : '.'}`,
+        { type: left > 0 && res.data.matched === 0 ? 'warn' : 'success' },
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runPoll = async () => {
+    setBusy(true);
+    try {
+      const res = await wisePoll();
+      if (!res.ok) {
+        notify(`Poll failed: ${res.error}`, { type: 'error' });
+        return;
+      }
+      notify(`Polled ${res.data.checked} transfer(s) — ${res.data.updated} marked paid.`, {
+        type: 'success',
+      });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div>
-      <div className="card">
+      <div className="card" id="reconcile-batch-card">
         <h2>Reconcile with Wise</h2>
         <p className="sub">
-          Pick a locked/paid period, then import the processed Wise CSV to backfill transfer IDs,
-          poll status, and flag variances. Idempotent — safe to re-run.
+          Pick a locked/paid batch, then <b>Match missing transfers</b> to backfill Wise transfer
+          IDs (matched by recipient + amount + payment date) and <b>Poll status</b> to pull Wise
+          state and flag variances. Idempotent — safe to re-run.
         </p>
 
         <div className="row" style={{ alignItems: 'flex-end' }}>
@@ -105,6 +147,51 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
           <p className="muted" style={{ fontSize: 12 }}>
             No locked or paid batches yet — lock a batch on the Calculate tab first.
           </p>
+        )}
+
+        {/* Per-period reconcile — works for PAID periods too (Process & Pay only
+            lists locked ones, so this is the only reconcile path after payout). */}
+        {selected && (
+          <div className="modal-section">
+            <div className="card-head">
+              <div>
+                <b>
+                  {selected.start} → {selected.end}
+                </b>{' '}
+                <span className="muted">{selected.state}</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                  {selected.unmatchedWise > 0 && (
+                    <Badge tone="bad">{selected.unmatchedWise} unmatched</Badge>
+                  )}
+                  {selected.readySent > 0 && (
+                    <Badge tone="warn">{selected.readySent} to reconcile</Badge>
+                  )}
+                  {selected.reconciled > 0 && <Badge tone="good">{selected.reconciled} ok</Badge>}
+                  {selected.drafts > 0 && <Badge>{selected.drafts} draft</Badge>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={busy || selected.unmatchedWise === 0}
+                  onClick={runMatch}
+                  title="Search Wise history for transfers matching each unmatched payment (recipient + amount, near the payment date) and backfill the transfer IDs"
+                >
+                  {busy ? 'Working…' : `Match missing transfers (${selected.unmatchedWise})`}
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={busy}
+                  onClick={runPoll}
+                  title="Fetch current Wise status for all payments that already have a transfer ID"
+                >
+                  Poll status
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Reconciliation overview — a hairline-separated sub-section, not a
@@ -190,7 +277,14 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                           <button
                             type="button"
                             className="btn ghost sm"
-                            onClick={() => setPeriodId(p.id)}
+                            onClick={() => {
+                              setPeriodId(p.id);
+                              // The per-period panel renders at the top of this
+                              // card — bring it into view so the click is visible.
+                              document
+                                .getElementById('reconcile-batch-card')
+                                ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
                           >
                             Open
                           </button>
@@ -205,8 +299,8 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
 
           <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
             “Reconcile all pending” finalizes confirmed payments (non-Wise, or Wise with a matched
-            transfer). For <b>unmatched</b> Wise rows, Open the period and run its per-period
-            Reconcile to link the transfer first.
+            transfer). For <b>unmatched</b> Wise rows, Open the period and run{' '}
+            <b>Match missing transfers</b> to link them first.
           </p>
         </div>
       </div>

@@ -13,6 +13,7 @@ import type { PayPeriod } from '@/lib/dates/periods';
 import type { RosterLink } from '@/lib/time/attribution';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { CsvImportCard } from './CsvImportCard';
+import { OffCycleCatchUpCard } from './OffCycleCatchUpCard';
 import { PeriodPicker } from './PeriodPicker';
 import { TimeApprovalTable } from './TimeApprovalTable';
 
@@ -106,6 +107,10 @@ export const TimeShell = ({
           onCreated={handleRefresh}
         />
       </div>
+
+      {/* Salaried leftovers on a locked/paid period → off-cycle batch. Renders
+          nothing while the viewed period is open or has no FT/PT leftovers. */}
+      <OffCycleCatchUpCard companyId={companyId} periodStart={period.start} />
 
       {ambiguous.length > 0 && (
         <div

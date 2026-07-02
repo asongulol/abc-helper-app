@@ -67,6 +67,7 @@ function makePayment(
     status?: string;
     wiseTransferId?: string | null;
     payDate?: string;
+    paidAt?: string;
   } = {},
 ): MatcherPayment {
   return {
@@ -76,6 +77,7 @@ function makePayment(
     original_net_php: opts.originalNetPhp ?? null,
     status: opts.status ?? 'draft',
     wise_transfer_id: opts.wiseTransferId ?? null,
+    ...(opts.paidAt ? { paid_at: opts.paidAt } : {}),
     workers: {
       wise_recipient_id: recipientId,
       wise_recipient_uuid: null,
@@ -190,6 +192,32 @@ describe('decideMatch — no transfers for recipient', () => {
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
     // 7 * DAY_MS = exactly windowDays * DAY_MS → included (<=)
     expect(d.result.outcome).toBe('matched_exact');
+  });
+});
+
+// ─── decideMatch — paid_at anchors the window ─────────────────────────────────
+//
+// A batch marked paid two weeks after the scheduled pay_date (real prod case:
+// pay_date 06-15, paid_at 06-29) must window around paid_at, or every real
+// transfer lands outside ±7d of pay_date and comes back
+// no_wise_transfer_in_window.
+
+describe('decideMatch — paid_at anchors the window', () => {
+  it('transfer near paid_at but outside the pay_date window still matches', () => {
+    const t = makeTransfer(1, 999, 10000, 14); // 14 days after pay_date…
+    const idx = buildRecipientIndex([t]);
+    const paidAt = new Date(PAY_DATE_MS + 14 * DAY_MS).toISOString(); // …but ON paid_at
+    const p = makePayment('p1', 10000, 999, { paidAt });
+    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_exact');
+  });
+
+  it('without paid_at the same transfer stays outside the window (fallback unchanged)', () => {
+    const t = makeTransfer(1, 999, 10000, 14);
+    const idx = buildRecipientIndex([t]);
+    const p = makePayment('p1', 10000, 999);
+    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('no_wise_transfer_in_window');
   });
 });
 
