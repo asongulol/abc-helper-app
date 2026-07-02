@@ -72,12 +72,18 @@ for (const file of staged) {
   // Size cap.
   const size = statSync(file).size;
   if (size > MAX_BYTES) {
-    problems.push(`${file}: ${(size / 1024 / 1024).toFixed(1)} MB staged — files over 2 MB don't belong in git`);
+    problems.push(
+      `${file}: ${(size / 1024 / 1024).toFixed(1)} MB staged — files over 2 MB don't belong in git`,
+    );
     continue;
   }
 
   // Secrets scan (text files only; skip the lockfile and this script's rules).
-  if (TEXT_EXT.test(name) && name !== 'pnpm-lock.yaml' && file !== 'scripts/pre-commit-checks.mjs') {
+  if (
+    TEXT_EXT.test(name) &&
+    name !== 'pnpm-lock.yaml' &&
+    file !== 'scripts/pre-commit-checks.mjs'
+  ) {
     const lines = readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, i) => {
       for (const rule of SECRET_RULES) {

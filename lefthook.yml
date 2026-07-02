@@ -13,7 +13,7 @@ pre-commit:
   parallel: true
   commands:
     check:
-      glob: "*.{js,jsx,ts,tsx,json,jsonc}"
+      glob: "*.{js,jsx,ts,tsx,mjs,cjs,json,jsonc}"
       run: pnpm biome check --write --no-errors-on-unmatched {staged_files} && git add {staged_files}
     typecheck:
       glob: "*.{ts,tsx}"
