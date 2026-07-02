@@ -3,11 +3,8 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { Badge, type BadgeTone, Modal, Spinner, useToast } from '@/components/ui';
-import {
-  type PullRecipientStatus,
-  type PullRecipientsResult,
-  wisePullRecipientIds,
-} from '@/server/actions/wise';
+import type { PullRecipientStatus } from '@/lib/wise/recipient-match';
+import { type PullRecipientsResult, wisePullRecipientIds } from '@/server/actions/wise';
 
 interface Props {
   onClose: () => void;

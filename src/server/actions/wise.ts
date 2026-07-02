@@ -19,11 +19,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
-import {
-  type PullRecipientRow,
-  type PullRecipientStatus,
-  planRecipientMatches,
-} from '@/lib/wise/recipient-match';
+import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
@@ -285,7 +281,10 @@ export async function wiseRecipients(): Promise<WiseActionResult<unknown[]>> {
   }
 }
 
-export type { PullRecipientRow, PullRecipientStatus };
+// No type re-exports from this 'use server' module — the dev server-actions
+// loader can compile `export type { … }` into a runtime export reference and
+// crash every action bundled with this route. Import these types from
+// '@/lib/wise/recipient-match' instead.
 export interface PullRecipientsResult {
   total: number;
   alreadyLinked: number;

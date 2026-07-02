@@ -17,8 +17,14 @@ import {
 import { type ContractType, contractForEdit, type PayBasis } from '@/types/schemas/contractors';
 import type { FormState } from './types';
 
-type TabKey = 'profile' | 'pay' | 'personal' | 'portal';
-const TAB_KEYS = ['profile', 'pay', 'personal', 'portal'] as const satisfies readonly TabKey[];
+type TabKey = 'profile' | 'pay' | 'personal' | 'portal' | 'docs';
+const TAB_KEYS = [
+  'profile',
+  'pay',
+  'personal',
+  'portal',
+  'docs',
+] as const satisfies readonly TabKey[];
 
 type ValidPayoutMethod = 'wise' | 'bpi' | 'gcash' | 'paymaya' | 'paypal';
 type ValidWorkerStatus = 'active' | 'inactive' | 'ended';
@@ -431,6 +437,7 @@ export function useContractorProfile(
     { key: 'pay', label: 'Pay & payout' },
     { key: 'personal', label: 'Personal / HR' },
     { key: 'portal', label: 'Portal & login' },
+    { key: 'docs', label: 'Documents' },
   ];
 
   return {

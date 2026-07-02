@@ -20,6 +20,7 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
+import { fetchWorkerDocuments, type WorkerDocumentRow } from '@/db/queries/documents';
 import { fetchContractorLogin } from '@/db/queries/onboarding';
 import { fetchOwnDocuments } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
@@ -27,7 +28,7 @@ import { parseDocUploadForm } from '@/lib/onboarding/doc-upload';
 import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
-import { getCurrentAdmin } from '@/server/auth/admin';
+import { type CurrentAdmin, getCurrentAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
 
@@ -64,6 +65,42 @@ export async function fetchOutstandingDocSlots(): Promise<OutstandingDocSlot[]> 
     label: s.label,
     freshnessMonths: s.freshnessMonths,
   }));
+}
+
+/**
+ * Company-scope gate shared by the admin document actions (list / upload —
+ * same pattern as sendToolsEmail): a non-owner admin must share a company
+ * with the worker.
+ */
+async function adminInScopeForWorker(admin: CurrentAdmin, workerId: string): Promise<boolean> {
+  if (admin.isOwner) return true;
+  const db = await createServerSupabase();
+  const { data: links } = await db
+    .from('worker_companies')
+    .select('company_id')
+    .eq('worker_id', workerId);
+  return (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+}
+
+/**
+ * All of a worker's documents for the admin Documents tab — the full upload
+ * history per kind, newest first, including fileless waived/deferred rows.
+ */
+export async function listContractorDocuments(args: {
+  workerId: string;
+}): Promise<ActionResult<{ documents: WorkerDocumentRow[] }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  try {
+    if (!(await adminInScopeForWorker(admin, args.workerId)))
+      return { ok: false, error: 'Not authorized for this contractor.' };
+    // Service client after the admin gate — admin RLS is company-filtered,
+    // not worker-filtered (same precedent as getOnboardingDetail).
+    const documents = await fetchWorkerDocuments(createServiceClient(), args.workerId);
+    return { ok: true, data: { documents } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
 }
 
 /**
@@ -151,17 +188,8 @@ export async function uploadDocumentForContractor(form: FormData): Promise<Actio
   if (!parsed.ok) return parsed;
 
   try {
-    const db = await createServerSupabase();
-    // Authorize per-company before touching storage (same pattern as
-    // sendToolsEmail): a non-owner admin must share a company with this worker.
-    if (!admin.isOwner) {
-      const { data: links } = await db
-        .from('worker_companies')
-        .select('company_id')
-        .eq('worker_id', workerId);
-      const inScope = (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
-      if (!inScope) return { ok: false, error: 'Not authorized for this contractor.' };
-    }
+    if (!(await adminInScopeForWorker(admin, workerId)))
+      return { ok: false, error: 'Not authorized for this contractor.' };
 
     // Folder prefix: the contractor's auth uid when a portal login exists, else
     // the worker id. ponytail: reads always go through service-client signed

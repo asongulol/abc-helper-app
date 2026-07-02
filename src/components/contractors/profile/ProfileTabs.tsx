@@ -1,6 +1,7 @@
 'use client';
 
 import type { RosterWorker } from '@/db/queries/workers';
+import { DocumentsTab } from './DocumentsTab';
 import { PayTab } from './PayTab';
 import { PersonalTab } from './PersonalTab';
 import { PortalLoginTab } from './PortalLoginTab';
@@ -113,6 +114,9 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [] 
           panelProps={tablist.panelProps()}
         />
       )}
+
+      {/* ─── Documents tab ─── */}
+      {activeTab === 'docs' && <DocumentsTab worker={worker} panelProps={tablist.panelProps()} />}
     </>
   );
 }
