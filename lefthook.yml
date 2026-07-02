@@ -1,3 +1,14 @@
+# Git hooks (lefthook — installed by `pnpm install` via the prepare script).
+#
+#   pre-commit : format/lint staged files, typecheck, staged-file hygiene
+#                (secrets, .env files, migration naming/append-only, size cap)
+#   commit-msg : Conventional Commits + subject length
+#   pre-push   : security guardrails, prod-migration gate, typecheck, tests,
+#                best-effort changelog; direct pushes from main are blocked
+#   post-merge : non-blocking reminders when deps or migrations changed
+#
+# Re-sync stubs after editing this file: `pnpm lefthook install`.
+
 pre-commit:
   parallel: true
   commands:
@@ -7,10 +18,32 @@ pre-commit:
     typecheck:
       glob: "*.{ts,tsx}"
       run: pnpm typecheck
+    # Secrets / .env files / migration hygiene / >2MB files — staged files only.
+    hygiene:
+      run: node scripts/pre-commit-checks.mjs {staged_files}
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        grep -qE '^(feat|fix|chore|refactor|docs|test|perf|build|ci|style)(\(.+\))?!?: .+' {1} \
+          || (echo "Commit msg must be Conventional Commits (feat:, fix:, chore:, ...)"; exit 1)
+    subject-length:
+      run: |
+        len=$(head -1 {1} | wc -c)
+        [ "$len" -le 101 ] \
+          || (echo "Commit subject is $((len - 1)) chars — keep the first line ≤ 100."; exit 1)
 
 pre-push:
   parallel: false
   commands:
+    # This repo ships main → prod via PR only; a direct push from main skips
+    # review AND the CI gates GitHub enforces on PRs. Fail fast locally.
+    protect-main:
+      run: |
+        branch=$(git symbolic-ref --short -q HEAD || echo detached)
+        [ "$branch" != "main" ] \
+          || (echo "✖ Direct push from main is blocked — branch → PR → merge."; exit 1)
     guardrails:
       run: pnpm guardrails
     # Blocks pushing to main while a migration isn't recorded as applied to prod
@@ -27,9 +60,14 @@ pre-push:
       run: pnpm changelog
       fail_text: "changelog generation failed (push not blocked)"
 
-commit-msg:
+# Non-blocking drift reminders after a merge/pull — the two things that silently
+# break a working tree: dependency and schema changes.
+post-merge:
   commands:
-    conventional:
+    reminders:
       run: |
-        grep -qE '^(feat|fix|chore|refactor|docs|test|perf|build|ci|style)(\(.+\))?!?: .+' {1} \
-          || (echo "Commit msg must be Conventional Commits (feat:, fix:, chore:, ...)"; exit 1)
+        changed=$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD 2>/dev/null || true)
+        echo "$changed" | grep -q '^pnpm-lock.yaml$' \
+          && echo "⚠ pnpm-lock.yaml changed — run: pnpm install" || true
+        echo "$changed" | grep -q '^supabase/migrations/' \
+          && echo "⚠ migrations changed — run: supabase migration up (local stack)" || true

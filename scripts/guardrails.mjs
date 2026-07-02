@@ -29,6 +29,22 @@ const RULES = [
   },
 ];
 
+// Rules that only apply inside 'use server' modules. The dev server-actions
+// loader can compile a type re-export list into a RUNTIME export reference and
+// crash every action bundled with the route (seen live: "ReferenceError:
+// PullRecipientRow is not defined"). Declare types in a lib module and import
+// them from there instead.
+const USE_SERVER_RULES = [
+  {
+    name: "Type re-export from a 'use server' module (crashes the dev actions loader)",
+    re: /^export type \{/,
+  },
+];
+
+/** @param {string} content */
+const isUseServerModule = (content) =>
+  /^\s*['"]use server['"]/.test(content.split('\n').slice(0, 5).join('\n'));
+
 /** @param {string} dir @param {string[]} out */
 const walk = (dir, out) => {
   for (const entry of readdirSync(dir)) {
@@ -45,9 +61,11 @@ for (const root of ROOTS) {
 
 const violations = [];
 for (const file of files) {
-  const lines = readFileSync(file, 'utf8').split('\n');
+  const content = readFileSync(file, 'utf8');
+  const lines = content.split('\n');
+  const fileRules = isUseServerModule(content) ? [...RULES, ...USE_SERVER_RULES] : RULES;
   lines.forEach((line, i) => {
-    for (const rule of RULES) {
+    for (const rule of fileRules) {
       if (rule.re.test(line)) {
         violations.push(`${file}:${i + 1}  ${rule.name}\n    ${line.trim()}`);
       }
