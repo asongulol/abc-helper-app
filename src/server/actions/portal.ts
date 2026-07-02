@@ -1035,6 +1035,75 @@ export async function getAdminDocumentUrl(args: {
   }
 }
 
+/**
+ * Permanently delete a contractor document (admin Documents tab): row first,
+ * then best-effort storage removal — the worst failure mode is an invisible
+ * orphaned object, never a visible row whose file is gone. Fileless
+ * waived/deferred placeholders delete the same way (equivalent to clearing
+ * the slot resolution). Stage 3 is recomputed since deleting an approved
+ * required doc can revert onboarding completion.
+ */
+export async function deleteContractorDocument(args: {
+  documentId: string;
+}): Promise<ActionResult> {
+  const admin = await requireAdmin();
+  try {
+    const svc = createServiceClient();
+    const { data: doc, error } = await svc
+      .from('documents')
+      .select('id, worker_id, kind, side, title, storage_path')
+      .eq('id', args.documentId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    if (!doc) return { ok: false, error: 'Document not found.' };
+
+    // Company scope via the worker's links (same gate as the list/upload
+    // actions — keys on the worker, so legacy null-company rows stay deletable
+    // by owners and correctly scoped for non-owners).
+    if (!admin.isOwner) {
+      const db = await createServerSupabase();
+      const { data: links } = await db
+        .from('worker_companies')
+        .select('company_id')
+        .eq('worker_id', doc.worker_id);
+      const inScope = (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+      if (!inScope) return { ok: false, error: 'Not authorized for this contractor.' };
+    }
+
+    const del = await svc.from('documents').delete().eq('id', doc.id);
+    if (del.error) return { ok: false, error: del.error.message };
+
+    if (doc.storage_path) {
+      // Best-effort: remove() of a missing path is not an error, so this is
+      // idempotent; a failure only orphans a private object.
+      await svc.storage.from('contractor-docs').remove([doc.storage_path]);
+    }
+
+    await recomputeStage3(svc, doc.worker_id);
+
+    await logEvent({
+      action: 'document.deleted',
+      entity: `${doc.kind}${doc.side ? ` (${doc.side})` : ''} · ${doc.worker_id}`,
+      detail: {
+        document_id: doc.id,
+        worker_id: doc.worker_id,
+        kind: doc.kind,
+        side: doc.side,
+        title: doc.title,
+        storage_path: doc.storage_path,
+        by: admin.email,
+      },
+    });
+
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Delete failed.',
+    };
+  }
+}
+
 /* ---------- portal Tools: reveal (§10.6) ---------- */
 
 /** Reveal the worker's provisioned tool credentials (get_my_tools decrypts and

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState, useTransition } from 'react';
+import { DocReviewModal } from '@/components/documents/DocReviewModal';
 import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import type { OnboardingProgressRow } from '@/db/queries/onboarding';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -23,7 +24,6 @@ import {
 import {
   clearMissingDocumentResolution,
   countersignAgreement,
-  getAdminDocumentUrl,
   resolveMissingDocument,
   reviewDocument,
 } from '@/server/actions/portal';
@@ -109,12 +109,8 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
     label: string;
     run: () => void;
   } | null>(null);
-  // Inline document preview (signed URL + previewable type).
-  const [docPreview, setDocPreview] = useState<{
-    url: string;
-    name: string;
-    type: 'image' | 'pdf' | 'other';
-  } | null>(null);
+  // Document under review — DocReviewModal shows the preview + decisions.
+  const [reviewDoc, setReviewDoc] = useState<OnbDocLite | null>(null);
 
   const runStage = (fn: () => Promise<{ ok: boolean; error?: string }>, msg: string) => {
     startTransition(async () => {
@@ -270,14 +266,6 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
     });
   };
 
-  const handleViewDoc = (documentId: string) => {
-    startTransition(async () => {
-      const res = await getAdminDocumentUrl({ documentId });
-      if (res.ok) setDocPreview(res.data);
-      else notify(res.error, { type: 'error' });
-    });
-  };
-
   const slotKey = (slot: DocSlotStatus) => `${slot.kind}|${slot.side ?? ''}`;
 
   // Waive / defer a required doc the contractor hasn't uploaded yet.
@@ -427,56 +415,16 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
     borderBottom: '1px solid var(--border)',
   } as const;
 
+  // One button per row — the preview + review decisions live in DocReviewModal.
   const renderDocActions = (d: OnbDocLite) => (
-    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-      {d.storagePath && (
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={isPending}
-          onClick={() => handleViewDoc(d.id)}
-        >
-          View
-        </button>
-      )}
-      <button
-        type="button"
-        className="btn ghost sm"
-        disabled={isPending}
-        onClick={() => handleReview(d.id, 'approve')}
-      >
-        Approve
-      </button>
-      <button
-        type="button"
-        className="btn ghost sm"
-        disabled={isPending}
-        onClick={() => handleReview(d.id, 'needs_replacement')}
-      >
-        Needs replacement
-      </button>
-      <button
-        type="button"
-        className="btn ghost sm"
-        disabled={isPending}
-        onClick={() =>
-          setWaiveConfirm({
-            label: fileName(d),
-            run: () => handleReview(d.id, 'waive'),
-          })
-        }
-      >
-        Waive
-      </button>
-      <button
-        type="button"
-        className="btn ghost sm"
-        disabled={isPending}
-        onClick={() => handleReview(d.id, 'defer')}
-      >
-        Defer
-      </button>
-    </div>
+    <button
+      type="button"
+      className="btn ghost sm"
+      disabled={isPending}
+      onClick={() => setReviewDoc(d)}
+    >
+      Review
+    </button>
   );
 
   // Actions for a required doc with no upload: waive, or defer up to a date.
@@ -892,68 +840,63 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                 {doc?.storagePath
                   ? renderDocActions(doc)
                   : renderOverrideActions(slot, doc ?? null)}
-                {(slot.state === 'missing' || slot.state === 'needs_replacement') &&
-                  (uploadSlot?.key === slotKey(slot) ? (
-                    <div
-                      style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}
-                    >
+                {/* Upload is available on every row — additive; a new upload
+                    becomes the slot's latest (pending) while history remains. */}
+                {uploadSlot?.key === slotKey(slot) ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png"
+                      onChange={(e) =>
+                        setUploadSlot({
+                          key: slotKey(slot),
+                          file: e.target.files?.[0] ?? null,
+                          issuedOn: uploadSlot.issuedOn,
+                        })
+                      }
+                      style={{ fontSize: 12, maxWidth: 220 }}
+                      aria-label={`Upload ${slot.label}`}
+                    />
+                    {slot.kind === 'nbi_clearance' && (
                       <input
-                        type="file"
-                        accept="application/pdf,image/jpeg,image/png"
-                        onChange={(e) =>
-                          setUploadSlot({
-                            key: slotKey(slot),
-                            file: e.target.files?.[0] ?? null,
-                            issuedOn: uploadSlot.issuedOn,
-                          })
-                        }
-                        style={{ fontSize: 12, maxWidth: 220 }}
-                        aria-label={`Upload ${slot.label}`}
+                        type="date"
+                        value={uploadSlot.issuedOn}
+                        onChange={(e) => setUploadSlot({ ...uploadSlot, issuedOn: e.target.value })}
+                        style={{ fontSize: 12 }}
+                        aria-label="Date issued"
                       />
-                      {slot.kind === 'nbi_clearance' && (
-                        <input
-                          type="date"
-                          value={uploadSlot.issuedOn}
-                          onChange={(e) =>
-                            setUploadSlot({ ...uploadSlot, issuedOn: e.target.value })
-                          }
-                          style={{ fontSize: 12 }}
-                          aria-label="Date issued"
-                        />
-                      )}
-                      <button
-                        type="button"
-                        className="btn sm"
-                        disabled={
-                          isPending ||
-                          !uploadSlot.file ||
-                          (slot.kind === 'nbi_clearance' && !uploadSlot.issuedOn)
-                        }
-                        onClick={() => handleUploadFor(slot)}
-                      >
-                        {isPending ? 'Uploading…' : 'Upload'}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn ghost sm"
-                        onClick={() => setUploadSlot(null)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
+                    )}
+                    <button
+                      type="button"
+                      className="btn sm"
+                      disabled={
+                        isPending ||
+                        !uploadSlot.file ||
+                        (slot.kind === 'nbi_clearance' && !uploadSlot.issuedOn)
+                      }
+                      onClick={() => handleUploadFor(slot)}
+                    >
+                      {isPending ? 'Uploading…' : 'Upload'}
+                    </button>
                     <button
                       type="button"
                       className="btn ghost sm"
-                      disabled={isPending}
-                      onClick={() =>
-                        setUploadSlot({ key: slotKey(slot), file: null, issuedOn: '' })
-                      }
-                      title="Upload this document on the contractor's behalf"
+                      onClick={() => setUploadSlot(null)}
                     >
-                      Upload…
+                      Cancel
                     </button>
-                  ))}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    disabled={isPending}
+                    onClick={() => setUploadSlot({ key: slotKey(slot), file: null, issuedOn: '' })}
+                    title="Upload this document on the contractor's behalf"
+                  >
+                    Upload…
+                  </button>
+                )}
               </div>
             );
           })}
@@ -1161,50 +1104,22 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
         </Modal>
       )}
 
-      {docPreview && (
-        <Modal title={docPreview.name} onClose={() => setDocPreview(null)} maxWidth={920}>
-          {docPreview.type === 'image' ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            // biome-ignore lint/performance/noImgElement: remote Supabase signed-URL document preview, not a static asset
-            <img
-              src={docPreview.url}
-              alt={docPreview.name}
-              style={{
-                display: 'block',
-                maxWidth: '100%',
-                maxHeight: '72vh',
-                margin: '0 auto',
-                objectFit: 'contain',
-              }}
-            />
-          ) : docPreview.type === 'pdf' ? (
-            <iframe
-              src={docPreview.url}
-              title={docPreview.name}
-              style={{
-                width: '100%',
-                height: '72vh',
-                border: '1px solid var(--border)',
-                borderRadius: 6,
-              }}
-            />
-          ) : (
-            <p className="sub">This file type can’t be previewed inline — open it in a new tab.</p>
-          )}
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <a
-              href={docPreview.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn ghost sm"
-            >
-              Open in new tab ↗
-            </a>
-            <button type="button" className="btn ghost sm" onClick={() => setDocPreview(null)}>
-              Close
-            </button>
-          </div>
-        </Modal>
+      {reviewDoc && (
+        <DocReviewModal
+          documentId={reviewDoc.id}
+          name={fileName(reviewDoc)}
+          storagePath={reviewDoc.storagePath}
+          busy={isPending}
+          onDecision={(decision) => {
+            const d = reviewDoc;
+            setReviewDoc(null);
+            if (decision === 'waive')
+              setWaiveConfirm({ label: fileName(d), run: () => handleReview(d.id, 'waive') });
+            // handleReview already routes needs_replacement to the reason modal.
+            else handleReview(d.id, decision);
+          }}
+          onClose={() => setReviewDoc(null)}
+        />
       )}
 
       {waiveConfirm && (

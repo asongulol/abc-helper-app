@@ -103,6 +103,47 @@ export const fetchDocument = async (db: Db, documentId: string): Promise<Documen
   };
 };
 
+export type WorkerDocumentRow = {
+  id: string;
+  kind: Database['public']['Enums']['document_kind'];
+  side: string | null;
+  title: string | null;
+  storagePath: string | null;
+  reviewStatus: Database['public']['Enums']['review_status'];
+  issuedOn: string | null;
+  /** Defer-until date for deferred rows (review reuses expires_on as due date). */
+  expiresOn: string | null;
+  createdAt: string;
+};
+
+/**
+ * All documents for one worker (admin per-worker view), newest-first — the
+ * full upload history per kind, including fileless waived/deferred
+ * placeholders (they carry status and are deletable).
+ */
+export const fetchWorkerDocuments = async (
+  db: Db,
+  workerId: string,
+): Promise<WorkerDocumentRow[]> => {
+  const { data, error } = await db
+    .from('documents')
+    .select('id, kind, side, title, storage_path, review_status, issued_on, expires_on, created_at')
+    .eq('worker_id', workerId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`worker documents: ${error.message}`);
+  return (data ?? []).map((d) => ({
+    id: d.id,
+    kind: d.kind,
+    side: d.side,
+    title: d.title,
+    storagePath: d.storage_path,
+    reviewStatus: d.review_status,
+    issuedOn: d.issued_on,
+    expiresOn: d.expires_on,
+    createdAt: d.created_at,
+  }));
+};
+
 /**
  * Delete any fileless (no upload) placeholder rows for a worker's doc slot.
  * Never touches real uploads (those have a storage_path).
