@@ -10,6 +10,7 @@ import { fmtDate, fmtDateTime } from '@/lib/format';
 import type { DocSlotState, DocSlotStatus } from '@/lib/onboarding/documents';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import {
+  deleteAgreementSignature,
   editAgreementDate,
   editAgreementPrefill,
   getOnboardingDetail,
@@ -24,6 +25,7 @@ import {
 import {
   clearMissingDocumentResolution,
   countersignAgreement,
+  deleteContractorDocument,
   resolveMissingDocument,
   reviewDocument,
 } from '@/server/actions/portal';
@@ -111,6 +113,14 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
   } | null>(null);
   // Document under review — DocReviewModal shows the preview + decisions.
   const [reviewDoc, setReviewDoc] = useState<OnbDocLite | null>(null);
+  // "Other uploads" row pending permanent deletion (mistaken entries).
+  const [deleteDoc, setDeleteDoc] = useState<OnbDocLite | null>(null);
+  // Mistakenly-signed agreement pending permanent deletion (kind + label).
+  const [deleteAgreement, setDeleteAgreement] = useState<{
+    kind: string;
+    label: string;
+    countersigned: boolean;
+  } | null>(null);
 
   const runStage = (fn: () => Promise<{ ok: boolean; error?: string }>, msg: string) => {
     startTransition(async () => {
@@ -720,6 +730,21 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                 >
                   Print
                 </Link>
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={isPending}
+                  onClick={() =>
+                    setDeleteAgreement({
+                      kind: a.agreementKind,
+                      label: AGREEMENT_LABELS[a.agreementKind] ?? a.agreementKind,
+                      countersigned: !!a.countersignedAt,
+                    })
+                  }
+                  style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                >
+                  Delete
+                </button>
               </div>
             </div>
           ))}
@@ -914,6 +939,15 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                   </span>
                   <Badge tone={docStatusTone(d.reviewStatus)}>{d.reviewStatus}</Badge>
                   {renderDocActions(d)}
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    disabled={isPending}
+                    onClick={() => setDeleteDoc(d)}
+                    style={{ borderColor: 'var(--bad)', color: 'var(--bad)' }}
+                  >
+                    Delete
+                  </button>
                 </div>
               ))}
             </>
@@ -1119,6 +1153,61 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
             else handleReview(d.id, decision);
           }}
           onClose={() => setReviewDoc(null)}
+        />
+      )}
+
+      {deleteAgreement && (
+        <ConfirmDangerModal
+          title="Delete signed agreement?"
+          message={`Permanently delete the contractor's signed “${deleteAgreement.label}”${deleteAgreement.countersigned ? ' — including its countersignature' : ''}?`}
+          consequence="The signature record and prefill are destroyed (metadata is kept in the audit log). The contractor must re-sign, and stage 1 reverts to incomplete until they do. Cannot be undone."
+          confirmWord={deleteAgreement.label}
+          confirmLabel="Delete agreement"
+          busy={isPending}
+          onConfirm={() => {
+            const target = deleteAgreement;
+            startTransition(async () => {
+              const res = await deleteAgreementSignature({
+                workerId: row.workerId,
+                agreementKind: target.kind as Parameters<
+                  typeof deleteAgreementSignature
+                >[0]['agreementKind'],
+              });
+              if (res.ok) {
+                notify(`${target.label} deleted — contractor can re-sign.`, { type: 'success' });
+                setDeleteAgreement(null);
+                loadDetail();
+                router.refresh();
+              } else {
+                notify(res.error ?? 'Delete failed.', { type: 'error' });
+              }
+            });
+          }}
+          onCancel={() => setDeleteAgreement(null)}
+        />
+      )}
+
+      {deleteDoc && (
+        <ConfirmDangerModal
+          title="Delete document?"
+          message={`Permanently delete “${fileName(deleteDoc)}”${deleteDoc.side ? ` (${deleteDoc.side})` : ''}?`}
+          consequence="The file is permanently removed. Cannot be undone."
+          confirmLabel="Delete"
+          busy={isPending}
+          onConfirm={() => {
+            const d = deleteDoc;
+            startTransition(async () => {
+              const res = await deleteContractorDocument({ documentId: d.id });
+              if (res.ok) {
+                notify('Document deleted.', { type: 'success' });
+                setDeleteDoc(null);
+                loadDetail();
+              } else {
+                notify(res.error, { type: 'error' });
+              }
+            });
+          }}
+          onCancel={() => setDeleteDoc(null)}
         />
       )}
 

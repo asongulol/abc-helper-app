@@ -322,6 +322,102 @@ export async function resetOnboarding(args: { workerId: string }): Promise<Simpl
   }
 }
 
+// Local copy — portal.ts's AGREEMENT_ORDER can't be imported (no non-async
+// exports from a 'use server' module).
+const AGREEMENT_KINDS: readonly AgreementKind[] = [
+  'ic_agreement',
+  'non_compete',
+  'confidentiality_nda',
+  'baa',
+];
+
+/**
+ * Permanently delete a mistakenly-signed agreement: the signature ledger rows
+ * AND the countersign/prefill card for that kind, so the contractor can
+ * re-sign from scratch (admin re-prepares the prefill). Stage 1 is recomputed
+ * from the remaining signed agreements — deleting one un-completes it. The
+ * destroyed signature metadata is preserved in the audit log.
+ */
+export async function deleteAgreementSignature(args: {
+  workerId: string;
+  agreementKind: AgreementKind;
+}): Promise<SimpleResult> {
+  try {
+    const admin = await requireAdmin();
+    const db = createServiceClient();
+
+    // Capture what's being destroyed for the audit trail.
+    const { data: sigs } = await db
+      .from('onboarding_signatures')
+      .select('signed_legal_name, signed_at, status')
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', args.agreementKind);
+    const { data: agr } = await db
+      .from('onboarding_agreements')
+      .select('countersigned_at, countersigned_name')
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', args.agreementKind)
+      .maybeSingle();
+    if (!sigs?.length && !agr) return fail('Nothing to delete for this agreement.');
+
+    const delSig = await db
+      .from('onboarding_signatures')
+      .delete()
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', args.agreementKind);
+    if (delSig.error) return fail(delSig.error.message);
+    const delAgr = await db
+      .from('onboarding_agreements')
+      .delete()
+      .eq('worker_id', args.workerId)
+      .eq('agreement_kind', args.agreementKind);
+    if (delAgr.error) return fail(delAgr.error.message);
+
+    // Recompute stage 1 from the remaining signed agreements.
+    const { data: remaining } = await db
+      .from('onboarding_signatures')
+      .select('agreement_kind')
+      .eq('worker_id', args.workerId)
+      .eq('status', 'signed');
+    const signedKinds = new Set((remaining ?? []).map((s) => s.agreement_kind));
+    const s1 = AGREEMENT_KINDS.every((k) => signedKinds.has(k));
+    const { data: row } = await db
+      .from('onboarding_progress')
+      .select('stage2_complete, stage3_complete')
+      .eq('worker_id', args.workerId)
+      .maybeSingle();
+    if (row) {
+      const d = deriveStage(s1, row.stage2_complete, row.stage3_complete);
+      const up = await db
+        .from('onboarding_progress')
+        .update({ stage1_complete: s1, ...d, updated_at: ISO_NOW() })
+        .eq('worker_id', args.workerId);
+      if (up.error) return fail(up.error.message);
+    }
+
+    await logEvent({
+      action: 'agreement.deleted',
+      entity: `${args.agreementKind} · ${args.workerId}`,
+      detail: {
+        worker_id: args.workerId,
+        agreement_kind: args.agreementKind,
+        signatures: (sigs ?? []).map((s) => ({
+          signed_legal_name: s.signed_legal_name,
+          signed_at: s.signed_at,
+          status: s.status,
+        })),
+        countersigned_at: agr?.countersigned_at ?? null,
+        countersigned_name: agr?.countersigned_name ?? null,
+        by: admin.email,
+      },
+    });
+    revalidatePath('/onboarding');
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 // ─── Per-agreement edits (manifest 28: Edit date · Edit prefill) ─────────────────
 
 /** Edit the signed date on a contractor's agreement signature(s). */
