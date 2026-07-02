@@ -169,36 +169,74 @@ export const fetchOnboardingProgressByWorker = async (
   };
 };
 
-/** Signatures for a worker, newest first. */
+const SIG_META_COLS =
+  'id, worker_id, agreement_kind, signed_legal_name, signature_method, doc_version, doc_sha256, signed_at, signed_date, scrolled_to_end, status, ip_address, user_agent';
+
+type RawSigMeta = Pick<
+  Database['public']['Tables']['onboarding_signatures']['Row'],
+  | 'id'
+  | 'worker_id'
+  | 'agreement_kind'
+  | 'signed_legal_name'
+  | 'signature_method'
+  | 'doc_version'
+  | 'doc_sha256'
+  | 'signed_at'
+  | 'signed_date'
+  | 'scrolled_to_end'
+  | 'status'
+  | 'ip_address'
+  | 'user_agent'
+>;
+
+const mapSigMeta = (s: RawSigMeta): Omit<OnboardingSignatureRow, 'signatureData'> => ({
+  id: s.id,
+  workerId: s.worker_id,
+  agreementKind: s.agreement_kind,
+  signedLegalName: s.signed_legal_name,
+  signatureMethod: s.signature_method,
+  docVersion: s.doc_version,
+  docSha256: s.doc_sha256,
+  signedAt: s.signed_at,
+  signedDate: s.signed_date,
+  scrolledToEnd: s.scrolled_to_end,
+  status: s.status,
+  ipAddress: s.ip_address,
+  userAgent: s.user_agent,
+});
+
+/**
+ * Signatures for a worker, newest first. Pass `{ withData: false }` when the
+ * drawn signature image isn't needed (e.g. the admin detail view) — that skips
+ * both the base64 blob transfer and the per-row PHI decryption (KMS on prod);
+ * the print flows keep the default blob path.
+ */
 export const fetchSignatures = async (
   db: Db,
   workerId: string,
+  opts?: { withData?: boolean },
 ): Promise<OnboardingSignatureRow[]> => {
+  if (opts?.withData === false) {
+    const { data, error } = await db
+      .from('onboarding_signatures')
+      .select(SIG_META_COLS)
+      .eq('worker_id', workerId)
+      .order('signed_at', { ascending: false });
+    if (error) throw new Error(`onboarding_signatures: ${error.message}`);
+    return (data ?? []).map((s) => ({ ...mapSigMeta(s), signatureData: null }));
+  }
+
   const { data, error } = await db
     .from('onboarding_signatures')
-    .select(
-      'id, worker_id, agreement_kind, signed_legal_name, signature_method, signature_data, doc_version, doc_sha256, signed_at, signed_date, scrolled_to_end, status, ip_address, user_agent',
-    )
+    .select(`${SIG_META_COLS}, signature_data`)
     .eq('worker_id', workerId)
     .order('signed_at', { ascending: false });
   if (error) throw new Error(`onboarding_signatures: ${error.message}`);
   return Promise.all(
     (data ?? []).map(async (s) => ({
-      id: s.id,
-      workerId: s.worker_id,
-      agreementKind: s.agreement_kind,
-      signedLegalName: s.signed_legal_name,
-      signatureMethod: s.signature_method,
+      ...mapSigMeta(s),
       // signature_data is PHI; decrypt envelope tokens, pass legacy plaintext through.
       signatureData: s.signature_data ? await decryptIfNeeded(s.signature_data) : null,
-      docVersion: s.doc_version,
-      docSha256: s.doc_sha256,
-      signedAt: s.signed_at,
-      signedDate: s.signed_date,
-      scrolledToEnd: s.scrolled_to_end,
-      status: s.status,
-      ipAddress: s.ip_address,
-      userAgent: s.user_agent,
     })),
   );
 };

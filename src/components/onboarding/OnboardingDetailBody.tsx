@@ -33,6 +33,7 @@ import {
   resetPortalPassword,
   withdrawOffer,
 } from '@/server/actions/portal-admin';
+import { uploadDocumentForContractor } from '@/server/actions/portal-docs';
 
 interface Props {
   row: OnboardingProgressRow;
@@ -180,6 +181,12 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
   // Which missing-doc slot has its inline "defer until" date picker open.
   const [deferSlotKey, setDeferSlotKey] = useState<string | null>(null);
   const [deferDate, setDeferDate] = useState('');
+  // Which checklist slot has its inline admin-upload row open.
+  const [uploadSlot, setUploadSlot] = useState<{
+    key: string;
+    file: File | null;
+    issuedOn: string;
+  } | null>(null);
 
   const loadDetail = () => {
     getOnboardingDetail(row.workerId).then((res) => {
@@ -199,6 +206,27 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
   useEffect(() => {
     loadDetail();
   }, [row.workerId]);
+
+  // Admin uploads a file into a checklist slot on the contractor's behalf.
+  const handleUploadFor = (slot: DocSlotStatus) => {
+    if (!uploadSlot?.file) return;
+    const form = new FormData();
+    form.set('workerId', row.workerId);
+    form.set('file', uploadSlot.file);
+    form.set('kind', slot.kind);
+    if (slot.side) form.set('side', slot.side);
+    if (slot.kind === 'nbi_clearance') form.set('issuedOn', uploadSlot.issuedOn);
+    startTransition(async () => {
+      const res = await uploadDocumentForContractor(form);
+      if (res.ok) {
+        notify('Uploaded — pending review.', { type: 'success' });
+        setUploadSlot(null);
+        loadDetail();
+      } else {
+        notify(res.error, { type: 'error' });
+      }
+    });
+  };
 
   const handleReview = (
     documentId: string,
@@ -864,6 +892,68 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                 {doc?.storagePath
                   ? renderDocActions(doc)
                   : renderOverrideActions(slot, doc ?? null)}
+                {(slot.state === 'missing' || slot.state === 'needs_replacement') &&
+                  (uploadSlot?.key === slotKey(slot) ? (
+                    <div
+                      style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}
+                    >
+                      <input
+                        type="file"
+                        accept="application/pdf,image/jpeg,image/png"
+                        onChange={(e) =>
+                          setUploadSlot({
+                            key: slotKey(slot),
+                            file: e.target.files?.[0] ?? null,
+                            issuedOn: uploadSlot.issuedOn,
+                          })
+                        }
+                        style={{ fontSize: 12, maxWidth: 220 }}
+                        aria-label={`Upload ${slot.label}`}
+                      />
+                      {slot.kind === 'nbi_clearance' && (
+                        <input
+                          type="date"
+                          value={uploadSlot.issuedOn}
+                          onChange={(e) =>
+                            setUploadSlot({ ...uploadSlot, issuedOn: e.target.value })
+                          }
+                          style={{ fontSize: 12 }}
+                          aria-label="Date issued"
+                        />
+                      )}
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={
+                          isPending ||
+                          !uploadSlot.file ||
+                          (slot.kind === 'nbi_clearance' && !uploadSlot.issuedOn)
+                        }
+                        onClick={() => handleUploadFor(slot)}
+                      >
+                        {isPending ? 'Uploading…' : 'Upload'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn ghost sm"
+                        onClick={() => setUploadSlot(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={isPending}
+                      onClick={() =>
+                        setUploadSlot({ key: slotKey(slot), file: null, issuedOn: '' })
+                      }
+                      title="Upload this document on the contractor's behalf"
+                    >
+                      Upload…
+                    </button>
+                  ))}
               </div>
             );
           })}
