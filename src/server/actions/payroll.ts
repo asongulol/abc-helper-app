@@ -1181,21 +1181,30 @@ export async function getSalariedCatchUpCandidates(args: {
 
     let period: { id: string; periodStart: string; periodEnd: string } | null = null;
     let workerIds: string[] | undefined;
-    if (args.workerId && args.periodDate) {
+    if (args.periodDate) {
       const p = periodFor(args.periodDate);
       const found = await findPeriod(db, args.companyId, p.start, p.end);
-      if (!found)
-        return {
-          ok: false,
-          error: 'That period was never run — its hours pay out via the regular Calculate.',
-        };
-      if (found.state === 'open')
-        return {
-          ok: false,
-          error: 'That period is still open — recalculate it instead of adding a catch-up.',
-        };
-      period = { id: found.id, periodStart: p.start, periodEnd: p.end };
-      workerIds = [args.workerId];
+      if (args.workerId) {
+        // Manual-quote mode: a specific worker + period — hard errors so the
+        // form can explain exactly why there's nothing to quote.
+        if (!found)
+          return {
+            ok: false,
+            error: 'That period was never run — its hours pay out via the regular Calculate.',
+          };
+        if (found.state === 'open')
+          return {
+            ok: false,
+            error: 'That period is still open — recalculate it instead of adding a catch-up.',
+          };
+        period = { id: found.id, periodStart: p.start, periodEnd: p.end };
+        workerIds = [args.workerId];
+      } else if (found && found.state !== 'open' && found.kind === 'regular') {
+        // Period-scan mode (Time page card): all salaried candidates for THIS
+        // period. Open / never-run / off-cycle periods soft-return no period —
+        // the caller simply renders nothing.
+        period = { id: found.id, periodStart: p.start, periodEnd: p.end };
+      }
     } else {
       // Newest-first summaries; the first finished regular run is the scan target.
       const sums = await fetchPeriodSummaries(db, args.companyId);

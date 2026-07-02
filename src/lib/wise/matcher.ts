@@ -37,9 +37,15 @@ const TOLERANCE_CENTAVOS = majorToMinor(1.0); // 100
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-/** Extract the pay date epoch ms from a payment row (falls back to now). */
+/**
+ * Anchor epoch ms for the match window: prefer paid_at — the app's own record
+ * of when the batch was actually sent — over the period's scheduled pay_date
+ * (a batch paid two weeks late would otherwise put every real transfer outside
+ * the ±window and come back no_wise_transfer_in_window). Falls back to
+ * pay_date, then period_end, then now.
+ */
 function payDateMs(p: MatcherPayment): number {
-  const d = p.pay_periods?.pay_date ?? p.pay_periods?.period_end;
+  const d = p.paid_at ?? p.pay_periods?.pay_date ?? p.pay_periods?.period_end;
   return d ? new Date(d).getTime() : Date.now();
 }
 

@@ -39,6 +39,10 @@ export interface MatcherPayment {
   original_net_php: number | null;
   status: string;
   wise_transfer_id?: string | number | null;
+  /** When the app marked this payment paid — the best anchor for the match
+   *  window when the batch was actually sent on a different day than the
+   *  period's scheduled pay_date. */
+  paid_at?: string | null;
   workers?: WorkerRecipientInfo | null;
   pay_periods?: {
     pay_date?: string | null;
