@@ -7,6 +7,8 @@
     "00000000000023": "2026-06-27 — time_entries.client_company_id (hours→client attribution)",
     "00000000000024": "2026-06-27 — pay_periods.kind ('regular'|'off_cycle') + open-batch index (off-cycle batch payroll)",
     "00000000000025": "2026-06-28 — companies.holidays_config jsonb (server-side observed holidays; applied via MCP)",
-    "00000000000026": "2026-07-01 — off_cycle_pay_items basis CHECK extended with 'salaried_hours' (FT/PT catch-up hours; applied via MCP)"
+    "00000000000026": "2026-07-01 — off_cycle_pay_items basis CHECK extended with 'salaried_hours' (FT/PT catch-up hours; applied via MCP)",
+    "00000000000027": "2026-07-01 — pay_period_summaries security_invoker view (period batch-list aggregation in Postgres; applied via MCP)",
+    "00000000000028": "2026-07-01 — pg_trgm + audit_log action/entity GIN trigram indexes (audit search; applied via MCP)"
   }
 }

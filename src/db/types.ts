@@ -640,6 +640,90 @@ export type Database = {
           },
         ]
       }
+      off_cycle_pay_items: {
+        Row: {
+          amount_php: number
+          basis: string
+          company_id: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          pay_period_id: string
+          rate_php: number | null
+          session_id: string | null
+          units: number | null
+          work_date: string | null
+          worker_id: string
+        }
+        Insert: {
+          amount_php: number
+          basis: string
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          pay_period_id: string
+          rate_php?: number | null
+          session_id?: string | null
+          units?: number | null
+          work_date?: string | null
+          worker_id: string
+        }
+        Update: {
+          amount_php?: number
+          basis?: string
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          pay_period_id?: string
+          rate_php?: number | null
+          session_id?: string | null
+          units?: number | null
+          work_date?: string | null
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "off_cycle_pay_items_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_pay_period_id_fkey"
+            columns: ["pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_period_summaries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_pay_period_id_fkey"
+            columns: ["pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_periods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "service_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "off_cycle_pay_items_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       onboarding_agreements: {
         Row: {
           addendum_text: string | null
@@ -883,83 +967,6 @@ export type Database = {
           },
         ]
       }
-      off_cycle_pay_items: {
-        Row: {
-          amount_php: number
-          basis: string
-          company_id: string
-          created_at: string
-          created_by: string | null
-          description: string | null
-          id: string
-          pay_period_id: string
-          rate_php: number | null
-          session_id: string | null
-          units: number | null
-          work_date: string | null
-          worker_id: string
-        }
-        Insert: {
-          amount_php: number
-          basis: string
-          company_id: string
-          created_at?: string
-          created_by?: string | null
-          description?: string | null
-          id?: string
-          pay_period_id: string
-          rate_php?: number | null
-          session_id?: string | null
-          units?: number | null
-          work_date?: string | null
-          worker_id: string
-        }
-        Update: {
-          amount_php?: number
-          basis?: string
-          company_id?: string
-          created_at?: string
-          created_by?: string | null
-          description?: string | null
-          id?: string
-          pay_period_id?: string
-          rate_php?: number | null
-          session_id?: string | null
-          units?: number | null
-          work_date?: string | null
-          worker_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "off_cycle_pay_items_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "off_cycle_pay_items_pay_period_id_fkey"
-            columns: ["pay_period_id"]
-            isOneToOne: false
-            referencedRelation: "pay_periods"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "off_cycle_pay_items_session_id_fkey"
-            columns: ["session_id"]
-            isOneToOne: false
-            referencedRelation: "service_sessions"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "off_cycle_pay_items_worker_id_fkey"
-            columns: ["worker_id"]
-            isOneToOne: false
-            referencedRelation: "workers"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       pay_periods: {
         Row: {
           company_id: string
@@ -1128,6 +1135,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_pay_period_id_fkey"
+            columns: ["pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_period_summaries"
             referencedColumns: ["id"]
           },
           {
@@ -1353,6 +1367,27 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "service_sessions_paid_pay_period_id_fkey"
+            columns: ["paid_pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_period_summaries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "service_sessions_paid_pay_period_id_fkey"
+            columns: ["paid_pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_periods"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "service_sessions_paid_payment_id_fkey"
+            columns: ["paid_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "service_sessions_worker_id_fkey"
             columns: ["worker_id"]
             isOneToOne: false
@@ -1418,10 +1453,24 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "time_entries_client_company_id_fkey"
+            columns: ["client_company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "time_entries_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "time_entries_pay_period_id_fkey"
+            columns: ["pay_period_id"]
+            isOneToOne: false
+            referencedRelation: "pay_period_summaries"
             referencedColumns: ["id"]
           },
           {
@@ -1684,6 +1733,29 @@ export type Database = {
       }
     }
     Views: {
+      pay_period_summaries: {
+        Row: {
+          company_id: string | null
+          contractor_count: number | null
+          id: string | null
+          kind: string | null
+          locked_at: string | null
+          pay_date: string | null
+          period_end: string | null
+          period_start: string | null
+          state: Database["public"]["Enums"]["pay_period_state"] | null
+          total_net_php: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pay_periods_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       v_payouts_by_period: {
         Row: {
           company_id: string | null

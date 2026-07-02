@@ -670,9 +670,8 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
     const db = await createServerSupabase();
     const paidAt = input.paidAt ?? new Date().toISOString();
     await markPaymentsPaid(db, input.paymentIds, paidAt);
-    for (const pid of await fetchPeriodIdsForPayments(db, input.paymentIds)) {
-      await syncPeriodPaidState(db, pid);
-    }
+    const paidPeriodIds = await fetchPeriodIdsForPayments(db, input.paymentIds);
+    await Promise.all(paidPeriodIds.map((pid) => syncPeriodPaidState(db, pid)));
     await logEvent({
       companyId: input.companyId,
       action: 'mark_paid',
@@ -711,9 +710,8 @@ export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCo
   try {
     const db = await createServerSupabase();
     await markPaymentsUnpaid(db, input.paymentIds);
-    for (const pid of await fetchPeriodIdsForPayments(db, input.paymentIds)) {
-      await syncPeriodPaidState(db, pid);
-    }
+    const unpaidPeriodIds = await fetchPeriodIdsForPayments(db, input.paymentIds);
+    await Promise.all(unpaidPeriodIds.map((pid) => syncPeriodPaidState(db, pid)));
     await logEvent({
       companyId: input.companyId,
       action: 'mark_unpaid',

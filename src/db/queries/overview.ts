@@ -115,41 +115,57 @@ export const getPipelineData = async (
   periodStart: string,
   periodEnd: string,
 ): Promise<PipelineData> => {
-  // Time entries for the period
-  const { data: entries, error: entryError } = await db
-    .from('time_entries')
-    .select('approval')
-    .eq('company_id', companyId)
-    .gte('work_date', periodStart)
-    .lte('work_date', periodEnd);
-  if (entryError) throw new Error(`getPipelineData entries: ${entryError.message}`);
+  // Counts only — let Postgres count (head:true transfers zero rows), and run
+  // the independent queries in parallel instead of three sequential fetches.
+  const [totalRes, approvedRes, periodRes] = await Promise.all([
+    db
+      .from('time_entries')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .gte('work_date', periodStart)
+      .lte('work_date', periodEnd),
+    db
+      .from('time_entries')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .gte('work_date', periodStart)
+      .lte('work_date', periodEnd)
+      .eq('approval', 'approved'),
+    db
+      .from('pay_periods')
+      .select('id, state')
+      .eq('company_id', companyId)
+      .eq('period_start', periodStart)
+      .eq('period_end', periodEnd)
+      .maybeSingle(),
+  ]);
+  if (totalRes.error) throw new Error(`getPipelineData entries: ${totalRes.error.message}`);
+  if (approvedRes.error) throw new Error(`getPipelineData entries: ${approvedRes.error.message}`);
+  if (periodRes.error) throw new Error(`getPipelineData period: ${periodRes.error.message}`);
 
-  const totalEntries = (entries ?? []).length;
-  const approvedEntries = (entries ?? []).filter((e) => e.approval === 'approved').length;
+  const totalEntries = totalRes.count ?? 0;
+  const approvedEntries = approvedRes.count ?? 0;
+  const period = periodRes.data;
 
-  // Period row
-  const { data: period, error: periodError } = await db
-    .from('pay_periods')
-    .select('id, state')
-    .eq('company_id', companyId)
-    .eq('period_start', periodStart)
-    .eq('period_end', periodEnd)
-    .maybeSingle();
-  if (periodError) throw new Error(`getPipelineData period: ${periodError.message}`);
-
-  // Payment rows
   let paymentCount = 0;
   let paidCount = 0;
   if (period) {
-    const { data: payments, error: payError } = await db
-      .from('payments')
-      .select('status')
-      .eq('pay_period_id', period.id);
-    if (payError) throw new Error(`getPipelineData payments: ${payError.message}`);
-    paymentCount = (payments ?? []).length;
-    paidCount = (payments ?? []).filter(
-      (p) => p.status === 'sent' || p.status === 'reconciled',
-    ).length;
+    const [payTotalRes, payPaidRes] = await Promise.all([
+      db
+        .from('payments')
+        .select('id', { count: 'exact', head: true })
+        .eq('pay_period_id', period.id),
+      db
+        .from('payments')
+        .select('id', { count: 'exact', head: true })
+        .eq('pay_period_id', period.id)
+        .in('status', ['sent', 'reconciled']),
+    ]);
+    if (payTotalRes.error)
+      throw new Error(`getPipelineData payments: ${payTotalRes.error.message}`);
+    if (payPaidRes.error) throw new Error(`getPipelineData payments: ${payPaidRes.error.message}`);
+    paymentCount = payTotalRes.count ?? 0;
+    paidCount = payPaidRes.count ?? 0;
   }
 
   const periodState = period?.state ?? null;
@@ -200,38 +216,29 @@ export const getRecentPeriodNets = async (
   companyId: string,
   limit = 8,
 ): Promise<RecentPeriodNet[]> => {
-  // Get recent locked/paid periods
-  const { data: periods, error: periodError } = await db
-    .from('pay_periods')
-    .select('id, period_start, period_end')
+  // Postgres aggregates per period (pay_period_summaries view, migration 0027)
+  // — one round-trip returning `limit` rows instead of every payment row.
+  const { data, error } = await db
+    .from('pay_period_summaries')
+    .select('period_start, period_end, total_net_php')
     .eq('company_id', companyId)
     .in('state', ['locked', 'paid'])
     .order('period_start', { ascending: false })
     .limit(limit);
-  if (periodError) throw new Error(`getRecentPeriodNets periods: ${periodError.message}`);
-  if (!periods || periods.length === 0) return [];
-
-  const periodIds = periods.map((p) => p.id);
-  const { data: payments, error: payError } = await db
-    .from('payments')
-    .select('pay_period_id, net_php')
-    .eq('company_id', companyId)
-    .in('pay_period_id', periodIds);
-  if (payError) throw new Error(`getRecentPeriodNets payments: ${payError.message}`);
-
-  // Sum per period via integer centavos
-  const centavosById = new Map<string, number>();
-  for (const p of payments ?? []) {
-    const prev = centavosById.get(p.pay_period_id) ?? 0;
-    centavosById.set(p.pay_period_id, prev + Math.round(p.net_php * 100));
-  }
+  if (error) throw new Error(`getRecentPeriodNets periods: ${error.message}`);
 
   // Build result ordered oldest → newest for the sparkline
-  return [...periods].reverse().map((period) => ({
-    periodStart: period.period_start,
-    periodEnd: period.period_end,
-    totalNetPhp: (centavosById.get(period.id) ?? 0) / 100,
-  }));
+  return (data ?? []).reverse().flatMap((p) =>
+    p.period_start && p.period_end
+      ? [
+          {
+            periodStart: p.period_start,
+            periodEnd: p.period_end,
+            totalNetPhp: Number(p.total_net_php ?? 0),
+          },
+        ]
+      : [],
+  );
 };
 
 // ---------------------------------------------------------------------------

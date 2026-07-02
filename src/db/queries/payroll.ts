@@ -785,49 +785,46 @@ export type PeriodSummaryRow = {
 /**
  * All pay periods for the company, newest first, with contractor count + net.
  *
+ * Reads the pay_period_summaries view (migration 0027): Postgres does the
+ * count/sum, so this is ONE round-trip returning one row per period — the old
+ * shape fetched every payments row ever and aggregated in JS on every admin
+ * page load. The view is security_invoker, so the pay_periods/payments RLS
+ * still applies.
+ *
  * `cache()`-wrapped: the admin layout loads period summaries for the ⌘K palette
  * on every page, and /overview, /payroll, /batches load them again. One cached
  * Supabase client means a single query per request. Keyed on (db, companyId).
  */
 export const fetchPeriodSummaries = cache(
   async (db: Db, companyId: string): Promise<PeriodSummaryRow[]> => {
-    const { data: periods, error: e1 } = await db
-      .from('pay_periods')
-      .select('id, state, kind, period_start, period_end, pay_date, locked_at')
+    const { data, error } = await db
+      .from('pay_period_summaries')
+      .select(
+        'id, state, kind, period_start, period_end, pay_date, locked_at, contractor_count, total_net_php',
+      )
       .eq('company_id', companyId)
       .order('period_start', { ascending: false });
-    if (e1) throw new Error(`pay_periods: ${e1.message}`);
-    if (!periods?.length) return [];
-
-    const periodIds = periods.map((p) => p.id);
-    const { data: pays, error: e2 } = await db
-      .from('payments')
-      .select('pay_period_id, net_php')
-      .in('pay_period_id', periodIds);
-    if (e2) throw new Error(`payments summary: ${e2.message}`);
-
-    const byPeriod = new Map<string, { count: number; netCentavos: number }>();
-    for (const p of pays ?? []) {
-      const cur = byPeriod.get(p.pay_period_id) ?? { count: 0, netCentavos: 0 };
-      cur.count += 1;
-      cur.netCentavos += Math.round(Number(p.net_php ?? 0) * 100);
-      byPeriod.set(p.pay_period_id, cur);
-    }
-
-    return (periods ?? []).map((p) => {
-      const agg = byPeriod.get(p.id) ?? { count: 0, netCentavos: 0 };
-      return {
-        id: p.id,
-        state: p.state,
-        kind: p.kind === 'off_cycle' ? 'off_cycle' : 'regular',
-        periodStart: p.period_start,
-        periodEnd: p.period_end,
-        payDate: p.pay_date,
-        lockedAt: p.locked_at,
-        contractorCount: agg.count,
-        totalNetCentavos: agg.netCentavos,
-      };
-    });
+    if (error) throw new Error(`pay_periods: ${error.message}`);
+    // Generated view types are nullable (Postgres can't prove NOT NULL through
+    // the GROUP BY), but id/state/dates come straight from pay_periods rows —
+    // nulls cannot occur. Guard instead of casting.
+    return (data ?? []).flatMap((p) =>
+      p.id && p.period_start && p.period_end
+        ? [
+            {
+              id: p.id,
+              state: p.state ?? 'open',
+              kind: p.kind === 'off_cycle' ? ('off_cycle' as const) : ('regular' as const),
+              periodStart: p.period_start,
+              periodEnd: p.period_end,
+              payDate: p.pay_date,
+              lockedAt: p.locked_at,
+              contractorCount: p.contractor_count ?? 0,
+              totalNetCentavos: Math.round(Number(p.total_net_php ?? 0) * 100),
+            },
+          ]
+        : [],
+    );
   },
 );
 
