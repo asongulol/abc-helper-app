@@ -20,14 +20,16 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
+import { fetchContractorLogin } from '@/db/queries/onboarding';
 import { fetchOwnDocuments } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import { parseDocUploadForm } from '@/lib/onboarding/doc-upload';
 import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
+import { logEvent } from '@/server/audit';
+import { getCurrentAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
-
-type DocumentKind = Database['public']['Enums']['document_kind'];
 
 /** A single required document the contractor still owes (one per side). */
 export interface OutstandingDocSlot {
@@ -64,17 +66,48 @@ export async function fetchOutstandingDocSlots(): Promise<OutstandingDocSlot[]> 
   }));
 }
 
-const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-const MAX_BYTES = 10 * 1024 * 1024;
-const VALID_KINDS = new Set<string>([
-  'ic_agreement',
-  'w8ben',
-  'gov_id',
-  'other',
-  'resume',
-  'diploma',
-  'nbi_clearance',
-]);
+/**
+ * Shared upload + insert used by both the contractor self-upload and the admin
+ * upload-for-contractor: put the file in the `contractor-docs` bucket under
+ * `pathPrefix` and insert a `documents` row (review_status=pending).
+ */
+async function storeDocument(
+  workerId: string,
+  pathPrefix: string,
+  parsed: {
+    file: File;
+    kind: Database['public']['Enums']['document_kind'];
+    side: string | null;
+    issuedOn: string | null;
+  },
+): Promise<ActionResult> {
+  const { file, kind, side, issuedOn } = parsed;
+  const svc = createServiceClient();
+
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${pathPrefix}/${kind}/${Date.now()}-${side ? `${side}-` : ''}${safeName}`;
+  const up = await svc.storage.from('contractor-docs').upload(path, file, { upsert: false });
+  if (up.error) return { ok: false, error: `Upload failed: ${up.error.message}` };
+
+  // Attribute the doc to the employer company so it shows on the Documents page.
+  const employerCompanyId = await getEmployerCompanyId(svc);
+  const row: Database['public']['Tables']['documents']['Insert'] = {
+    worker_id: workerId,
+    kind,
+    storage_path: path,
+    title: file.name,
+    mime_type: file.type,
+    file_size_bytes: file.size,
+    review_status: 'pending',
+    ...(employerCompanyId ? { company_id: employerCompanyId } : {}),
+    ...(side ? { side } : {}),
+    ...(kind === 'nbi_clearance' && issuedOn ? { issued_on: issuedOn } : {}),
+  };
+  const ins = await svc.from('documents').insert(row);
+  if (ins.error) return { ok: false, error: `Upload failed: ${ins.error.message}` };
+
+  return { ok: true };
+}
 
 /**
  * Upload a contractor document. Ports the legacy `UploadSlot.doUpload` /
@@ -85,48 +118,68 @@ const VALID_KINDS = new Set<string>([
 export async function uploadOwnDocument(form: FormData): Promise<ActionResult> {
   const worker = await requireWorker();
 
-  const file = form.get('file');
-  const kind = String(form.get('kind') ?? '');
-  const sideRaw = form.get('side');
-  const side = typeof sideRaw === 'string' && sideRaw ? sideRaw : null;
-  const issuedRaw = form.get('issuedOn');
-  const issuedOn = typeof issuedRaw === 'string' && issuedRaw ? issuedRaw : null;
-
-  if (!(file instanceof File) || file.size === 0)
-    return { ok: false, error: 'Choose a file first.' };
-  if (!VALID_KINDS.has(kind)) return { ok: false, error: 'Unknown document type.' };
-  if (!ALLOWED_MIME.has(file.type)) return { ok: false, error: 'File must be a PDF, JPG or PNG.' };
-  if (file.size > MAX_BYTES) return { ok: false, error: 'File is too large (max 10 MB).' };
-  if (kind === 'nbi_clearance' && !issuedOn)
-    return { ok: false, error: 'Enter the date the NBI clearance was issued.' };
+  const parsed = parseDocUploadForm(form);
+  if (!parsed.ok) return parsed;
 
   try {
     // Service client AFTER requireWorker(): the contractor-docs storage policies
     // live out-of-band, mirroring getDocumentSignedUrl in portal.ts.
-    const svc = createServiceClient();
-
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const path = `${worker.userId}/${kind}/${Date.now()}-${side ? `${side}-` : ''}${safeName}`;
-    const up = await svc.storage.from('contractor-docs').upload(path, file, { upsert: false });
-    if (up.error) return { ok: false, error: `Upload failed: ${up.error.message}` };
-
-    // Attribute the doc to the employer company so it shows on the Documents page.
-    const employerCompanyId = await getEmployerCompanyId(svc);
-    const row: Database['public']['Tables']['documents']['Insert'] = {
-      worker_id: worker.workerId,
-      kind: kind as DocumentKind,
-      storage_path: path,
-      title: file.name,
-      mime_type: file.type,
-      file_size_bytes: file.size,
-      review_status: 'pending',
-      ...(employerCompanyId ? { company_id: employerCompanyId } : {}),
-      ...(side ? { side } : {}),
-      ...(kind === 'nbi_clearance' && issuedOn ? { issued_on: issuedOn } : {}),
+    return await storeDocument(worker.workerId, worker.userId, parsed.value);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Upload failed.',
     };
-    const ins = await svc.from('documents').insert(row);
-    if (ins.error) return { ok: false, error: `Upload failed: ${ins.error.message}` };
+  }
+}
 
+/**
+ * Admin uploads a document on the contractor's behalf (Onboarding drilldown
+ * Documents section). Same validation, bucket, and row shape as the
+ * self-upload; the row lands as review_status=pending so the existing Approve
+ * button stamps reviewed_by/reviewed_at.
+ */
+export async function uploadDocumentForContractor(form: FormData): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const workerIdRaw = form.get('workerId');
+  const workerId = typeof workerIdRaw === 'string' ? workerIdRaw : '';
+  if (!workerId) return { ok: false, error: 'Missing contractor.' };
+
+  const parsed = parseDocUploadForm(form);
+  if (!parsed.ok) return parsed;
+
+  try {
+    const db = await createServerSupabase();
+    // Authorize per-company before touching storage (same pattern as
+    // sendToolsEmail): a non-owner admin must share a company with this worker.
+    if (!admin.isOwner) {
+      const { data: links } = await db
+        .from('worker_companies')
+        .select('company_id')
+        .eq('worker_id', workerId);
+      const inScope = (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+      if (!inScope) return { ok: false, error: 'Not authorized for this contractor.' };
+    }
+
+    // Folder prefix: the contractor's auth uid when a portal login exists, else
+    // the worker id. ponytail: reads always go through service-client signed
+    // URLs from documents.storage_path, so the prefix is never parsed — the
+    // auth-uid convention is kept only for storage-RLS consistency.
+    const svc = createServiceClient();
+    const login = await fetchContractorLogin(svc, workerId);
+    const prefix = login?.auth_user_id ?? workerId;
+
+    const res = await storeDocument(workerId, prefix, parsed.value);
+    if (!res.ok) return res;
+
+    const { kind, side, file } = parsed.value;
+    await logEvent({
+      action: 'document.uploaded_by_admin',
+      entity: `${kind}${side ? ` (${side})` : ''} · ${workerId}`,
+      detail: { worker_id: workerId, kind, side, title: file.name, by: admin.email },
+    });
     return { ok: true };
   } catch (err) {
     return {

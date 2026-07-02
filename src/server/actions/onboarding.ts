@@ -96,19 +96,31 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
     await requireAdmin();
     const db = createServiceClient();
 
-    const [sigs, agrs, settingsRes] = await Promise.all([
-      fetchSignatures(db, workerId),
+    // One parallel wave (the six reads are independent), and no signature
+    // blobs/decryption — the modal shows only signature metadata; the drawn
+    // image is print-route-only.
+    const [sigs, agrs, settingsRes, docsRes, profRes, loginRes] = await Promise.all([
+      fetchSignatures(db, workerId, { withData: false }),
       fetchAgreements(db, workerId),
       db.from('portal_settings').select('onboarding_config').eq('id', 1).maybeSingle(),
+      db
+        .from('documents')
+        .select(
+          'id, kind, title, review_status, storage_path, issued_on, expires_on, side, created_at',
+        )
+        .eq('worker_id', workerId)
+        .order('created_at', { ascending: true }),
+      db
+        .from('workers')
+        .select(
+          'mobile, ph_address, permanent_address, postal_code, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, profile_extras',
+        )
+        .eq('id', workerId)
+        .maybeSingle(),
+      db.from('contractor_logins').select('email').eq('worker_id', workerId).maybeSingle(),
     ]);
-    const { data: docs, error } = await db
-      .from('documents')
-      .select(
-        'id, kind, title, review_status, storage_path, issued_on, expires_on, side, created_at',
-      )
-      .eq('worker_id', workerId)
-      .order('created_at', { ascending: true });
-    if (error) return { ok: false, error: error.message };
+    const docs = docsRes.data;
+    if (docsRes.error) return { ok: false, error: docsRes.error.message };
 
     const documents: OnbDocLite[] = (docs ?? []).map((d) => ({
       id: d.id,
@@ -127,19 +139,8 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
     const cfg = parseOnboardingConfig(settingsRes.data?.onboarding_config);
     const documentChecklist = deriveDocChecklist(cfg.documents, documents);
 
-    const { data: prof } = await db
-      .from('workers')
-      .select(
-        'mobile, ph_address, permanent_address, postal_code, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, profile_extras',
-      )
-      .eq('id', workerId)
-      .maybeSingle();
-
-    const { data: loginRow } = await db
-      .from('contractor_logins')
-      .select('email')
-      .eq('worker_id', workerId)
-      .maybeSingle();
+    const prof = profRes.data;
+    const loginRow = loginRes.data;
 
     return {
       ok: true,
