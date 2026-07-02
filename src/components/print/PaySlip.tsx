@@ -108,7 +108,7 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
           )}
           {pay.offCyclePhp > 0 && (
             <tr>
-              <td style={cell}>Off-cycle pay (per session / hour)</td>
+              <td style={cell}>Off-cycle pay</td>
               <td style={cellRight}>{money(pay.offCyclePhp)}</td>
             </tr>
           )}

@@ -179,7 +179,7 @@ export type OffCycleItemRow = {
   id: string;
   workerId: string;
   payPeriodId: string;
-  basis: 'per_session' | 'per_hour';
+  basis: 'per_session' | 'per_hour' | 'salaried_hours';
   sessionId: string | null;
   workDate: string | null;
   units: number | null;
@@ -210,7 +210,12 @@ const mapOffCycleRow = (r: RawOffCycleRow): OffCycleItemRow => ({
   id: r.id,
   workerId: r.worker_id,
   payPeriodId: r.pay_period_id,
-  basis: r.basis === 'per_hour' ? 'per_hour' : 'per_session',
+  basis:
+    r.basis === 'per_hour'
+      ? 'per_hour'
+      : r.basis === 'salaried_hours'
+        ? 'salaried_hours'
+        : 'per_session',
   sessionId: r.session_id,
   workDate: r.work_date,
   units: r.units == null ? null : Number(r.units),
@@ -295,11 +300,39 @@ export const fetchOffCycleTotalForWorker = async (
   return centavos(total);
 };
 
+/**
+ * Σ units (hours) of existing salaried catch-up rows per worker, keyed on the
+ * ORIGINAL period's period_end (salaried_hours rows store it as work_date) —
+ * feeds the strict-cap pricing so a second catch-up can't overshoot the rate.
+ */
+export const fetchSalariedCatchUpUnits = async (
+  db: Db,
+  companyId: string,
+  workDate: string,
+  workerIds: string[],
+): Promise<Map<string, number>> => {
+  const byWorker = new Map<string, number>();
+  if (workerIds.length === 0) return byWorker;
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select('worker_id, units')
+    .eq('company_id', companyId)
+    .eq('basis', 'salaried_hours')
+    .eq('work_date', workDate)
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`salaried catch-up units: ${error.message}`);
+  for (const r of data ?? []) {
+    const prev = byWorker.get(r.worker_id) ?? 0;
+    byWorker.set(r.worker_id, prev + (Number(r.units) || 0));
+  }
+  return byWorker;
+};
+
 export type NewOffCycleItem = {
   companyId: string;
   workerId: string;
   payPeriodId: string;
-  basis: 'per_session' | 'per_hour';
+  basis: 'per_session' | 'per_hour' | 'salaried_hours';
   sessionId: string | null;
   workDate: string | null;
   units: number | null;

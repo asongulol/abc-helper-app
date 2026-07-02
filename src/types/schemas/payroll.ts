@@ -194,6 +194,22 @@ export const RemoveOffCyclePaySchema = z.object({
 });
 export type RemoveOffCyclePayInput = z.infer<typeof RemoveOffCyclePaySchema>;
 
+/**
+ * Add a salaried (FT/PT) catch-up entry: leftover approved hours from an
+ * already-locked/paid ORIGINAL period, paid on the (open) target period as an
+ * off-cycle ledger row priced by the engine's strict cap. The amount is always
+ * recomputed server-side.
+ */
+export const AddSalariedCatchUpSchema = PeriodKeySchema.extend({
+  workerId: z.string().uuid(),
+  /** Any date inside the ORIGINAL locked/paid period (canonicalized to it). */
+  originalPeriodDate: IsoDateSchema,
+  /** Leftover hours to catch up. */
+  hours: z.number().positive().max(744),
+  description: z.string().max(200).optional(),
+});
+export type AddSalariedCatchUpInput = z.infer<typeof AddSalariedCatchUpSchema>;
+
 export const ToggleWiseRowLockSchema = z.object({
   paymentId: uuid(),
   companyId: uuid(),

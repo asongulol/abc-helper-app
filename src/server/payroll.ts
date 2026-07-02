@@ -18,6 +18,8 @@ import {
   fetchPaymentRowsForRestore,
   fetchRates,
   fetchRoster,
+  fetchSalariedCatchUpUnits,
+  fetchSavedPayments,
   fetchSessionUnitsByWorkerByDate,
   findPeriod,
   type PaymentSnapshotRow,
@@ -25,7 +27,11 @@ import {
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
+import type { Centavos } from '@/lib/money';
+import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
+import { expectedHours, payModelFor } from '@/lib/pay/expected-hours';
 import { resolveHolidaysForRange } from '@/lib/pay/holidays';
+import { resolveRate } from '@/lib/pay/rates';
 import {
   attributeTimeEntries,
   buildStatements,
@@ -266,4 +272,89 @@ export const recomputeWorkerDraft = async (args: {
   }
   await upsertDraftPayments(db, args.companyId, args.periodId, drafts);
   return { netPhp: drafts[0]?.net_php ?? null };
+};
+
+export type CatchUpCandidate = {
+  workerId: string;
+  name: string;
+  contract: string;
+  expectedHours: number;
+  approvedHours: number;
+  paidHours: number;
+  caughtUpHours: number;
+  leftoverHours: number;
+  rateCentavos: Centavos | null;
+  /** Engine-diff amount for ALL leftover hours (centavos); null without a rate. */
+  amountCentavos: Centavos | null;
+};
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Salaried (FT/PT) workers' approved-but-unpaid hours on an already-locked/paid
+ * regular period: approved time now − hours that run paid (payments.worked_hours)
+ * − hours already caught up (salaried_hours ledger rows keyed on the period_end).
+ * Priced with the strict engine cap (salariedCatchUpAmount) at that period's
+ * rate and holiday-adjusted expected hours — exactly what the run would have paid.
+ */
+export const salariedCatchUpCandidates = async (args: {
+  companyId: string;
+  periodId: string;
+  periodStart: string;
+  periodEnd: string;
+  workerIds?: string[] | undefined;
+}): Promise<CatchUpCandidate[]> => {
+  const db = await createServerSupabase();
+  const [entries, roster, rates, holidaysConfig, saved] = await Promise.all([
+    fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
+    fetchRoster(db, args.companyId),
+    fetchRates(db, args.companyId),
+    fetchHolidaysConfig(db, args.companyId),
+    fetchSavedPayments(db, args.periodId),
+  ]);
+  const salaried = roster.filter(
+    (r) =>
+      payModelFor(r.contract, r.payBasis) === 'salaried' &&
+      (!args.workerIds || args.workerIds.includes(r.workerId)),
+  );
+  if (salaried.length === 0) return [];
+  const caughtUp = await fetchSalariedCatchUpUnits(
+    db,
+    args.companyId,
+    args.periodEnd,
+    salaried.map((r) => r.workerId),
+  );
+  const holidays = resolveHolidaysForRange(holidaysConfig, args.periodStart, args.periodEnd);
+  // Full roster for name matching; per_hour exclusion is irrelevant to salaried.
+  const attribution = attributeTimeEntries(entries, roster);
+  const paidByWorker = new Map(saved.map((p) => [p.workerId, p.workedHours]));
+
+  return salaried.map((r) => {
+    const approved = round2((attribution.secondsByWorker.get(r.workerId) ?? 0) / 3600);
+    const paid = paidByWorker.get(r.workerId) ?? 0;
+    const caught = caughtUp.get(r.workerId) ?? 0;
+    // worked_hours is stored at 2 dp — round so float dust can't mint a row.
+    const leftover = Math.max(0, round2(approved - paid - caught));
+    const expected = expectedHours(r.contract, args.periodStart, args.periodEnd, holidays);
+    const rate = resolveRate(rates, r.workerId, args.periodStart, args.periodEnd);
+    const amount = salariedCatchUpAmount({
+      rate,
+      expectedHours: expected,
+      paidHours: paid,
+      caughtUpHours: caught,
+      leftoverHours: leftover,
+    });
+    return {
+      workerId: r.workerId,
+      name: [r.worker.firstName, r.worker.lastName].filter(Boolean).join(' ').trim(),
+      contract: r.contract,
+      expectedHours: expected,
+      approvedHours: approved,
+      paidHours: paid,
+      caughtUpHours: caught,
+      leftoverHours: leftover,
+      rateCentavos: rate,
+      amountCentavos: amount,
+    };
+  });
 };
