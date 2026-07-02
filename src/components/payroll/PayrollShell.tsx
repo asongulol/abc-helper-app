@@ -178,8 +178,26 @@ export const PayrollShell = ({
   } | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
 
-  // Fetch live FX on mount
+  // Fetch live FX on mount — cached in sessionStorage for an hour so repeat
+  // /payroll visits in the same tab don't re-hit the external API. The note
+  // keeps the provider's own as-of stamp, so a cached rate's staleness stays
+  // visible; the field is editable either way (display reference only).
   useEffect(() => {
+    const CACHE_KEY = 'abc.fx.usdphp';
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(CACHE_KEY) ?? 'null') as {
+        rate: number;
+        note: string;
+        at: number;
+      } | null;
+      if (cached && Date.now() - cached.at < 3_600_000) {
+        setFx(cached.rate);
+        setFxNote(cached.note);
+        return;
+      }
+    } catch {
+      // Bad/absent cache — fall through to a live fetch.
+    }
     let cancelled = false;
     fetch('https://open.er-api.com/v6/latest/USD')
       .then((r) => r.json())
@@ -187,9 +205,16 @@ export const PayrollShell = ({
         if (cancelled) return;
         const php = (d as Record<string, Record<string, number>>)?.rates?.PHP;
         if (php) {
-          setFx(+(+php).toFixed(4));
+          const rate = +(+php).toFixed(4);
           const time = (d as Record<string, string>)?.time_last_update_utc?.slice(5, 16) ?? 'today';
-          setFxNote(`live rate ${(+php).toFixed(2)} as of ${time}`);
+          const note = `live rate ${(+php).toFixed(2)} as of ${time}`;
+          setFx(rate);
+          setFxNote(note);
+          try {
+            sessionStorage.setItem(CACHE_KEY, JSON.stringify({ rate, note, at: Date.now() }));
+          } catch {
+            // Storage full/blocked — the fetch result still applies this visit.
+          }
         }
       })
       .catch(() => {
@@ -354,12 +379,23 @@ export const PayrollShell = ({
     );
   };
 
-  // Per-row save (debounced, 800ms, same as legacy)
+  // Per-row save (debounced, 800ms, same as legacy) — with a 2s max wait:
+  // continuous edits (e.g. typing in the FX field, which is part of the saved
+  // payload) used to reset the timer on every keystroke and stall the save
+  // indefinitely; now a save fires at most 2s after the first pending change.
   const saveDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const firstPendingAt = useRef<number | null>(null);
   useEffect(() => {
-    if (!rows?.length || currentPeriod?.state !== 'open') return;
+    if (!rows?.length || currentPeriod?.state !== 'open') {
+      firstPendingAt.current = null;
+      return;
+    }
     if (saveDebounce.current) clearTimeout(saveDebounce.current);
+    const now = Date.now();
+    firstPendingAt.current ??= now;
+    const wait = Math.min(800, Math.max(0, firstPendingAt.current + 2000 - now));
     saveDebounce.current = setTimeout(async () => {
+      firstPendingAt.current = null;
       if (suppressSave.current) return;
       // Batch-save all rows
       for (const r of rows) {
@@ -376,7 +412,7 @@ export const PayrollShell = ({
           fxRate: fx,
         });
       }
-    }, 800);
+    }, wait);
     return () => {
       if (saveDebounce.current) clearTimeout(saveDebounce.current);
     };
