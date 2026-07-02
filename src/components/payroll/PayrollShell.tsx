@@ -27,8 +27,10 @@ import {
   calculatePeriodDraft,
   deleteAllStatements,
   deleteStatement,
+  getPeriodSummaries,
   getSavedPayments,
   lockPeriod,
+  openOffCycleBatch,
   restorePaymentsSnapshot,
   unlockPeriod,
   updatePaymentRowAction,
@@ -204,6 +206,14 @@ export const PayrollShell = ({
     setPeriodStart(p.start);
     setPeriodEnd(p.end);
     setPayDate(p.payDate);
+  }, []);
+
+  // Select a batch exactly as stored — off-cycle windows (start = end) must not
+  // be re-canonicalized through periodFor, or loadSaved can never match them.
+  const selectBatch = useCallback((b: PeriodSummaryRow) => {
+    setPeriodStart(b.periodStart);
+    setPeriodEnd(b.periodEnd);
+    if (b.payDate) setPayDate(b.payDate);
   }, []);
 
   // Load saved draft / snapshot for the current period
@@ -490,6 +500,30 @@ export const PayrollShell = ({
     setMiscRowId(null);
   };
 
+  // Find-or-create the employer's single open off-cycle batch and jump into it.
+  const handleNewOffCycle = async () => {
+    setBusy(true);
+    try {
+      const res = await openOffCycleBatch({ companyId });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      // The batch must be in `periods` for loadSaved to resolve it.
+      const sums = await getPeriodSummaries({ companyId });
+      if (sums.ok) setPeriods(sums.data.periods);
+      const row = sums.ok ? sums.data.periods.find((p) => p.id === res.data.batchId) : undefined;
+      if (row) selectBatch(row);
+      else {
+        setPeriodStart(res.data.periodStart);
+        setPeriodEnd(res.data.periodEnd);
+      }
+      setShowOffCycle(true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Computed totals
   const totalNetCentavos = (rows ?? []).reduce(
     (s, r) => s + (r.netPhp != null ? Math.round(r.netPhp * 100) : 0),
@@ -531,17 +565,28 @@ export const PayrollShell = ({
               Select a period below to edit it, or use the Calculate card.
             </p>
           </div>
-          {finishedBatches.length > 0 && (
+          <div style={{ display: 'flex', gap: 8 }}>
             <button
               type="button"
               className="btn ghost sm"
-              onClick={() => setShowFinished((s) => !s)}
+              disabled={busy}
+              onClick={handleNewOffCycle}
+              title="Open the employer's off-cycle batch (creates one if none is open)"
             >
-              {showFinished
-                ? `Hide locked/paid (${finishedBatches.length})`
-                : `Show locked/paid (${finishedBatches.length})`}
+              + New off-cycle run
             </button>
-          )}
+            {finishedBatches.length > 0 && (
+              <button
+                type="button"
+                className="btn ghost sm"
+                onClick={() => setShowFinished((s) => !s)}
+              >
+                {showFinished
+                  ? `Hide locked/paid (${finishedBatches.length})`
+                  : `Show locked/paid (${finishedBatches.length})`}
+              </button>
+            )}
+          </div>
         </div>
 
         {shownBatches.length === 0 ? (
@@ -593,7 +638,8 @@ export const PayrollShell = ({
                           className="btn ghost sm"
                           disabled={busy}
                           onClick={() => {
-                            applyPeriodStart(b.periodStart);
+                            if (b.kind === 'off_cycle') selectBatch(b);
+                            else applyPeriodStart(b.periodStart);
                             // The editor card lives below this list — bring it into
                             // view so the selection is visible (otherwise the click
                             // looks like a no-op, especially for the current period).
@@ -822,14 +868,16 @@ export const PayrollShell = ({
               {fxNote}
             </span>
           )}
-          <button
-            type="button"
-            className="btn ghost sm"
-            disabled={busy}
-            onClick={() => handleCalculate()}
-          >
-            {busy ? 'Working…' : 'Calculate / Recalculate'}
-          </button>
+          {!isOffCycle && (
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={busy}
+              onClick={() => handleCalculate()}
+            >
+              {busy ? 'Working…' : 'Calculate / Recalculate'}
+            </button>
+          )}
           {isOpen && (
             <button
               type="button"
@@ -866,7 +914,11 @@ export const PayrollShell = ({
           </div>
         )}
         {rows !== null && !busy && rows.length === 0 && (
-          <EmptyState>No statements. Recalculate to rebuild.</EmptyState>
+          <EmptyState>
+            {isOffCycle
+              ? 'No pay items yet. Use "+ Sessions" to add off-cycle pay.'
+              : 'No statements. Recalculate to rebuild.'}
+          </EmptyState>
         )}
         {rows !== null && !busy && rows.length > 0 && (
           <>

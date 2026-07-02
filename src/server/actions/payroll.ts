@@ -60,15 +60,23 @@ import { periodFor } from '@/lib/dates/periods';
 import { centavos, mulRatioMinor, sumMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { miscTotal } from '@/lib/pay/calc';
+import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { payModelFor } from '@/lib/pay/expected-hours';
 import { resolveRate } from '@/lib/pay/rates';
 import { centavosToPhp, phpToCentavos } from '@/lib/payroll/mappers';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { type CalculateDraftResult, calculateDraft, recomputeWorkerDraft } from '@/server/payroll';
+import {
+  type CalculateDraftResult,
+  type CatchUpCandidate,
+  calculateDraft,
+  recomputeWorkerDraft,
+  salariedCatchUpCandidates,
+} from '@/server/payroll';
 import {
   AddOffCyclePaySchema,
+  AddSalariedCatchUpSchema,
   CalculateDraftSchema,
   DeleteAllStatementsSchema,
   DeleteStatementSchema,
@@ -1143,6 +1151,226 @@ export async function addOffCyclePayItem(
 }
 
 /**
+ * Salaried (FT/PT) catch-up candidates. No worker/date args → scan the most
+ * recent locked/paid REGULAR period for every salaried worker (auto-detect);
+ * with workerId + periodDate → single-worker quote for the manual form. Also
+ * returns the salaried roster for the manual worker select.
+ */
+export async function getSalariedCatchUpCandidates(args: {
+  companyId: string;
+  workerId?: string;
+  periodDate?: string;
+}): Promise<
+  ActionResult<{
+    period: { id: string; periodStart: string; periodEnd: string } | null;
+    candidates: CatchUpCandidate[];
+    salariedWorkers: { workerId: string; name: string }[];
+  }>
+> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const roster = await fetchRoster(db, args.companyId);
+    const salariedWorkers = roster
+      .filter((r) => payModelFor(r.contract, r.payBasis) === 'salaried')
+      .map((r) => ({
+        workerId: r.workerId,
+        name: [r.worker.firstName, r.worker.lastName].filter(Boolean).join(' ').trim(),
+      }));
+
+    let period: { id: string; periodStart: string; periodEnd: string } | null = null;
+    let workerIds: string[] | undefined;
+    if (args.workerId && args.periodDate) {
+      const p = periodFor(args.periodDate);
+      const found = await findPeriod(db, args.companyId, p.start, p.end);
+      if (!found)
+        return {
+          ok: false,
+          error: 'That period was never run — its hours pay out via the regular Calculate.',
+        };
+      if (found.state === 'open')
+        return {
+          ok: false,
+          error: 'That period is still open — recalculate it instead of adding a catch-up.',
+        };
+      period = { id: found.id, periodStart: p.start, periodEnd: p.end };
+      workerIds = [args.workerId];
+    } else {
+      // Newest-first summaries; the first finished regular run is the scan target.
+      const sums = await fetchPeriodSummaries(db, args.companyId);
+      const target = sums.find((s) => s.kind === 'regular' && s.state !== 'open');
+      if (target)
+        period = { id: target.id, periodStart: target.periodStart, periodEnd: target.periodEnd };
+    }
+
+    const candidates = period
+      ? await salariedCatchUpCandidates({
+          companyId: args.companyId,
+          periodId: period.id,
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+          workerIds,
+        })
+      : [];
+    return { ok: true, data: { period, candidates, salariedWorkers } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+  }
+}
+
+/**
+ * Add a salaried catch-up ledger row: leftover approved hours from an
+ * already-locked/paid ORIGINAL period, paid on the open target period. The
+ * amount is recomputed server-side with the strict engine cap — never taken
+ * from the client. basis='salaried_hours' rows deliberately do NOT feed the
+ * per-hour date-exclusion set, so unlocking + recalculating the original
+ * period stays correct (remove the catch-up item first in that case).
+ */
+export async function addSalariedCatchUp(
+  args: unknown,
+): Promise<ActionResult<{ netPhp: number | null; amountPhp: number }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = AddSalariedCatchUpSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+
+    // Target period — must be open (money columns freeze otherwise).
+    let period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
+    if (period && period.state !== 'open')
+      return { ok: false, error: `Period is ${period.state} — unlock it to add catch-up pay.` };
+    if (!period) {
+      period = await upsertOpenPeriod(
+        db,
+        input.companyId,
+        input.periodStart,
+        input.periodEnd,
+        periodFor(input.periodStart).payDate,
+      );
+    }
+
+    const roster = await fetchRoster(db, input.companyId);
+    const link = roster.find((r) => r.workerId === input.workerId);
+    if (!link) return { ok: false, error: "Contractor is not on this company's roster." };
+    if (payModelFor(link.contract, link.payBasis) !== 'salaried')
+      return { ok: false, error: 'Catch-up hours are only for FT/PT contractors.' };
+
+    // Original period — the locked/paid run the hours belong to.
+    const orig = periodFor(input.originalPeriodDate);
+    if (orig.start === input.periodStart && orig.end === input.periodEnd)
+      return {
+        ok: false,
+        error: 'That is the period being edited — its hours are paid by Calculate.',
+      };
+    const origPeriod = await findPeriod(db, input.companyId, orig.start, orig.end);
+    if (!origPeriod)
+      return {
+        ok: false,
+        error: 'That period was never run — its hours pay out via the regular Calculate.',
+      };
+    if (origPeriod.state === 'open')
+      return {
+        ok: false,
+        error: 'That period is still open — recalculate it instead of adding a catch-up.',
+      };
+
+    // Price server-side: strict engine cap against what the run already paid.
+    const [cand] = await salariedCatchUpCandidates({
+      companyId: input.companyId,
+      periodId: origPeriod.id,
+      periodStart: orig.start,
+      periodEnd: orig.end,
+      workerIds: [input.workerId],
+    });
+    if (!cand) return { ok: false, error: 'Contractor not found for that period.' };
+    const amount = salariedCatchUpAmount({
+      rate: cand.rateCentavos,
+      expectedHours: cand.expectedHours,
+      paidHours: cand.paidHours,
+      caughtUpHours: cand.caughtUpHours,
+      leftoverHours: input.hours,
+    });
+    if (amount === null)
+      return {
+        ok: false,
+        error: `No rate is set for ${orig.start} – ${orig.end}. Set a rate first.`,
+      };
+    if (amount === 0)
+      return {
+        ok: false,
+        error: 'Nothing owed — that period already paid 100% of the rate for these hours.',
+      };
+
+    // ponytail: one catch-up row per (worker, original period) — the global
+    // (company, worker, work_date) unique index; a top-up means remove + re-add.
+    try {
+      await insertOffCycleItems(db, [
+        {
+          companyId: input.companyId,
+          workerId: input.workerId,
+          payPeriodId: period.id,
+          basis: 'salaried_hours',
+          sessionId: null,
+          workDate: orig.end,
+          units: input.hours,
+          ratePhp: cand.rateCentavos === null ? null : centavosToPhp(cand.rateCentavos),
+          amountPhp: centavosToPhp(amount),
+          description:
+            input.description?.trim() ||
+            `Catch-up ${link.contract} hours · ${orig.start} – ${orig.end}`,
+        },
+      ]);
+    } catch (e) {
+      if (e instanceof Error && e.message === 'ALREADY_PAID')
+        return {
+          ok: false,
+          error:
+            'A catch-up for this contractor and period already exists — remove it first to change it.',
+        };
+      throw e;
+    }
+
+    const { netPhp } = await recomputeWorkerDraft({
+      companyId: input.companyId,
+      periodId: period.id,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      workerId: input.workerId,
+      offCycleOnly: period.kind === 'off_cycle',
+    });
+
+    await logEvent({
+      companyId: input.companyId,
+      action: 'add_off_cycle',
+      entity: input.workerId,
+      detail: {
+        basis: 'salaried_hours',
+        hours: input.hours,
+        amount_php: centavosToPhp(amount),
+        original_period: `${orig.start} → ${orig.end}`,
+        period: `${input.periodStart} → ${input.periodEnd}`,
+      },
+    });
+
+    return { ok: true, data: { netPhp, amountPhp: centavosToPhp(amount) } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Add catch-up pay failed.' };
+  }
+}
+
+/**
  * Shared core: add APPROVED per-session sessions to `period` as off-cycle pay
  * lines (marking them paid so they leave the pickers / normal windowed sum),
  * then rebuild the affected workers' rows. `offCycleOnly` is true for the
@@ -1331,6 +1559,47 @@ export async function routeSessionsToOffCycleBatch(args: {
       detail: { count: res.count },
     });
     return { ok: true, data: { batchId: batch.id, count: res.count } };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
+  }
+}
+
+/** Direct /payroll entry: find-or-create the employer's single open off-cycle batch. */
+export async function openOffCycleBatch(args: {
+  companyId: string;
+}): Promise<
+  ActionResult<{ batchId: string; periodStart: string; periodEnd: string; isNew: boolean }>
+> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const today = new Date().toISOString().slice(0, 10);
+    const batch = await findOrCreateOffCycleBatch(
+      db,
+      args.companyId,
+      today,
+      periodFor(today).payDate,
+    );
+    if (batch.isNew) {
+      await logEvent({
+        companyId: args.companyId,
+        action: 'off_cycle_batch_open',
+        entity: batch.id,
+        detail: {},
+      });
+    }
+    return {
+      ok: true,
+      data: {
+        batchId: batch.id,
+        periodStart: batch.periodStart,
+        periodEnd: batch.periodEnd,
+        isNew: batch.isNew,
+      },
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
   }

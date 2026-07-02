@@ -6,6 +6,7 @@
     "00000000000022": "2026-06-27 — off-cycle pay: payments.off_cycle_php, off_cycle_pay_items, service_sessions paid_* cols, payments_period_open_enforce trigger update",
     "00000000000023": "2026-06-27 — time_entries.client_company_id (hours→client attribution)",
     "00000000000024": "2026-06-27 — pay_periods.kind ('regular'|'off_cycle') + open-batch index (off-cycle batch payroll)",
-    "00000000000025": "2026-06-28 — companies.holidays_config jsonb (server-side observed holidays; applied via MCP)"
+    "00000000000025": "2026-06-28 — companies.holidays_config jsonb (server-side observed holidays; applied via MCP)",
+    "00000000000026": "2026-07-01 — off_cycle_pay_items basis CHECK extended with 'salaried_hours' (FT/PT catch-up hours; applied via MCP)"
   }
 }
