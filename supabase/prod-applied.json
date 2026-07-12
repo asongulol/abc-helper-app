@@ -9,6 +9,7 @@
     "00000000000025": "2026-06-28 — companies.holidays_config jsonb (server-side observed holidays; applied via MCP)",
     "00000000000026": "2026-07-01 — off_cycle_pay_items basis CHECK extended with 'salaried_hours' (FT/PT catch-up hours; applied via MCP)",
     "00000000000027": "2026-07-01 — pay_period_summaries security_invoker view (period batch-list aggregation in Postgres; applied via MCP)",
-    "00000000000028": "2026-07-01 — pg_trgm + audit_log action/entity GIN trigram indexes (audit search; applied via MCP)"
+    "00000000000028": "2026-07-01 — pg_trgm + audit_log action/entity GIN trigram indexes (audit search; applied via MCP)",
+    "00000000000029": "2026-07-12 — fix contractor self-insert of service_sessions: contractor_insert RLS EXISTS(worker_companies/companies) → company_id IN my_clients() (raw EXISTS read admin-only tables, always false under contractor role) + worker_id default my_worker_id(); applied via MCP"
   }
 }
