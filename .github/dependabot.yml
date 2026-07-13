@@ -12,6 +12,12 @@ updates:
     labels: ["dependencies"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # TypeScript 7 is the native (Go) compiler rewrite; Next 16's `next build`
+      # type-check can't load it yet, so a 6→7 bump fails every build. Hold at 6.x
+      # until Next supports it — drop this entry to let the bump back in.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       # One PR per week for the low-risk bumps, instead of N separate PRs.
       minor-and-patch:
