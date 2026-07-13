@@ -760,6 +760,46 @@ export const restorePaymentRows = async (
   return sanitized.length;
 };
 
+/**
+ * True if this app has recorded a `recalculate` for this period (the durable
+ * once-guard for the carried-over auto-recalc). `calculateDraft` logs it with
+ * `entity = "${start} → ${end}"`; a legacy-app clone leaves no such event.
+ */
+export const hasInAppRecalc = async (
+  db: Db,
+  companyId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<boolean> => {
+  const { data, error } = await db
+    .from('audit_log')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('action', 'recalculate')
+    .eq('entity', `${periodStart} → ${periodEnd}`)
+    .limit(1);
+  if (error) throw new Error(`recalc audit check: ${error.message}`);
+  return (data ?? []).length > 0;
+};
+
+/** Id of the most-recent regular period ending before `beforeStart`, or null. */
+export const fetchPreviousRegularPeriodId = async (
+  db: Db,
+  companyId: string,
+  beforeStart: string,
+): Promise<string | null> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('kind', 'regular')
+    .lt('period_end', beforeStart)
+    .order('period_end', { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`previous period: ${error.message}`);
+  return data?.[0]?.id ?? null;
+};
+
 export type SavedPayment = {
   /** UUID of the payments row — required for updatePaymentRowAction / deleteStatement. */
   paymentId: string;
