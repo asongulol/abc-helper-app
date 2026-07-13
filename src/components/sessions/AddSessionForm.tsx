@@ -382,28 +382,41 @@ export const AddSessionForm = ({
 
   const submit = async () => {
     if (!canSubmit) return;
+    const unitsNum = Number(units);
+    if (!Number.isInteger(unitsNum) || unitsNum < 1) {
+      notify('Units must be a whole number ≥ 1.', { type: 'warn' });
+      return;
+    }
     setBusy(true);
     try {
-      const res = editingId
+      const create = (confirmDuplicate: boolean) =>
+        createSession({
+          clientId,
+          workerId,
+          sessionDate: date,
+          sessionType: type,
+          units: unitsNum,
+          childInitials: childInitials.trim(),
+          eiid: eiid.trim(),
+          approve,
+          confirmDuplicate,
+        });
+      let res = editingId
         ? await updateSession({
             clientId,
             id: editingId,
             sessionDate: date,
             sessionType: type,
-            units: Math.max(1, Number(units) || 1),
+            units: unitsNum,
             childInitials: childInitials.trim(),
             eiid: eiid.trim(),
           })
-        : await createSession({
-            clientId,
-            workerId,
-            sessionDate: date,
-            sessionType: type,
-            units: Math.max(1, Number(units) || 1),
-            childInitials: childInitials.trim(),
-            eiid: eiid.trim(),
-            approve,
-          });
+        : await create(false);
+      if (!res.ok && res.error.startsWith('DUPLICATE_SESSION:')) {
+        const msg = res.error.replace('DUPLICATE_SESSION:', '').trim();
+        if (!window.confirm(`${msg} Add it anyway?`)) return;
+        res = await create(true);
+      }
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;

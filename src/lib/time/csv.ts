@@ -152,7 +152,21 @@ export const parseHubstaffCsv = (text: string): HubstaffParseResult | HubstaffPa
     };
   }
 
-  const members: HubstaffMember[] = [];
+  // Same member can appear on multiple rows (e.g. one row per project) —
+  // collapse by name so each (member, date) combination reaches the importer
+  // as a single summed row (the upsert below is keyed on worker+date; two
+  // rows for the same member would otherwise hit
+  // "ON CONFLICT DO UPDATE command cannot affect row a second time").
+  const byName = new Map<
+    string,
+    {
+      daySeconds: Record<string, number>;
+      totalSeconds: number;
+      actWeighted: number;
+      actSum: number;
+      actCount: number;
+    }
+  >();
   let skippedRows = 0;
 
   for (const row of rows.slice(1)) {
@@ -163,25 +177,47 @@ export const parseHubstaffCsv = (text: string): HubstaffParseResult | HubstaffPa
       continue;
     }
 
-    const daySeconds: Record<string, number> = {};
-    for (let j = 0; j < dateCols.length; j++) {
-      const dateLabel = dateCols[j];
-      if (!dateLabel) continue;
-      daySeconds[dateLabel] = hmsToSeconds(row[memberIdx + 1 + j]);
-    }
-
     const totalSeconds = hmsToSeconds(row[totalWorkedIdx]);
     const actRaw = activityIdx >= 0 ? (row[activityIdx] ?? '').trim() : '';
     const activityPct = actRaw ? Number.parseFloat(actRaw) || null : null;
 
-    members.push({
-      name,
-      daySeconds,
-      ptoSeconds: {}, // CSV imports have no PTO source
-      totalSeconds,
-      activityPct,
-    });
+    const acc = byName.get(name) ?? {
+      daySeconds: {},
+      totalSeconds: 0,
+      actWeighted: 0,
+      actSum: 0,
+      actCount: 0,
+    };
+    for (let j = 0; j < dateCols.length; j++) {
+      const dateLabel = dateCols[j];
+      if (!dateLabel) continue;
+      acc.daySeconds[dateLabel] =
+        (acc.daySeconds[dateLabel] ?? 0) + hmsToSeconds(row[memberIdx + 1 + j]);
+    }
+    acc.totalSeconds += totalSeconds;
+    if (activityPct != null) {
+      // Weight by the row's own worked seconds — a straight average would
+      // misrepresent e.g. 8h at 90% blended with 5min at 10%. Falls back to a
+      // plain average only if every contributing row logged 0 seconds.
+      acc.actWeighted += activityPct * totalSeconds;
+      acc.actSum += activityPct;
+      acc.actCount += 1;
+    }
+    byName.set(name, acc);
   }
+
+  const members: HubstaffMember[] = [...byName.entries()].map(([name, acc]) => ({
+    name,
+    daySeconds: acc.daySeconds,
+    ptoSeconds: {}, // CSV imports have no PTO source
+    totalSeconds: acc.totalSeconds,
+    activityPct:
+      acc.totalSeconds > 0
+        ? Math.round(acc.actWeighted / acc.totalSeconds)
+        : acc.actCount > 0
+          ? Math.round(acc.actSum / acc.actCount)
+          : null,
+  }));
 
   if (members.length === 0) {
     return {

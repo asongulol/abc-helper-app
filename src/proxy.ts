@@ -56,6 +56,22 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const isPortal = pathname === '/portal' || pathname.startsWith('/portal/');
 
   if (!user) {
+    // Bare-origin recovery-code guard: local GoTrue falls back to the bare
+    // site_url (not the requested redirectTo) whenever a redirect target
+    // isn't allow-listed, so a `?code=` landing on `/` unauthenticated is a
+    // password-recovery code that would otherwise be silently dropped here.
+    // Admin OAuth always targets /auth/callback explicitly (a PUBLIC_PATH,
+    // never hits this branch), so a bare-origin code is never that path —
+    // forward it to the real exchange instead of stranding the user.
+    const code = pathname === '/' ? request.nextUrl.searchParams.get('code') : null;
+    if (code) {
+      return NextResponse.redirect(
+        new URL(
+          `/auth/callback?code=${encodeURIComponent(code)}&next=/portal/reset-password`,
+          request.url,
+        ),
+      );
+    }
     return NextResponse.redirect(new URL(isPortal ? PORTAL_LOGIN : ADMIN_LOGIN, request.url));
   }
 

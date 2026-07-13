@@ -119,6 +119,12 @@ export async function updateOwnProfile(
 
     const { patch, extra } = buildPatch(fields, allowed);
 
+    // workers.first_name / last_name are NOT NULL — buildPatch turns a cleared
+    // input into null, which would otherwise hit Postgres as a raw not-null
+    // violation. Catch it here with copy that matches the rest of the app.
+    if (patch.first_name === null) return { ok: false, error: "First name can't be empty." };
+    if (patch.last_name === null) return { ok: false, error: "Last name can't be empty." };
+
     // Merge profile_extras without clobbering other culture fields
     if (Object.keys(extra).length > 0) {
       const profile = await fetchOwnProfile(db, worker.workerId);

@@ -43,13 +43,21 @@ export const PortalSessions = ({ clients, sessions, defaultDate }: Props) => {
       return;
     }
     startSave(async () => {
-      const res = await createContractorSession({
-        clientId,
-        sessionDate: date,
-        item,
-        childInitials: childInitials.trim(),
-        eiid: eiid.trim(),
-      });
+      const submitOnce = (confirmDuplicate: boolean) =>
+        createContractorSession({
+          clientId,
+          sessionDate: date,
+          item,
+          childInitials: childInitials.trim(),
+          eiid: eiid.trim(),
+          confirmDuplicate,
+        });
+      let res = await submitOnce(false);
+      if (!res.ok && res.error.startsWith('DUPLICATE_SESSION:')) {
+        const msg = res.error.replace('DUPLICATE_SESSION:', '').trim();
+        if (!window.confirm(`${msg} Add it anyway?`)) return;
+        res = await submitOnce(true);
+      }
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;

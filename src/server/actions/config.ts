@@ -12,7 +12,6 @@
  */
 
 import { revalidatePath, revalidateTag } from 'next/cache';
-import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
 import { companyUsageCounts, parseOnboardingConfig } from '@/db/queries/config';
 import type { Json } from '@/db/types';
@@ -21,6 +20,7 @@ import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import { AGREEMENT_TEMPLATES_TAG, PORTAL_SETTINGS_TAG } from '@/server/config-cache';
 import { fetchHubstaffProjects, getAccessToken } from '@/server/hubstaff/client';
+import { CompanyFieldsSchema } from '@/types/schemas/config';
 
 export type ActionResult<T = undefined> = [T] extends [undefined]
   ? { ok: true; message?: string } | { ok: false; error: string }
@@ -29,28 +29,6 @@ export type ActionResult<T = undefined> = [T] extends [undefined]
 const fail = (e: unknown): { ok: false; error: string } => ({
   ok: false,
   error: e instanceof Error ? e.message : String(e ?? 'Unknown error'),
-});
-
-// ─── shared schemas ─────────────────────────────────────────────────────────────
-
-const ContactSchema = z.object({
-  first_name: z.string().trim().optional().default(''),
-  last_name: z.string().trim().optional().default(''),
-  title: z.string().trim().optional().default(''),
-  email: z.string().trim().optional().default(''),
-  mobile: z.string().trim().optional().default(''),
-  extension: z.string().trim().optional().default(''),
-  fax: z.string().trim().optional().default(''),
-});
-
-const CompanyFieldsSchema = z.object({
-  name: z.string().trim().min(1, 'Company name is required.'),
-  hubstaffOrgId: z.number().int().positive().nullable().optional(),
-  taxId: z.string().trim().nullable().optional(),
-  address: z.string().trim().nullable().optional(),
-  phone: z.string().trim().nullable().optional(),
-  website: z.string().trim().nullable().optional(),
-  contacts: z.array(ContactSchema).optional().default([]),
 });
 
 const nz = (s: string | null | undefined): string | null => {

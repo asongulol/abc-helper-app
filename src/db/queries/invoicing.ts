@@ -8,6 +8,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import type { LineKind, RosterEntry, WorkerSeconds, WorkerSessions } from '@/lib/invoicing/compute';
+import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
 
@@ -259,6 +260,8 @@ export const fetchInvoices = async (db: Db, clientId?: string): Promise<InvoiceL
 
 /** A single invoice + its line snapshot (for the printable view). */
 export const fetchInvoiceDetail = async (db: Db, id: string): Promise<InvoiceDetail | null> => {
+  // Non-UUID route params must 404, not crash on a raw Postgres cast error.
+  if (!uuid().safeParse(id).success) return null;
   const { data: inv, error } = await db
     .from('invoices')
     .select(

@@ -9,7 +9,7 @@
  */
 
 import { createServiceClient } from '@/db/clients/service';
-import { fetchWorkerClients, insertSession } from '@/db/queries/sessions';
+import { fetchWorkerClients, findSessionOnDate, insertSession } from '@/db/queries/sessions';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { CreateContractorSessionSchema } from '@/types/schemas/sessions';
@@ -25,7 +25,7 @@ export async function createContractorSession(args: unknown): Promise<ActionResu
   const parsed = CreateContractorSessionSchema.safeParse(args);
   if (!parsed.success)
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
-  const { clientId, sessionDate, item, childInitials, eiid, notes } = parsed.data;
+  const { clientId, sessionDate, item, childInitials, eiid, notes, confirmDuplicate } = parsed.data;
 
   try {
     const svc = createServiceClient();
@@ -36,6 +36,16 @@ export async function createContractorSession(args: unknown): Promise<ActionResu
     const clients = await fetchWorkerClients(svc, worker.workerId);
     if (!clients.some((c) => c.id === clientId))
       return { ok: false, error: 'You are not assigned to that client.' };
+
+    if (
+      !confirmDuplicate &&
+      (await findSessionOnDate(svc, clientId, worker.workerId, sessionDate))
+    ) {
+      return {
+        ok: false,
+        error: 'DUPLICATE_SESSION: A session already exists for this contractor on that date.',
+      };
+    }
 
     await insertSession(svc, {
       companyId: clientId,

@@ -13,6 +13,7 @@ import {
 } from '@/lib/agreements/merge';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
+import { uuid } from '@/types/schemas/uuid';
 
 export const metadata: Metadata = {
   title: 'Agreement — Aaron Anderson E.H.S. LLC',
@@ -44,6 +45,7 @@ export default async function AdminAgreementPrintPage({
   if (!admin) redirect('/login');
 
   const { workerId, kind } = await params;
+  if (!uuid().safeParse(workerId).success) notFound();
   if (!KINDS.includes(kind as AgreementKind)) notFound();
   const agreementKind = kind as AgreementKind;
 

@@ -97,15 +97,23 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
       return;
     }
     startSave(async () => {
-      const res = await createSession({
-        clientId,
-        workerId: addWorkerId,
-        sessionDate: addDate,
-        sessionType: addType.trim() || null,
-        units,
-        caseRef: addCaseRef.trim() || null,
-        notes: addNotes.trim() || null,
-      });
+      const submitOnce = (confirmDuplicate: boolean) =>
+        createSession({
+          clientId,
+          workerId: addWorkerId,
+          sessionDate: addDate,
+          sessionType: addType.trim() || null,
+          units,
+          caseRef: addCaseRef.trim() || null,
+          notes: addNotes.trim() || null,
+          confirmDuplicate,
+        });
+      let res = await submitOnce(false);
+      if (!res.ok && res.error.startsWith('DUPLICATE_SESSION:')) {
+        const msg = res.error.replace('DUPLICATE_SESSION:', '').trim();
+        if (!window.confirm(`${msg} Add it anyway?`)) return;
+        res = await submitOnce(true);
+      }
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
@@ -115,17 +123,6 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
       setAddCaseRef('');
       setAddNotes('');
       setAddUnits('1');
-      reload();
-    });
-  };
-
-  const approve = (id: string, status: 'approved' | 'rejected') => {
-    startUpdate(async () => {
-      const res = await setSessionApproval({ clientId, ids: [id], status });
-      if (!res.ok) {
-        notify(res.error, { type: 'error' });
-        return;
-      }
       reload();
     });
   };
@@ -153,6 +150,18 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
       notify(`${res.data.count} session${res.data.count === 1 ? '' : 's'} ${status}.`, {
         type: 'success',
       });
+      reload();
+    });
+  };
+
+  const approve = (id: string, status: 'approved' | 'rejected') => {
+    startUpdate(async () => {
+      const res = await setSessionApproval({ clientId, ids: [id], status });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`Session ${status}.`, { type: 'success' });
       reload();
     });
   };

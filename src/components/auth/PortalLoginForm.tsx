@@ -66,7 +66,7 @@ export const PortalLoginForm = () => {
     setSent('');
     const supabase = createBrowserSupabase();
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-      redirectTo: `${location.origin}/auth/callback?next=/portal`,
+      redirectTo: `${location.origin}/auth/callback?next=/portal/reset-password`,
       ...(captchaToken ? { captchaToken } : {}),
     });
     if (error) setErr(error.message);

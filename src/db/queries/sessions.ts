@@ -97,6 +97,31 @@ export const insertSession = async (db: Db, row: NewSession): Promise<void> => {
   if (error) throw new Error(`add session: ${error.message}`);
 };
 
+/**
+ * Whether a non-rejected session already exists for this worker+client+date.
+ * Multiple visits/day are a legal data shape (see the `service_sessions`
+ * migration comment — no natural-key unique on purpose), so callers use this
+ * for a confirm-once duplicate WARN, not a hard block. Rejected rows never
+ * bill, so they don't count as a duplicate.
+ */
+export const findSessionOnDate = async (
+  db: Db,
+  companyId: string,
+  workerId: string,
+  sessionDate: string,
+): Promise<boolean> => {
+  const { data, error } = await db
+    .from('service_sessions')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('worker_id', workerId)
+    .eq('session_date', sessionDate)
+    .neq('approval', 'rejected')
+    .limit(1);
+  if (error) throw new Error(`session duplicate check: ${error.message}`);
+  return (data ?? []).length > 0;
+};
+
 /** Bulk-insert pending sessions (CSV import). All rows share the client company. */
 export const insertSessions = async (
   db: Db,

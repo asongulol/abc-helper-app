@@ -1457,9 +1457,13 @@ async function addApprovedSessionsToPeriod(
 }
 
 /**
- * Approve → pay: add approved per-session sessions to the CURRENT open draft so
- * they get paid in it. Returns `paidInto: 'none'` (no write) when there's no
- * open draft — the caller then offers next-period / off-cycle.
+ * Approve → pay: add approved per-session sessions to the OPEN regular draft
+ * whose window contains each session's date. Returns `paidInto: 'none'` (no
+ * write) when no open draft covers the date(s) — the caller then offers
+ * next-period / off-cycle. A bulk selection whose dates resolve to more than
+ * one outcome (different drafts, or some covered and some not) is rejected
+ * with a clear message rather than silently splitting or picking one
+ * (audit #001/#009 — never join a session to another period's draft).
  */
 export async function payApprovedSessions(args: {
   companyId: string;
@@ -1472,7 +1476,20 @@ export async function payApprovedSessions(args: {
   if (args.sessionIds.length === 0) return { ok: true, data: { paidInto: 'none', count: 0 } };
   try {
     const db = await createServerSupabase();
-    const draft = await findCurrentOpenDraft(db, args.companyId);
+    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
+    if (sessions.length !== args.sessionIds.length)
+      return { ok: false, error: 'One or more sessions were not found.' };
+    const dates = [...new Set(sessions.map((s) => s.sessionDate))];
+    const drafts = await Promise.all(dates.map((d) => findCurrentOpenDraft(db, args.companyId, d)));
+    const resolved = new Set(drafts.map((d) => d?.id ?? 'none'));
+    if (resolved.size > 1) {
+      return {
+        ok: false,
+        error:
+          'These sessions span more than one pay period (or one date has no open draft). Pay them one period at a time.',
+      };
+    }
+    const draft = drafts[0] ?? null;
     if (!draft) return { ok: true, data: { paidInto: 'none', count: 0 } };
     const res = await addApprovedSessionsToPeriod(
       db,

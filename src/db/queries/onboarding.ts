@@ -7,6 +7,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { decryptIfNeeded } from '@/server/crypto';
+import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
 
@@ -138,6 +139,9 @@ export const fetchOnboardingProgressByWorker = async (
   db: Db,
   workerId: string,
 ): Promise<OnboardingProgressRow | null> => {
+  // A non-UUID route param would otherwise throw a raw Postgres cast error;
+  // treat it as "no such worker" so callers' existing notFound() runs.
+  if (!uuid().safeParse(workerId).success) return null;
   const { data, error } = await db
     .from('onboarding_progress')
     .select(

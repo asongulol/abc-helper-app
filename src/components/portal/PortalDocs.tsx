@@ -119,10 +119,19 @@ export const PortalDocs = ({
   const refresh = () => router.refresh();
 
   const view = (id: string) => {
+    // Open synchronously on the click so user-activation is still live when the
+    // tab navigates — opening after the `await` below left it stuck on about:blank.
+    const win = window.open('', '_blank');
+    if (win) win.opener = null; // 'noopener' hygiene without the feature string (which makes window.open return null)
     startTransition(async () => {
       const res = await getDocumentSignedUrl({ documentId: id });
-      if (res.ok) window.open(res.data.url, '_blank', 'noopener');
-      else notify(res.error, { type: 'error' });
+      if (res.ok) {
+        if (win) win.location.href = res.data.url;
+        else window.open(res.data.url, '_blank');
+      } else {
+        win?.close();
+        notify(res.error, { type: 'error' });
+      }
     });
   };
 
