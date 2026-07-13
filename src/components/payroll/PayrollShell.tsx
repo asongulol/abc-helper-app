@@ -376,10 +376,10 @@ export const PayrollShell = ({
       } else {
         notify('Calculated successfully.', { type: 'success' });
       }
-      // Reload saved rows to reflect the newly persisted draft, and expand the
-      // statements table so the result is visible.
-      const refreshed = periods;
-      setPeriods(refreshed);
+      // Refresh the batch list (contractor counts / net totals just changed) and
+      // reload the saved rows to reflect the newly persisted draft; expand the table.
+      const sums = await getPeriodSummaries({ companyId });
+      if (sums.ok) setPeriods(sums.data.periods);
       setTableOpen(true);
       await loadSaved();
     } finally {
@@ -581,7 +581,16 @@ export const PayrollShell = ({
         return;
       }
       setRows([]);
-      notify(`Deleted ${res.data.deleted} statement(s).`, { type: 'success' });
+      // Keep the batch list in sync — the discarded period now shows 0 contractors
+      // and ₱0, so it stays visible (and Recalculate-able) without a hard reload.
+      const sums = await getPeriodSummaries({ companyId });
+      if (sums.ok) setPeriods(sums.data.periods);
+      notify(
+        `Deleted ${res.data.deleted} statement(s). Recalculate to rebuild from approved hours.`,
+        {
+          type: 'success',
+        },
+      );
       setConfirmModal(null);
     } finally {
       setBusy(false);
