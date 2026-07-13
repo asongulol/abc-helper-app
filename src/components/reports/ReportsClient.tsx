@@ -96,6 +96,11 @@ export const ReportsClient = ({ companyId, data }: Props) => {
   const fNet = shown.reduce((s, p) => s + p.net, 0);
   const fUsd = shown.reduce((s, p) => s + (p.usdRef || 0), 0);
   const filterActive = fYears.size > 0 || fMonths.size > 0;
+  // #012: the ≈USD total only covers periods with a cached FX snapshot; the rest
+  // render "—" and contribute $0. Disclose how many were left out so the total
+  // doesn't read as complete.
+  const grandNoFx = periods.filter((p) => !p.fx).length;
+  const shownNoFx = shown.filter((p) => !p.fx).length;
 
   const nCols = 7; // ▸ | Period | Pay date | Contractors | Net | ≈USD | Unpaid
 
@@ -110,7 +115,11 @@ export const ReportsClient = ({ companyId, data }: Props) => {
         </p>
         <div className="ov-grid">
           <StatTile label="Total net (all periods)" value={money(grandNet, 'PHP')} />
-          <StatTile label="Total ≈ USD ref" value={money(grandUsd, 'USD')} />
+          <StatTile
+            label="Total ≈ USD ref"
+            value={money(grandUsd, 'USD')}
+            sub={grandNoFx > 0 ? `FX-known periods only · ${grandNoFx} excluded` : undefined}
+          />
           <StatTile
             label="Unpaid / not yet sent"
             value={money(grandUnpaid, 'PHP')}
@@ -178,7 +187,10 @@ export const ReportsClient = ({ companyId, data }: Props) => {
                   key={n}
                   type="button"
                   className={`btn sm ${fMonths.has(n) ? '' : 'ghost'}`}
-                  onClick={() => toggleSet(fMonths, setFMonths, n)}
+                  // Single-select: pick one month (click the active one again → All).
+                  onClick={() =>
+                    setFMonths(fMonths.has(n) && fMonths.size === 1 ? new Set() : new Set([n]))
+                  }
                 >
                   {lbl}
                 </button>
@@ -187,7 +199,8 @@ export const ReportsClient = ({ companyId, data }: Props) => {
             {filterActive && (
               <p className="sub" style={{ marginTop: 6 }}>
                 Showing <b>{shown.length}</b> of {periods.length} periods · net{' '}
-                <b>{money(fNet, 'PHP')}</b> · ≈ {money(fUsd, 'USD')}{' '}
+                <b>{money(fNet, 'PHP')}</b> · ≈ {money(fUsd, 'USD')}
+                {shownNoFx > 0 ? ` (${shownNoFx} without FX excluded)` : ''}{' '}
                 <button
                   type="button"
                   className="btn link sm"

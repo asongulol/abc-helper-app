@@ -112,7 +112,7 @@ export const InvoicingClient = ({
       }
       if (res.data.multiClientNames.length > 0) {
         notify(
-          `${res.data.multiClientNames.join(', ')} also serve other clients — their FULL hours bill here (and would bill again on the other client). Attribute per-project before sending.`,
+          `${res.data.multiClientNames.join(', ')} also serve other clients — only hours attributed to THIS client bill here; their unattributed hours are excluded (never double-billed). Attribute per-project to include them.`,
           { type: 'warn', persistent: true },
         );
       }

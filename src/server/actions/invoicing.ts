@@ -58,10 +58,12 @@ export type InvoicePreviewResult = {
   /** Names of contractors with sessions but no USD session rate (their session lines bill $0). */
   zeroSessionRateNames: string[];
   /**
-   * Contractors on this client's roster who ALSO serve other clients. Their hours
-   * aren't attributed per-client yet, so this invoice bills their FULL hours —
-   * which would also bill on the other client(s). Flag until per-project
-   * attribution exists (see audit/HOURS-CLIENT-ATTRIBUTION-PLAN.md).
+   * Contractors on this client's roster who ALSO serve other clients. The
+   * double-bill guard (see computeForClient) already excludes their unattributed
+   * hours — this invoice bills only hours explicitly attributed to THIS client.
+   * Surfaced so the admin knows to attribute their remaining hours per-project
+   * to include them (they are NOT double-billed). See
+   * audit/HOURS-CLIENT-ATTRIBUTION-PLAN.md.
    */
   multiClientNames: string[];
 };
