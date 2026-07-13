@@ -266,17 +266,24 @@ export type RecentSessionRow = {
 export const fetchRecentSessionsForWorkers = async (
   db: Db,
   workerIds: readonly string[],
-  limit = 30,
+  opts: { start?: string; end?: string } = {},
 ): Promise<RecentSessionRow[]> => {
   if (workerIds.length === 0) return [];
-  const { data, error } = await db
+  const { start, end } = opts;
+  let q = db
     .from('service_sessions')
     .select(
       'id, company_id, worker_id, session_date, session_type, units, child_initials, eiid, approval, paid_at, companies(name), workers(first_name, last_name)',
     )
     .in('worker_id', workerIds as string[])
-    .order('created_at', { ascending: false })
-    .limit(limit);
+    // The "Recently added" list is an unpaid action queue — paid sessions live on
+    // Calculate. Excluding them here means the row ceiling counts unpaid rows only.
+    .is('paid_at', null);
+  // Period-scoped by default (only sessions dated within the selected period);
+  // "show all unpaid" omits the range to span every period.
+  if (start && end) q = q.gte('session_date', start).lte('session_date', end);
+  // ponytail: 500-row ceiling on the unpaid queue; paginate if a real backlog exceeds it.
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(500);
   if (error) throw new Error(`recent sessions: ${error.message}`);
   return (data ?? []).map((r) => ({
     id: r.id,

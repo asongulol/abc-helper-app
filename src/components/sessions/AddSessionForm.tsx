@@ -49,6 +49,12 @@ interface AddSessionFormProps {
   /** When set, the worker is fixed (no picker) — used inside the Calculate modal. */
   workerId?: string;
   defaultDate: string;
+  /** Period bounds for the "Recently added" list. When set (and not unpaidMode),
+   *  the list is scoped to sessions dated within the period. */
+  periodStart?: string;
+  periodEnd?: string;
+  /** "Show all unpaid" — span every period instead of the selected one. */
+  unpaidMode?: boolean;
   onCreated: () => void;
 }
 
@@ -58,6 +64,9 @@ export const AddSessionForm = ({
   companyId,
   workerId: fixedWorkerId,
   defaultDate,
+  periodStart,
+  periodEnd,
+  unpaidMode = false,
   onCreated,
 }: AddSessionFormProps) => {
   const { notify } = useToast();
@@ -187,21 +196,26 @@ export const AddSessionForm = ({
 
   // Employer-wide "Recently added" list — fetched on mount, then after each
   // add/edit/delete so it always reflects what was just entered (uncontrolled).
+  // Period-scoped by default; the "show all unpaid" toggle omits the range.
+  const sessionRange =
+    !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
   const reloadAll = async () => {
     if (controlled) return;
-    const res = await getRecentSessions({ companyId });
+    const res = await getRecentSessions({ companyId, ...sessionRange });
     setRecentAll(res.ok ? res.data.sessions : []);
   };
   useEffect(() => {
     if (controlled) return;
     let live = true;
-    getRecentSessions({ companyId }).then((res) => {
+    const range =
+      !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
+    getRecentSessions({ companyId, ...range }).then((res) => {
       if (live) setRecentAll(res.ok ? res.data.sessions : []);
     });
     return () => {
       live = false;
     };
-  }, [companyId, controlled]);
+  }, [companyId, controlled, periodStart, periodEnd, unpaidMode]);
 
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;
@@ -684,7 +698,9 @@ export const AddSessionForm = ({
             <Spinner />
           ) : recentVisible.length === 0 ? (
             <p className="sub" style={{ margin: 0 }}>
-              No sessions waiting — add one above.
+              {sessionRange.start
+                ? 'No sessions in this period — add one above, or use “Show all unpaid”.'
+                : 'No sessions waiting — add one above.'}
             </p>
           ) : (
             <div className="table-scroll">
