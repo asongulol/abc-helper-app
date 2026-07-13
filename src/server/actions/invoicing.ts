@@ -227,11 +227,16 @@ export async function generateInvoice(
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (/one_live_per_period|duplicate key/i.test(msg))
+      if (/one_live_per_period/i.test(msg))
         return {
           ok: false,
           error:
             'A live invoice already exists for this client + period — void it first to regenerate.',
+        };
+      if (/duplicate key/i.test(msg))
+        return {
+          ok: false,
+          error: 'Could not allocate the next invoice number — try again.',
         };
       throw e;
     }
