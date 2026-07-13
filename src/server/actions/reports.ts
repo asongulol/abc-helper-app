@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchReportPayments, type ReportPaymentRow } from '@/db/queries/reports';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { IsoDateSchema } from '@/types/schemas/payroll';
@@ -46,7 +47,7 @@ export async function getReportDetail(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Export failed.',
+      error: humanizeError(err, 'Export failed.'),
     };
   }
 }

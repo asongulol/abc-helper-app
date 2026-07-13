@@ -12,6 +12,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin, requireAdmin } from '@/server/auth/admin';
 import { serviceGetRecipient } from '@/server/wise/service';
@@ -21,7 +22,7 @@ export type ImportActionResult<T> = { ok: true; data: T } | { ok: false; error: 
 
 const fail = (e: unknown): { ok: false; error: string } => ({
   ok: false,
-  error: e instanceof Error ? e.message : String(e ?? 'Unknown error'),
+  error: humanizeError(e),
 });
 
 const RowSchema = z.object({
@@ -192,7 +193,7 @@ export async function importContractors(
         if (r.hubstaffName) byHubstaff.set(norm(r.hubstaffName), w.id);
         created++;
       } catch (e) {
-        errors.push(`${label}: ${e instanceof Error ? e.message : 'failed'}`);
+        errors.push(`${label}: ${humanizeError(e, 'failed')}`);
       }
     }
 

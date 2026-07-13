@@ -14,6 +14,7 @@
  * because the read is non-destructive (no money, no writes).
  */
 
+import { humanizeError } from '@/lib/errors';
 import { requireAdmin } from '@/server/auth/admin';
 import { runExpiryCheck, runHiringReviewCheck } from '@/server/documents/service';
 
@@ -43,7 +44,7 @@ export const runExpiryCheckNow = async (
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: humanizeError(err),
     };
   }
 };
@@ -62,7 +63,7 @@ export const runHiringReviewCheckNow = async (): Promise<
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: humanizeError(err),
     };
   }
 };

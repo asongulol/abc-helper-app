@@ -24,6 +24,7 @@ import { fetchWorkerDocuments, type WorkerDocumentRow } from '@/db/queries/docum
 import { fetchContractorLogin } from '@/db/queries/onboarding';
 import { fetchOwnDocuments } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import { parseDocUploadForm } from '@/lib/onboarding/doc-upload';
 import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
@@ -99,7 +100,7 @@ export async function listContractorDocuments(args: {
     const documents = await fetchWorkerDocuments(createServiceClient(), args.workerId);
     return { ok: true, data: { documents } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -165,7 +166,7 @@ export async function uploadOwnDocument(form: FormData): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Upload failed.',
+      error: humanizeError(err, 'Upload failed.'),
     };
   }
 }
@@ -212,7 +213,7 @@ export async function uploadDocumentForContractor(form: FormData): Promise<Actio
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Upload failed.',
+      error: humanizeError(err, 'Upload failed.'),
     };
   }
 }

@@ -18,6 +18,7 @@ import {
   upsertTimeEntries,
 } from '@/db/queries/time';
 import { periodFor } from '@/lib/dates/periods';
+import { humanizeError } from '@/lib/errors';
 import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
 import { buildUndoPayload } from '@/lib/time/approvalUndo';
 import type { ActionResult } from '@/server/actions/portal-admin';
@@ -77,7 +78,7 @@ export async function setTimeApproval(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Approval update failed.',
+      error: humanizeError(err, 'Approval update failed.'),
     };
   }
 }
@@ -108,7 +109,7 @@ export async function undoApproval(args: unknown): Promise<ActionResult<{ count:
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Undo failed.',
+      error: humanizeError(err, 'Undo failed.'),
     };
   }
 }
@@ -160,7 +161,7 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not add hours.',
+      error: humanizeError(err, 'Could not add hours.'),
     };
   }
 }
@@ -213,7 +214,7 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not add hours.',
+      error: humanizeError(err, 'Could not add hours.'),
     };
   }
 }
@@ -252,7 +253,7 @@ export async function editContractorTotal(args: unknown): Promise<ActionResult> 
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Edit failed.',
+      error: humanizeError(err, 'Edit failed.'),
     };
   }
 }
@@ -345,7 +346,7 @@ export async function importCsvBatch(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Import failed.',
+      error: humanizeError(err, 'Import failed.'),
     };
   }
 }
@@ -414,7 +415,7 @@ export async function deleteImportBatch(args: unknown): Promise<ActionResult<{ d
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Delete failed.',
+      error: humanizeError(err, 'Delete failed.'),
     };
   }
 }

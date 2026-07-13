@@ -22,6 +22,7 @@ import {
   updateInvoiceStatus,
 } from '@/db/queries/invoicing';
 import { fetchWorkerClientsBatch } from '@/db/queries/sessions';
+import { humanizeError } from '@/lib/errors';
 import { computeInvoice, type InvoiceComputation } from '@/lib/invoicing/compute';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -164,7 +165,7 @@ export async function previewInvoice(args: unknown): Promise<ActionResult<Invoic
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Preview failed.',
+      error: humanizeError(err, 'Preview failed.'),
     };
   }
 }
@@ -257,7 +258,7 @@ export async function generateInvoice(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Generate failed.',
+      error: humanizeError(err, 'Generate failed.'),
     };
   }
 }
@@ -291,7 +292,7 @@ export async function setInvoiceStatus(args: unknown): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Update failed.',
+      error: humanizeError(err, 'Update failed.'),
     };
   }
 }
@@ -328,7 +329,7 @@ export async function markInvoicePaid(args: unknown): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Update failed.',
+      error: humanizeError(err, 'Update failed.'),
     };
   }
 }

@@ -24,6 +24,7 @@ import {
   updateSessionsApproval,
   type WorkerClient,
 } from '@/db/queries/sessions';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -74,7 +75,7 @@ export async function loadClientSessions(
       },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Failed to load sessions.' };
+    return { ok: false, error: humanizeError(err, 'Failed to load sessions.') };
   }
 }
 
@@ -128,7 +129,7 @@ export async function createSession(args: unknown): Promise<ActionResult> {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not add session.' };
+    return { ok: false, error: humanizeError(err, 'Could not add session.') };
   }
 }
 
@@ -147,7 +148,7 @@ export async function getWorkerSessions(args: {
     const sessions = await fetchWorkerSessions(createServiceClient(), args.workerId, 25);
     return { ok: true, data: { sessions } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -168,7 +169,7 @@ export async function getWorkerClients(args: {
     const clients = await fetchWorkerClients(createServiceClient(), args.workerId);
     return { ok: true, data: { clients } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -193,7 +194,7 @@ export async function setSessionApproval(args: unknown): Promise<ActionResult<{ 
     });
     return { ok: true, data: { count: ids.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Approval update failed.' };
+    return { ok: false, error: humanizeError(err, 'Approval update failed.') };
   }
 }
 
@@ -243,7 +244,7 @@ export async function importSessions(
     });
     return { ok: true, data: { created, skipped } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Import failed.' };
+    return { ok: false, error: humanizeError(err, 'Import failed.') };
   }
 }
 
@@ -268,7 +269,7 @@ export async function deleteSession(args: unknown): Promise<ActionResult> {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Delete failed.' };
+    return { ok: false, error: humanizeError(err, 'Delete failed.') };
   }
 }
 
@@ -299,6 +300,6 @@ export async function updateSession(args: unknown): Promise<ActionResult> {
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not update session.' };
+    return { ok: false, error: humanizeError(err, 'Could not update session.') };
   }
 }

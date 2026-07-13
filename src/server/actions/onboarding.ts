@@ -11,6 +11,7 @@ import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
 import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
 import type { Database } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import { type DocSlotStatus, deriveDocChecklist } from '@/lib/onboarding/documents';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
@@ -22,7 +23,7 @@ export type SimpleResult = { ok: true } | { ok: false; error: string };
 
 const fail = (e: unknown): { ok: false; error: string } => ({
   ok: false,
-  error: e instanceof Error ? e.message : String(e ?? 'Unknown error'),
+  error: humanizeError(e),
 });
 
 export interface OnbSignatureLite {
@@ -193,7 +194,7 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
   } catch (e) {
     return {
       ok: false,
-      error: e instanceof Error ? e.message : 'Failed to load detail.',
+      error: humanizeError(e, 'Failed to load detail.'),
     };
   }
 }

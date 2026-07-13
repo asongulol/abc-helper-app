@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -102,7 +103,7 @@ export async function syncHubstaffNow(args: unknown): Promise<ActionResult<SyncH
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Hubstaff sync failed.',
+      error: humanizeError(err, 'Hubstaff sync failed.'),
     };
   }
 }

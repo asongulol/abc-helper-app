@@ -8,6 +8,7 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { type AuditFilters, getAuditLogForExport } from '@/db/queries/audit';
+import { humanizeError } from '@/lib/errors';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 
@@ -47,6 +48,6 @@ export async function exportAuditCsv(filters: AuditFilters): Promise<ExportResul
         : 'all';
     return { ok: true, data: { csv, filename: `audit-log_${stamp}.csv` } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Export failed.' };
+    return { ok: false, error: humanizeError(err, 'Export failed.') };
   }
 }

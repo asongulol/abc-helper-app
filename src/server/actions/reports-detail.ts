@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 
@@ -245,7 +246,7 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Reports query failed.',
+      error: humanizeError(err, 'Reports query failed.'),
     };
   }
 
@@ -539,7 +540,7 @@ export async function getContractorHistory(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'History query failed.',
+      error: humanizeError(err, 'History query failed.'),
     };
   }
 }
@@ -617,7 +618,7 @@ export async function getUtilization(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Activity query failed.',
+      error: humanizeError(err, 'Activity query failed.'),
     };
   }
 
