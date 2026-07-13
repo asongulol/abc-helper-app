@@ -146,10 +146,17 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
         return;
       }
       const { written, skipped } = res.data ?? { written: 0, skipped: 0 };
-      notify(
-        `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already existed).` : '.'}`,
-        { type: 'success', persistent: true },
-      );
+      if (written === 0) {
+        notify(res.message ?? 'All rows already exist — nothing new to import.', {
+          type: 'info',
+          persistent: true,
+        });
+      } else {
+        notify(
+          `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already existed).` : '.'}`,
+          { type: 'success', persistent: true },
+        );
+      }
       setParsed(null);
       if (fileRef.current) fileRef.current.value = '';
       onImported();
@@ -258,9 +265,10 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
               >
                 {parsed.members
                   .filter((m) => !m.isMatched)
-                  .map((m) => (
+                  .map((m, i) => (
                     <span
-                      key={m.name}
+                      // biome-ignore lint/suspicious/noArrayIndexKey: parsed rows have no stable id; name alone can collide (two different people, same display name)
+                      key={`${m.name}-${i}`}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -295,7 +303,7 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                 </tr>
               </thead>
               <tbody>
-                {parsed.members.map((m) => {
+                {parsed.members.map((m, i) => {
                   const totalH = (
                     Object.values(m.daySeconds).reduce((s, v) => s + v, 0) / 3600
                   ).toFixed(2);
@@ -303,7 +311,8 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                   const tone = !m.isMatched ? 'bad' : m.isInactive ? 'warn' : 'good';
                   const label = !m.isMatched ? 'unmatched' : m.isInactive ? 'inactive' : 'matched';
                   return (
-                    <tr key={m.name}>
+                    // biome-ignore lint/suspicious/noArrayIndexKey: parsed rows have no stable id; name alone can collide (two different people, same display name)
+                    <tr key={`${m.name}-${i}`}>
                       <td className="card-title">
                         <b>{m.name}</b>
                       </td>

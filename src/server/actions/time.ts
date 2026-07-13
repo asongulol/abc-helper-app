@@ -301,9 +301,13 @@ export async function importCsvBatch(
       toWrite = rows.filter((r) => !existKeys.has(`${r.sourceName}|${r.workDate}`));
       skipped = rows.length - toWrite.length;
       if (toWrite.length === 0) {
+        // Not an error — the whole batch was already imported. ok:true with
+        // written:0 so the client renders this as a neutral no-op, not a
+        // red error toast.
         return {
-          ok: false,
-          error: 'All rows already exist — nothing new to import.',
+          ok: true,
+          data: { batchId, written: 0, skipped },
+          message: 'All rows already exist — nothing new to import.',
         };
       }
     }

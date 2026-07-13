@@ -119,4 +119,37 @@ describe('parseHubstaffCsv', () => {
     if (isParseError(result)) throw new Error('expected success');
     expect(result.skippedRows).toBeGreaterThanOrEqual(1);
   });
+
+  // #008: Hubstaff exports one row per member PER PROJECT when a client/project
+  // breakdown is included — the same member+date can legitimately appear on
+  // multiple rows. These must collapse to one row per member (the downstream
+  // upsert is keyed on worker+date; two rows for the same member+date blow up
+  // with "ON CONFLICT DO UPDATE command cannot affect row a second time").
+  const MULTI_PROJECT_CSV = [
+    'Client,Project,Member,2026-08-01,2026-08-02,Time off,Total worked,Activity',
+    'ABC,Alpha,Alice Smith,1:00:00,2:00:00,0:00:00,3:00:00,80%',
+    'ABC,Beta,Alice Smith,0:30:00,0:00:00,0:00:00,0:30:00,20%',
+    'ABC,Alpha,Bob Reyes,1:00:00,1:00:00,0:00:00,2:00:00,50%',
+  ].join('\n');
+
+  it('collapses same-member+date rows into one summed row', () => {
+    const result = parseHubstaffCsv(MULTI_PROJECT_CSV);
+    if (isParseError(result)) throw new Error('expected success');
+
+    // One row per distinct member, not one per source row.
+    expect(result.members).toHaveLength(2);
+
+    const alice = result.members.find((m) => m.name === 'Alice Smith');
+    expect(alice?.daySeconds['2026-08-01']).toBe(5400); // 1:00:00 + 0:30:00
+    expect(alice?.daySeconds['2026-08-02']).toBe(7200); // 2:00:00 + 0:00:00
+    expect(alice?.totalSeconds).toBe(12600); // 3:00:00 + 0:30:00
+    // Activity is worked-seconds-weighted, not a plain average of 80/20:
+    // (80*10800 + 20*1800) / 12600 = 71.43 → 71.
+    expect(alice?.activityPct).toBe(71);
+
+    const bob = result.members.find((m) => m.name === 'Bob Reyes');
+    expect(bob?.daySeconds['2026-08-01']).toBe(3600);
+    expect(bob?.totalSeconds).toBe(7200);
+    expect(bob?.activityPct).toBe(50);
+  });
 });
