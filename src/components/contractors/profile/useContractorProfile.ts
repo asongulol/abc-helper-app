@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useState, useTransition } from 'react';
 import { useTablist, useToast, useUnsavedGuard } from '@/components/ui';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { RosterWorker } from '@/db/queries/workers';
+import { fullName as formatFullName } from '@/lib/names';
 import {
   assignWorkerCompany,
   getWorkerCompanies,
@@ -14,7 +15,12 @@ import {
   unassignWorkerCompany,
   type WorkerEngagement,
 } from '@/server/actions/contractors';
-import { type ContractType, contractForEdit, type PayBasis } from '@/types/schemas/contractors';
+import {
+  type ContractType,
+  contractForEdit,
+  hireDateRangeError,
+  type PayBasis,
+} from '@/types/schemas/contractors';
 import type { FormState } from './types';
 
 type TabKey = 'profile' | 'pay' | 'personal' | 'portal' | 'docs';
@@ -125,10 +131,7 @@ export function useContractorProfile(
   const dirty = JSON.stringify(form) !== (savedSnapshot ?? JSON.stringify(toForm(worker)));
   useUnsavedGuard({ dirty });
 
-  const fullName = [worker.firstName, worker.middleName, worker.lastName]
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+  const fullName = formatFullName(worker);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once per worker.
   useEffect(() => {
@@ -256,8 +259,10 @@ export function useContractorProfile(
     if (form.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email)) errs.email = 'Invalid email.';
     if (form.workEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.workEmail))
       errs.workEmail = 'Invalid email.';
-    if (form.hireDate && !/^\d{4}-\d{2}-\d{2}$/.test(form.hireDate))
-      errs.hireDate = 'Must be YYYY-MM-DD.';
+    if (form.hireDate) {
+      const hireErr = hireDateRangeError(form.hireDate);
+      if (hireErr) errs.hireDate = hireErr;
+    }
     if (form.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(form.dateOfBirth))
       errs.dateOfBirth = 'Must be YYYY-MM-DD.';
     if (form.weeklyHours !== '' && Number.isNaN(Number(form.weeklyHours)))

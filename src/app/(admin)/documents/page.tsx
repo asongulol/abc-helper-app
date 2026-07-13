@@ -4,6 +4,7 @@ import { DocumentsClient } from '@/components/documents/DocumentsClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchDocuments } from '@/db/queries/documents';
 import { fetchRosterIndex } from '@/db/queries/workers';
+import { fullName } from '@/lib/names';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 
@@ -35,7 +36,7 @@ export default async function DocumentsPage() {
   // builds nameById from worker_companies then sorts alphabetically.
   const nameById = new Map<string, string>();
   for (const w of roster) {
-    const name = [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
+    const name = fullName(w);
     if (name) nameById.set(w.workerId, name);
   }
   const workerOptions = Array.from(nameById, ([id, name]) => ({

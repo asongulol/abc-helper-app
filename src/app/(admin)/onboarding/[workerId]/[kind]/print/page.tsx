@@ -11,6 +11,7 @@ import {
   monthlyFromPeriod,
   renderAgreementParts,
 } from '@/lib/agreements/merge';
+import { fullName } from '@/lib/names';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 import { uuid } from '@/types/schemas/uuid';
@@ -60,13 +61,14 @@ export default async function AdminAgreementPrintPage({
     fetchWorkerLink(supabase, workerId, companyId),
   ]);
   if (!template) notFound();
+  // A well-formed but nonexistent workerId used to render a blank agreement and
+  // auto-print it; 404 instead (#040).
+  if (!worker) notFound();
 
   const row = agreements.find((a) => a.agreementKind === agreementKind) ?? null;
   const sig =
     signatures.find((s) => s.agreementKind === agreementKind && s.status === 'signed') ?? null;
-  const workerName = worker
-    ? [worker.firstName, worker.middleName, worker.lastName].filter(Boolean).join(' ').trim()
-    : '';
+  const workerName = fullName(worker);
 
   const vars: AgreementVars = {
     contractor_name: workerName,

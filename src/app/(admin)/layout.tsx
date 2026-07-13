@@ -5,6 +5,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { type AdminRow, listAdmins } from '@/db/queries/admins';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { fetchRosterIndex } from '@/db/queries/workers';
+import { fullName } from '@/lib/names';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
 
@@ -41,7 +42,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     ]);
     contractors = roster.map((w) => ({
       id: w.workerId,
-      name: [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim(),
+      name: fullName(w),
     }));
     periods = periodRows.map((p) => ({
       id: p.id,

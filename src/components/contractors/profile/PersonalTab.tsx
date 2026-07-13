@@ -27,6 +27,13 @@ const EDUCATION = [
 ] as const;
 const GRAD_YEARS = Array.from({ length: 61 }, (_, i) => String(new Date().getFullYear() - i));
 
+// Hire-date sanity bounds for the native picker (real guard is the schema — #039).
+const HIRE_MIN = '2000-01-01';
+const HIRE_MAX = (() => {
+  const d = new Date();
+  return `${d.getFullYear() + 1}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+})();
+
 // Default shift in Philippine time that mirrors 8:00 AM – 5:00 PM US Eastern.
 const SHIFT_ET_START = '20:00';
 const SHIFT_ET_END = '05:00';
@@ -86,6 +93,8 @@ export function PersonalTab({
             <input
               id="pp-hire"
               type="date"
+              min={HIRE_MIN}
+              max={HIRE_MAX}
               value={form.hireDate}
               onChange={(e) => set('hireDate', e.target.value)}
               disabled={isPending}

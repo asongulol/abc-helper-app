@@ -13,14 +13,17 @@ const form = (fields: Record<string, string | File>) => {
 };
 
 describe('parseDocUploadForm', () => {
-  it('rejects a missing/empty file', () => {
+  it('rejects a missing file', () => {
     expect(parseDocUploadForm(form({ kind: 'resume' }))).toEqual({
       ok: false,
       error: 'Choose a file first.',
     });
+  });
+
+  it('distinguishes a chosen-but-empty file from no file (#038)', () => {
     expect(parseDocUploadForm(form({ kind: 'resume', file: file({ size: 0 }) }))).toEqual({
       ok: false,
-      error: 'Choose a file first.',
+      error: 'File is empty.',
     });
   });
 

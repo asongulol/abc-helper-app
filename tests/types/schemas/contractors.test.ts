@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SaveWorkerProfileSchema } from '@/types/schemas/contractors';
+import { hireDateRangeError, SaveWorkerProfileSchema } from '@/types/schemas/contractors';
 
 // Valid v4 UUID — Zod v4 .uuid()-style checks elsewhere reject the all-1s
 // placeholder, but this module's `uuid()` helper accepts any 8-4-4-4-12 hex id.
@@ -62,5 +62,27 @@ describe('SaveWorkerProfileSchema — Finding #016.2 human error messages', () =
 
   it('accepts a valid profile unchanged', () => {
     expect(SaveWorkerProfileSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('rejects an out-of-range hire date (#039)', () => {
+    const r = SaveWorkerProfileSchema.safeParse({ ...base, hireDate: '1900-01-15' });
+    expect(r.success).toBe(false);
+    const r2 = SaveWorkerProfileSchema.safeParse({ ...base, hireDate: '2099-12-31' });
+    expect(r2.success).toBe(false);
+  });
+});
+
+describe('hireDateRangeError (#039)', () => {
+  const thisYear = new Date().getUTCFullYear();
+  it('rejects typos below 2000 and beyond next year', () => {
+    expect(hireDateRangeError('1900-01-15')).toMatch(/between 2000/);
+    expect(hireDateRangeError('2099-12-31')).toMatch(/between 2000/);
+  });
+  it('accepts a sane date (today) and a near-future hire', () => {
+    expect(hireDateRangeError(`${thisYear}-06-15`)).toBeNull();
+    expect(hireDateRangeError(`${thisYear + 1}-01-01`)).toBeNull();
+  });
+  it('flags a non-ISO string', () => {
+    expect(hireDateRangeError('not-a-date')).toMatch(/ISO date/);
   });
 });
