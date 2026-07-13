@@ -15,6 +15,7 @@ import {
   fetchSessionsList,
   fetchWorkerClients,
   fetchWorkerSessions,
+  findSessionOnDate,
   insertSession,
   insertSessions,
   type PortalSessionRow,
@@ -93,6 +94,7 @@ export async function createSession(args: unknown): Promise<ActionResult> {
     caseRef,
     notes,
     approve,
+    confirmDuplicate,
   } = parsed.data;
 
   const guard = await authGuard(clientId);
@@ -100,6 +102,12 @@ export async function createSession(args: unknown): Promise<ActionResult> {
 
   try {
     const db = await createServerSupabase();
+    if (!confirmDuplicate && (await findSessionOnDate(db, clientId, workerId, sessionDate))) {
+      return {
+        ok: false,
+        error: 'DUPLICATE_SESSION: A session already exists for this contractor on that date.',
+      };
+    }
     await insertSession(db, {
       companyId: clientId,
       workerId,

@@ -38,6 +38,9 @@ export const CreateSessionSchema = z.object({
   /** Admin entry is authoritative — mark approved immediately (so it pays/bills
    *  without a separate review step). Omitted/false ⇒ pending (portal/CSV flow). */
   approve: z.boolean().optional(),
+  /** When true, skip the same-worker/client/date duplicate soft-warn (caller
+   *  already confirmed this is a genuine second visit that day). */
+  confirmDuplicate: z.boolean().optional(),
 });
 export type CreateSessionInput = z.infer<typeof CreateSessionSchema>;
 
@@ -65,6 +68,9 @@ export const CreateContractorSessionSchema = z.object({
   childInitials: z.string().trim().min(1, 'Required').max(12),
   eiid: z.string().trim().min(1, 'Required').max(40),
   notes: z.string().max(1000).nullable().optional(),
+  /** When true, skip the same-client/date duplicate soft-warn (contractor
+   *  already confirmed this is a genuine second visit that day). */
+  confirmDuplicate: z.boolean().optional(),
 });
 export type CreateContractorSessionInput = z.infer<typeof CreateContractorSessionSchema>;
 
