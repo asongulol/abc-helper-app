@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e:time-review": "node e2e/time-review.e2e.mjs",
     "guardrails": "node scripts/guardrails.mjs",
     "check:prod-migrations": "node scripts/check-prod-migrations.mjs",
     "db:guard": "node scripts/assert-local-supabase-target.mjs",

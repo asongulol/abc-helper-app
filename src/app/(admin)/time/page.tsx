@@ -7,9 +7,9 @@ import {
   fetchContractorOptions,
   fetchPeriodEntries,
   fetchRosterLinks,
-  fetchSourceNames,
+  fetchUnpaidEntries,
 } from '@/db/queries/time';
-import { periodFor } from '@/lib/dates/periods';
+import { periodFor, previousPeriod } from '@/lib/dates/periods';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -17,7 +17,11 @@ import { getTrackerCompanyId } from '@/server/company';
 
 export const metadata = { title: 'Time Import — Aaron Anderson E.H.S. LLC' };
 
-export default async function TimePage() {
+export default async function TimePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ start?: string; end?: string; unpaid?: string }>;
+}) {
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
@@ -33,16 +37,25 @@ export default async function TimePage() {
     );
   }
 
+  const sp = await searchParams;
+  const isIsoDate = (s: string | undefined): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  const unpaidMode = sp.unpaid === '1';
   const today = new Date().toISOString().slice(0, 10);
-  const period = periodFor(today);
+
+  // Default review period = the PRECEDING half-month: payroll runs a half-month
+  // in arrears, so the admin works the last unpaid period, not the in-progress
+  // one. An explicit ?start= deep-link (period picker) overrides. periodFor
+  // reconstitutes end+payDate and throws on malformed input.
+  const period = isIsoDate(sp.start) ? periodFor(sp.start) : previousPeriod(today);
 
   const db = await createServerSupabase();
 
-  const [entries, roster, contractorOptions, sourceNamesInPeriod] = await Promise.all([
-    fetchPeriodEntries(db, companyId, period.start, period.end),
+  const [entries, roster, contractorOptions] = await Promise.all([
+    unpaidMode
+      ? fetchUnpaidEntries(db, companyId)
+      : fetchPeriodEntries(db, companyId, period.start, period.end),
     fetchRosterLinks(db, companyId),
     fetchContractorOptions(db, companyId),
-    fetchSourceNames(db, companyId, period.start, period.end),
   ]);
 
   // Each contractor's assigned CLIENT(s) — the invoicing target. Shown per row;
@@ -57,14 +70,16 @@ export default async function TimePage() {
   const rows = groupByContractor(entries);
   const stats = periodStats(period.start, period.end);
 
-  // Find source_names with no matching worker.
+  // Find source_names (from the shown entries) with no matching worker.
   const idx = buildMatchIndex(roster);
-  const unmatchedNames = sourceNamesInPeriod.filter((name) => matchName(name, idx) === null);
+  const sourceNames = [...new Set(entries.map((e) => e.sourceName))];
+  const unmatchedNames = sourceNames.filter((name) => matchName(name, idx) === null);
 
   return (
     <TimeShell
       companyId={companyId}
       initialPeriod={period}
+      unpaidMode={unpaidMode}
       rows={rows}
       periodDays={stats.periodDays}
       workingDays={stats.workingDays}

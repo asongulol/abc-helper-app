@@ -35,6 +35,8 @@ interface TimeApprovalTableProps {
   periodEnd: string;
   periodDays: number;
   workingDays: number;
+  /** Cross-period "all unpaid" view: hide per-period coverage columns/summary. */
+  coverageHidden?: boolean;
   rows: ContractorPeriodRow[];
   /** source_names that have no matching worker in the roster. */
   unmatchedNames: string[];
@@ -50,6 +52,7 @@ export const TimeApprovalTable = ({
   periodEnd,
   periodDays,
   workingDays,
+  coverageHidden = false,
   rows,
   unmatchedNames,
   contractorOptions,
@@ -158,9 +161,10 @@ export const TimeApprovalTable = ({
       {/* Header actions */}
       <div className="card-head" style={{ marginBottom: 12 }}>
         <p className="sub" style={{ margin: 0 }}>
-          {pendingIds.length} pending entr
-          {pendingIds.length === 1 ? 'y' : 'ies'} · {periodDays} days in period · {workingDays}{' '}
-          working days
+          {pendingIds.length} pending entr{pendingIds.length === 1 ? 'y' : 'ies'}
+          {coverageHidden
+            ? ' · spanning multiple periods (per-period coverage hidden)'
+            : ` · ${periodDays} days in period · ${workingDays} working days`}
         </p>
         {rows.length > 0 && (
           <div style={{ display: 'flex', gap: 8 }}>
@@ -218,8 +222,8 @@ export const TimeApprovalTable = ({
             <thead>
               <tr>
                 <th scope="col">Contractor</th>
-                <th scope="col">Days in period</th>
-                <th scope="col">Working days</th>
+                {!coverageHidden && <th scope="col">Days in period</th>}
+                {!coverageHidden && <th scope="col">Working days</th>}
                 <th scope="col">Days worked</th>
                 <th scope="col" title="Time clocked into Hubstaff timer">
                   Tracked (h)
@@ -274,8 +278,8 @@ export const TimeApprovalTable = ({
                           );
                         })()}
                       </td>
-                      <td data-label="Days in period">{periodDays}</td>
-                      <td data-label="Working days">{workingDays}</td>
+                      {!coverageHidden && <td data-label="Days in period">{periodDays}</td>}
+                      {!coverageHidden && <td data-label="Working days">{workingDays}</td>}
                       <td data-label="Days worked">{row.daysWorked}</td>
 
                       {/* Tracked — editable (manual edit-total override). */}
@@ -410,7 +414,7 @@ export const TimeApprovalTable = ({
                     {/* Expansion row for the per-contractor Add Hours panel. */}
                     {isAdding && (
                       <tr style={{ background: '#f8fafc' }}>
-                        <td colSpan={9}>
+                        <td colSpan={coverageHidden ? 7 : 9}>
                           <AddHoursPanel
                             companyId={companyId}
                             workerId={row.workerId}

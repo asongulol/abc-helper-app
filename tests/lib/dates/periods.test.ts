@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isDateInAnyPeriod,
   isWeekday,
   lastDayOfMonth,
   periodDates,
   periodFor,
+  previousPeriod,
   weekdayCount,
 } from '@/lib/dates/periods';
 
@@ -63,6 +65,40 @@ describe('periodDates', () => {
       '2026-02-01',
       '2026-02-02',
     ]);
+  });
+});
+
+describe('previousPeriod — the arrears review default', () => {
+  it('second-half today → the preceding first half of the same month', () => {
+    // Today 07/13 (first half of July) → preceding period is 06/16–06/30.
+    expect(previousPeriod('2026-07-13')).toEqual(periodFor('2026-06-16'));
+  });
+
+  it('first-half today → the preceding second half', () => {
+    // 07/20 is in 07/16–07/31; the one before is 07/01–07/15.
+    expect(previousPeriod('2026-07-20')).toEqual(periodFor('2026-07-01'));
+  });
+
+  it('rolls back across a year boundary', () => {
+    // 01/05 → period 01/01–01/15; the one before is Dec 16–31 of the prior year.
+    expect(previousPeriod('2026-01-05')).toEqual(periodFor('2025-12-31'));
+  });
+});
+
+describe('isDateInAnyPeriod', () => {
+  const ranges = [
+    { periodStart: '2026-06-01', periodEnd: '2026-06-15' },
+    { periodStart: '2026-06-16', periodEnd: '2026-06-30' },
+  ];
+  it('true inside a range, inclusive of both bounds', () => {
+    expect(isDateInAnyPeriod('2026-06-01', ranges)).toBe(true);
+    expect(isDateInAnyPeriod('2026-06-30', ranges)).toBe(true);
+    expect(isDateInAnyPeriod('2026-06-20', ranges)).toBe(true);
+  });
+  it('false outside every range and for an empty list', () => {
+    expect(isDateInAnyPeriod('2026-07-01', ranges)).toBe(false);
+    expect(isDateInAnyPeriod('2026-05-31', ranges)).toBe(false);
+    expect(isDateInAnyPeriod('2026-06-20', [])).toBe(false);
   });
 });
 
