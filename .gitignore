@@ -62,3 +62,6 @@ Thumbs.db
 * [0-9].tsx
 * [0-9].ts
 * [0-9].sql
+
+# E2E screenshot artifacts
+e2e/*.png
