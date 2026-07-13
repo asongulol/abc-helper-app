@@ -160,7 +160,15 @@ site_url = "http://127.0.0.1:3000"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://127.0.0.1:3000"]
+#
+# NOTE: match is exact (full string, including query) for a bare entry, and an
+# origin matching site_url is auto-trusted regardless of path/query — but
+# localhost:3000 != 127.0.0.1:3000 so it gets no such pass, and our portal
+# reset flow always sends `?next=/portal/reset-password`. A bare
+# `/auth/callback` entry does NOT match once that query string is appended
+# (verified empirically against the local GoTrue instance), so both hosts
+# need the `/**` glob form instead of an exact literal path.
+additional_redirect_urls = ["http://127.0.0.1:3000/**", "http://localhost:3000/**"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

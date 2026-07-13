@@ -26,6 +26,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: '/portal', label: 'Home', icon: '🏠', exact: true },
+  { href: '/portal/onboarding', label: 'Onboarding', icon: '📋' },
   { href: '/portal/statements', label: 'Pay slips', icon: '₱' },
   { href: '/portal/time', label: 'Time', icon: '⏱' },
   { href: '/portal/sessions', label: 'Sessions', icon: '🗓' },
@@ -131,8 +132,12 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
 
         <nav className="tabs no-print" aria-label="Portal sections">
           {NAV_ITEMS.map((item) => {
-            // Hide sub-page items until onboarded (Home stays visible).
-            const hidden = !onboarded && item.href !== '/portal';
+            // Onboarding is the mirror image of the other sub-pages: visible only
+            // until the contractor finishes onboarding, then it hides again.
+            const hidden =
+              item.href === '/portal/onboarding'
+                ? onboarded
+                : !onboarded && item.href !== '/portal';
             if (hidden) return null;
             const active = isActive(item);
             const showBadge = item.href === '/portal/docs' && docsBadge > 0;
