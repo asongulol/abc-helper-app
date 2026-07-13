@@ -570,22 +570,42 @@ export const upsertOpenPeriod = async (
 
 export type OpenDraft = { id: string; periodStart: string; periodEnd: string };
 
-/** The employer's most recent OPEN regular draft (the "current draft"), or null. */
+/**
+ * Pure containment resolver: of the given OPEN regular periods, the one whose
+ * [periodStart, periodEnd] window contains `date` (ISO YYYY-MM-DD strings
+ * compare correctly lexicographically), or null if none does. A locked period
+ * never appears in `periods` (callers only pass state='open' rows), so "no
+ * match" also covers the locked-period case (audit #001/#009).
+ */
+export const resolveOpenDraftForDate = (
+  periods: readonly OpenDraft[],
+  date: string,
+): OpenDraft | null => periods.find((p) => date >= p.periodStart && date <= p.periodEnd) ?? null;
+
+/**
+ * The employer's OPEN regular draft whose window contains `date`, or null if
+ * no open period covers it (none exists, or it's locked). Previously picked
+ * the most-recent open draft with no date check at all, which silently paid
+ * sessions into an unrelated period (audit #001/#009); now scoped per-date.
+ */
 export const findCurrentOpenDraft = async (
   db: Db,
   companyId: string,
+  date: string,
 ): Promise<OpenDraft | null> => {
   const { data, error } = await db
     .from('pay_periods')
     .select('id, period_start, period_end')
     .eq('company_id', companyId)
     .eq('kind', 'regular')
-    .eq('state', 'open')
-    .order('period_start', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .eq('state', 'open');
   if (error) throw new Error(`current draft: ${error.message}`);
-  return data ? { id: data.id, periodStart: data.period_start, periodEnd: data.period_end } : null;
+  const periods = (data ?? []).map((d) => ({
+    id: d.id,
+    periodStart: d.period_start,
+    periodEnd: d.period_end,
+  }));
+  return resolveOpenDraftForDate(periods, date);
 };
 
 export type OffCycleBatch = {
