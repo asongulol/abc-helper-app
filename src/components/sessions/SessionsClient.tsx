@@ -119,17 +119,6 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
     });
   };
 
-  const approve = (id: string, status: 'approved' | 'rejected') => {
-    startUpdate(async () => {
-      const res = await setSessionApproval({ clientId, ids: [id], status });
-      if (!res.ok) {
-        notify(res.error, { type: 'error' });
-        return;
-      }
-      reload();
-    });
-  };
-
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -153,6 +142,18 @@ export const SessionsClient = ({ clients, defaultFrom, defaultTo }: Props) => {
       notify(`${res.data.count} session${res.data.count === 1 ? '' : 's'} ${status}.`, {
         type: 'success',
       });
+      reload();
+    });
+  };
+
+  const approve = (id: string, status: 'approved' | 'rejected') => {
+    startUpdate(async () => {
+      const res = await setSessionApproval({ clientId, ids: [id], status });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(`Session ${status}.`, { type: 'success' });
       reload();
     });
   };
