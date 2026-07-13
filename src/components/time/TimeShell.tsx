@@ -6,7 +6,7 @@
  * router.refresh(), and renders the approval table + CSV import card.
  */
 
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useState, useTransition } from 'react';
 import { AddSessionForm } from '@/components/sessions/AddSessionForm';
 import type { PayPeriod } from '@/lib/dates/periods';
@@ -26,6 +26,8 @@ interface ContractorOption {
 interface TimeShellProps {
   companyId: string;
   initialPeriod: PayPeriod;
+  /** Cross-period "all unpaid" view: entries span periods, coverage is hidden. */
+  unpaidMode: boolean;
   rows: ContractorPeriodRow[];
   periodDays: number;
   workingDays: number;
@@ -39,6 +41,7 @@ interface TimeShellProps {
 export const TimeShell = ({
   companyId,
   initialPeriod,
+  unpaidMode,
   rows,
   periodDays,
   workingDays,
@@ -48,7 +51,9 @@ export const TimeShell = ({
   assignedClients,
 }: TimeShellProps) => {
   const router = useRouter();
-  const [period, setPeriod] = useState<PayPeriod>(initialPeriod);
+  const pathname = usePathname();
+  // Server resolves the period from the URL (?start=) — it's the source of truth.
+  const period = initialPeriod;
   const [, startRefresh] = useTransition();
   // The Review & Approve grid is collapsed by default so it isn't distracting
   // and you can't accidentally act on the wrong period — expand to review.
@@ -69,11 +74,14 @@ export const TimeShell = ({
 
   const handlePeriodChange = useCallback(
     (p: PayPeriod) => {
-      setPeriod(p);
-      startRefresh(() => router.refresh());
+      startRefresh(() => router.push(`?start=${p.start}&end=${p.end}`));
     },
     [router],
   );
+
+  const toggleUnpaid = useCallback(() => {
+    startRefresh(() => router.push(unpaidMode ? pathname : '?unpaid=1'));
+  }, [router, unpaidMode, pathname]);
 
   const handleRefresh = useCallback(() => {
     startRefresh(() => router.refresh());
@@ -89,7 +97,16 @@ export const TimeShell = ({
               Review, approve, or add manual hours. Approved time flows to Payroll for calculation.
             </p>
           </div>
-          <PeriodPicker period={period} onChange={handlePeriodChange} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {!unpaidMode && <PeriodPicker period={period} onChange={handlePeriodChange} />}
+            <button
+              type="button"
+              className={unpaidMode ? 'btn sm' : 'btn ghost sm'}
+              onClick={toggleUnpaid}
+            >
+              {unpaidMode ? '← Back to period view' : 'Show all unpaid'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -155,7 +172,8 @@ export const TimeShell = ({
               <span aria-hidden style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
                 {reviewOpen ? '▾' : '▸'}
               </span>
-              Review &amp; Approve — {period.start} – {period.end}
+              Review &amp; Approve —{' '}
+              {unpaidMode ? 'all unpaid periods' : `${period.start} – ${period.end}`}
             </span>
             <span className="sub" style={{ margin: 0, fontWeight: 400, fontSize: 13 }}>
               {pendingCount > 0 ? `${pendingCount} pending` : 'all clear'}
@@ -171,6 +189,7 @@ export const TimeShell = ({
               periodEnd={period.end}
               periodDays={periodDays}
               workingDays={workingDays}
+              coverageHidden={unpaidMode}
               rows={rows}
               unmatchedNames={unmatchedNames}
               contractorOptions={contractorOptions}

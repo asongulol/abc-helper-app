@@ -7,10 +7,34 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { isDateInAnyPeriod } from '@/lib/dates/periods';
 import type { RosterLink } from '@/lib/time/attribution';
 import type { TimeEntryRaw } from '@/lib/time/grouping';
 
 type Db = SupabaseClient<Database>;
+
+const ENTRY_COLS =
+  'id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id';
+
+const mapEntry = (t: {
+  id: string;
+  worker_id: string | null;
+  source_name: string;
+  work_date: string;
+  tracked_seconds: number | string | null;
+  pto_seconds: number | string | null;
+  approval: string;
+  import_batch_id: string | null;
+}): TimeEntryRaw => ({
+  id: t.id,
+  workerId: t.worker_id,
+  sourceName: t.source_name,
+  workDate: t.work_date,
+  trackedSeconds: Number(t.tracked_seconds ?? 0),
+  ptoSeconds: Number(t.pto_seconds ?? 0),
+  approval: t.approval as TimeEntryRaw['approval'],
+  importBatchId: t.import_batch_id,
+});
 
 // ─── Time entries ────────────────────────────────────────────────────────────
 
@@ -23,41 +47,40 @@ export const fetchPeriodEntries = async (
 ): Promise<TimeEntryRaw[]> => {
   const { data, error } = await db
     .from('time_entries')
-    .select(
-      'id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id',
-    )
+    .select(ENTRY_COLS)
     .eq('company_id', companyId)
     .gte('work_date', start)
     .lte('work_date', end)
     .order('work_date', { ascending: true });
   if (error) throw new Error(`time_entries: ${error.message}`);
-  return (data ?? []).map((t) => ({
-    id: t.id,
-    workerId: t.worker_id,
-    sourceName: t.source_name,
-    workDate: t.work_date,
-    trackedSeconds: Number(t.tracked_seconds ?? 0),
-    ptoSeconds: Number(t.pto_seconds ?? 0),
-    approval: t.approval as TimeEntryRaw['approval'],
-    importBatchId: t.import_batch_id,
-  }));
+  return (data ?? []).map(mapEntry);
 };
 
-/** Fetch distinct source_names in a company (for unmatched-name detection). */
-export const fetchSourceNames = async (
-  db: Db,
-  companyId: string,
-  start: string,
-  end: string,
-): Promise<string[]> => {
+/**
+ * Cross-period "unpaid" review set:
+ *   - every PENDING entry (any date), plus
+ *   - APPROVED entries whose work_date is NOT inside a locked or paid pay period
+ *     (i.e. still in an OPEN period — not yet on a run, not yet paid).
+ * Rejected entries are excluded by the query.
+ */
+export const fetchUnpaidEntries = async (db: Db, companyId: string): Promise<TimeEntryRaw[]> => {
   const { data, error } = await db
     .from('time_entries')
-    .select('source_name')
+    .select(ENTRY_COLS)
     .eq('company_id', companyId)
-    .gte('work_date', start)
-    .lte('work_date', end);
-  if (error) throw new Error(`time_entries source_names: ${error.message}`);
-  return [...new Set((data ?? []).map((r) => r.source_name))];
+    .in('approval', ['pending', 'approved'])
+    .order('work_date', { ascending: true });
+  if (error) throw new Error(`time_entries unpaid: ${error.message}`);
+  const rows = (data ?? []).map(mapEntry);
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last) return rows;
+
+  // Approved time already sitting in a locked/paid period is on a run / already
+  // paid — drop it. Pending stays regardless of the period's state. Rows are
+  // ordered by work_date, so first/last bound the span.
+  const closed = await fetchLockedPeriodsInRange(db, companyId, first.workDate, last.workDate);
+  return rows.filter((r) => r.approval === 'pending' || !isDateInAnyPeriod(r.workDate, closed));
 };
 
 /** Upsert time entries (conflict on company_id,source_name,work_date). */

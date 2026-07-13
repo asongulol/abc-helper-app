@@ -72,6 +72,19 @@ export const periodFor = (dateStr: string): PayPeriod => {
   };
 };
 
+/** The semi-monthly period immediately BEFORE the one containing `dateStr`.
+ *  This is the review default: payroll runs a half-month in arrears, so the
+ *  admin works the preceding (last-unpaid) period, not the in-progress one. */
+export const previousPeriod = (dateStr: string): PayPeriod =>
+  periodFor(utcMsToIso(isoToUtcMs(periodFor(dateStr).start) - DAY_MS));
+
+/** True if `dateStr` (YYYY-MM-DD) falls inside any of the given period ranges.
+ *  Lexicographic string compare is correct for zero-padded ISO dates. */
+export const isDateInAnyPeriod = (
+  dateStr: string,
+  ranges: ReadonlyArray<{ periodStart: string; periodEnd: string }>,
+): boolean => ranges.some((r) => dateStr >= r.periodStart && dateStr <= r.periodEnd);
+
 /** Every ISO date from `start` to `end` inclusive. */
 export const periodDates = (start: string, end: string): string[] => {
   const out: string[] = [];
