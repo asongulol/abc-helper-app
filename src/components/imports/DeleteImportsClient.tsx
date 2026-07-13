@@ -38,6 +38,11 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
   const [confirmText, setConfirmText] = useState('');
   // per-batch armed index for the 2nd-click confirm.
   const [armedBatch, setArmedBatch] = useState<number | null>(null);
+  // Locked/paid periods the armed batch's date span overlaps — checked when
+  // arming (unlike date-range delete, batch delete has no override: the server
+  // hard-blocks locked/paid rows unconditionally, so this warns instead of
+  // offering a typed-DELETE gate that would always fail).
+  const [armedBatchOverlap, setArmedBatchOverlap] = useState<RangeDryRun['overlap'] | null>(null);
 
   function armRange() {
     if (!delStart || !delStop) {
@@ -98,8 +103,29 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
     });
   }
 
+  function armBatch(i: number, b: ImportBatchGroup) {
+    if (!b.id) {
+      // No stored batch id — can't be checked or deleted this way; doDeleteBatch
+      // redirects these to the date-range delete on Confirm, same as before.
+      setArmedBatchOverlap(null);
+      setArmedBatch(i);
+      return;
+    }
+    startTransition(async () => {
+      const res = await dryRunDeleteRange({ companyId, start: b.min, stop: b.max });
+      setArmedBatchOverlap(res.ok ? res.data.overlap : []);
+      setArmedBatch(i);
+    });
+  }
+
+  function cancelBatch() {
+    setArmedBatch(null);
+    setArmedBatchOverlap(null);
+  }
+
   function doDeleteBatch(b: ImportBatchGroup) {
     setArmedBatch(null);
+    setArmedBatchOverlap(null);
     if (!b.id) {
       notify(
         'This group has no batch ID stored (legacy or manual data). Use the date-range delete above, covering the dates shown for this batch.',
@@ -367,30 +393,45 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                   <td data-label="Rows">{b.rows}</td>
                   <td className="card-action" style={{ textAlign: 'right' }}>
                     {armedBatch === i ? (
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          gap: 6,
-                          alignItems: 'center',
-                        }}
-                      >
-                        <button
-                          type="button"
-                          className="btn sm"
-                          style={{ background: 'var(--bad)' }}
-                          disabled={pending}
-                          onClick={() => doDeleteBatch(b)}
+                      armedBatchOverlap && armedBatchOverlap.length > 0 ? (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            gap: 6,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            justifyContent: 'flex-end',
+                          }}
                         >
-                          Confirm
-                        </button>
-                        <button
-                          type="button"
-                          className="btn ghost sm"
-                          onClick={() => setArmedBatch(null)}
+                          <span style={{ fontSize: 11, color: 'var(--warn)', fontWeight: 600 }}>
+                            ⚠️ This batch falls in a saved/locked pay period — unlock it first.
+                          </span>
+                          <button type="button" className="btn ghost sm" onClick={cancelBatch}>
+                            Dismiss
+                          </button>
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            gap: 6,
+                            alignItems: 'center',
+                          }}
                         >
-                          Cancel
-                        </button>
-                      </span>
+                          <button
+                            type="button"
+                            className="btn sm"
+                            style={{ background: 'var(--bad)' }}
+                            disabled={pending}
+                            onClick={() => doDeleteBatch(b)}
+                          >
+                            Confirm
+                          </button>
+                          <button type="button" className="btn ghost sm" onClick={cancelBatch}>
+                            Cancel
+                          </button>
+                        </span>
+                      )
                     ) : (
                       <button
                         type="button"
@@ -400,7 +441,7 @@ export const DeleteImportsClient = ({ companyId, batches }: DeleteImportsClientP
                           color: 'var(--bad)',
                         }}
                         disabled={pending}
-                        onClick={() => setArmedBatch(i)}
+                        onClick={() => armBatch(i, b)}
                       >
                         Delete
                       </button>
