@@ -29,7 +29,32 @@
 -- ⚠️ Local/CI only — prod copy hand-applied via MCP (disjoint history).
 -- Security-preserving (same membership semantics) + idempotent (ALTER re-applies
 -- the same expression; SET DEFAULT is a no-op if re-run).
+--
+-- my_clients() is defined here too: it was hand-applied to prod (MCP) and
+-- captured only in audit/repo-to-prod-schema-diff-2026-06-22.sql, never in a
+-- migration — so a from-scratch `db reset`/`db push` failed at this file with
+-- "function my_clients() does not exist" for every environment since this
+-- migration merged. Defining it (verbatim from that prod snapshot; idempotent
+-- CREATE OR REPLACE) before the policy that uses it makes this migration
+-- self-contained and restores a clean reset. Depends only on my_worker_id() +
+-- base tables, both already present at this point in the history.
 -- ============================================================================
+
+create or replace function public.my_clients()
+  returns table(id uuid, name text)
+  language sql
+  stable security definer
+  set search_path to 'public'
+as $function$
+  select c.id, c.name
+  from worker_companies wc
+  join companies c on c.id = wc.company_id
+  where wc.worker_id = public.my_worker_id()
+    and wc.status = 'active'
+    and c.kind = 'client'
+    and c.status = 'active'
+  order by c.name;
+$function$;
 
 alter policy service_sessions_contractor_insert on public.service_sessions
   with check (
