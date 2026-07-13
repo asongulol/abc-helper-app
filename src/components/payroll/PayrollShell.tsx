@@ -8,6 +8,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
@@ -131,6 +132,9 @@ export const PayrollShell = ({
   const idPeriodStart = useId();
   const idFxRef = useId();
   const { notify } = useToast();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [periods, setPeriods] = useState<PeriodSummaryRow[]>(initialPeriods);
   const [showFinished, setShowFinished] = useState(false);
   // The statements table collapses to a summary to cut clutter; it auto-expands
@@ -242,6 +246,19 @@ export const PayrollShell = ({
     if (b.payDate) setPayDate(b.payDate);
   }, []);
 
+  // #030: restore the batch named in `?batch=` on first load (fires once). Works
+  // for every entry point since it just seeds the period window; loadSaved does
+  // the rest.
+  const batchRestored = useRef(false);
+  useEffect(() => {
+    if (batchRestored.current) return;
+    batchRestored.current = true;
+    const id = searchParams.get('batch');
+    if (!id) return;
+    const b = initialPeriods.find((p) => p.id === id);
+    if (b) selectBatch(b);
+  }, [searchParams, initialPeriods, selectBatch]);
+
   // Load saved draft / snapshot for the current period
   const loadSaved = useCallback(async () => {
     const periodRow = periods.find(
@@ -265,6 +282,18 @@ export const PayrollShell = ({
   useEffect(() => {
     loadSaved();
   }, [loadSaved]);
+
+  // #030: keep `?batch=` in sync with whichever saved batch is loaded, so a
+  // refresh returns here. Cleared when viewing an unsaved (open) window. Only
+  // re-sync when the loaded batch changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sync URL from state only
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (currentPeriod) params.set('batch', currentPeriod.id);
+    else params.delete('batch');
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [currentPeriod]);
 
   // Deep-link from Process & Pay's "Unlock": once the locked period has loaded,
   // open the unlock modal automatically (fires once). Paid periods can't be

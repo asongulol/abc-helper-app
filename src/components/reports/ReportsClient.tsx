@@ -14,6 +14,7 @@
  * History and Activity blocks fetch lazily per pick.
  */
 
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Fragment, useEffect, useState, useTransition } from 'react';
 import { StatTile } from '@/components/overview/StatTile';
 import { ContractorPicker } from '@/components/ui';
@@ -78,12 +79,32 @@ export const ReportsClient = ({ companyId, data }: Props) => {
   const { periods, grandNet, grandUsd, grandUnpaid } = data;
 
   // ---- Payout-by-period Year/Month filter (default = current month + year) --
+  // #014: mirror the filter into the URL so refresh/share keeps your place
+  // (parity with Audit Log). `?y=`/`?m=` present-but-empty means "All"; absent
+  // falls back to the current year/month.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const now = new Date();
-  const [fYears, setFYears] = useState<Set<string>>(() => new Set([String(now.getFullYear())]));
-  const [fMonths, setFMonths] = useState<Set<string>>(
-    () => new Set([String(now.getMonth() + 1).padStart(2, '0')]),
-  );
+  const [fYears, setFYears] = useState<Set<string>>(() => {
+    const y = searchParams.get('y');
+    return new Set(y != null ? y.split(',').filter(Boolean) : [String(now.getFullYear())]);
+  });
+  const [fMonths, setFMonths] = useState<Set<string>>(() => {
+    const m = searchParams.get('m');
+    return new Set(
+      m != null ? m.split(',').filter(Boolean) : [String(now.getMonth() + 1).padStart(2, '0')],
+    );
+  });
   const [openKey, setOpenKey] = useState<string | null>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sync URL from state only
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('y', [...fYears].join(','));
+    params.set('m', [...fMonths].join(','));
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [fYears, fMonths]);
 
   const yearsAvail = [...new Set(periods.map((p) => (p.start || '').slice(0, 4)).filter(Boolean))]
     .sort()
