@@ -9,7 +9,7 @@
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -34,6 +34,7 @@ import {
   lockPeriod,
   openOffCycleBatch,
   restorePaymentsSnapshot,
+  shouldAutoRecalcDraft,
   unlockPeriod,
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
@@ -140,6 +141,8 @@ export const PayrollShell = ({
   // The statements table collapses to a summary to cut clutter; it auto-expands
   // after a Calculate so the result is visible.
   const [tableOpen, setTableOpen] = useState(false);
+  // Statements table sort — name only, ascending by default (1 = asc, -1 = desc).
+  const [nameDir, setNameDir] = useState<1 | -1>(1);
 
   // Current period state
   const [periodStart, setPeriodStart] = useState(defaultPeriod.start);
@@ -306,8 +309,10 @@ export const PayrollShell = ({
     }
   }, [autoUnlock, currentPeriod]);
 
-  // Calculate
-  const handleCalculate = async (skipConfirm = false) => {
+  // Calculate. `auto` = the one-shot recompute of a carried-over clone on open;
+  // it skips the confirm (a pristine clone has nothing to lose) and shows a toast
+  // that explains why the amounts just changed.
+  const handleCalculate = async (skipConfirm = false, auto = false) => {
     // Show destructive-recalc confirm if there are overrides
     const adjusted = (rows ?? []).filter(
       (r) =>
@@ -359,7 +364,12 @@ export const PayrollShell = ({
           ? { periodId: res.data.periodId, rows: res.data.priorSnapshot }
           : null,
       );
-      if (ua.length > 0 || ul.length > 0 || snr.length > 0) {
+      if (auto) {
+        notify(
+          "These amounts were carried over from the previous period — recalculated from this period's tracked hours.",
+          { type: 'info' },
+        );
+      } else if (ua.length > 0 || ul.length > 0 || snr.length > 0) {
         notify('Calculation complete with warnings — see banners above.', {
           type: 'warn',
         });
@@ -376,6 +386,33 @@ export const PayrollShell = ({
       setBusy(false);
     }
   };
+
+  // A legacy sibling app (shared prod DB) seeds a new regular period by cloning
+  // the previous period's amounts, so this screen would otherwise show last
+  // period's figures until Recalculate is pressed. Recompute ONCE from this
+  // period's own tracked hours. The server decision is gated on the durable
+  // `recalculate` audit event, so it fires at most once per period and never
+  // overwrites edits made after that first calculate.
+  const autoRecalcedRef = useRef<Set<string>>(new Set());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: handleCalculate is intentionally excluded — the per-mount ref plus the server audit-event guard already prevent any re-run.
+  useEffect(() => {
+    const pid = currentPeriod?.id;
+    if (
+      !pid ||
+      busy ||
+      currentPeriod?.state !== 'open' ||
+      currentPeriod?.kind !== 'regular' ||
+      rows === null ||
+      rows.length === 0 ||
+      autoRecalcedRef.current.has(pid)
+    )
+      return;
+    autoRecalcedRef.current.add(pid);
+    (async () => {
+      const chk = await shouldAutoRecalcDraft({ companyId, periodId: pid });
+      if (chk.ok && chk.data.auto) await handleCalculate(true, true);
+    })();
+  }, [currentPeriod, rows, busy, companyId]);
 
   // F6: restore the snapshot captured before the last recalc.
   const handleUndoRecalc = async () => {
@@ -596,6 +633,20 @@ export const PayrollShell = ({
     0,
   );
   const totalUsdCents = usdReference(centavos(totalNetCentavos), fx);
+
+  // Display order only (editing/patchRow still keys off `rows` by workerId).
+  const sortedRows = useMemo(
+    () =>
+      (rows ?? []).slice().sort(
+        (a, b) =>
+          nameDir *
+          (a.displayName || a.name).localeCompare(b.displayName || b.name, undefined, {
+            sensitivity: 'base',
+          }),
+      ),
+    [rows, nameDir],
+  );
+
   const isOpen = !currentPeriod || currentPeriod.state === 'open';
   const isLocked = currentPeriod?.state === 'locked';
   const isPaid = currentPeriod?.state === 'paid';
@@ -1018,7 +1069,19 @@ export const PayrollShell = ({
                   <table aria-label="Pay statements">
                     <thead>
                       <tr>
-                        <th scope="col">Contractor</th>
+                        <th
+                          scope="col"
+                          aria-sort={nameDir === 1 ? 'ascending' : 'descending'}
+                          style={{ userSelect: 'none' }}
+                        >
+                          <button
+                            type="button"
+                            className="th-sort"
+                            onClick={() => setNameDir((d) => (d === 1 ? -1 : 1))}
+                          >
+                            Contractor{nameDir === 1 ? ' ▲' : ' ▼'}
+                          </button>
+                        </th>
                         <th scope="col">Worked h</th>
                         <th scope="col">Exp h</th>
                         <th scope="col">Ratio</th>
@@ -1036,7 +1099,7 @@ export const PayrollShell = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r) => {
+                      {sortedRows.map((r) => {
                         const usdRef = usdReference(
                           r.netPhp != null ? centavos(Math.round(r.netPhp * 100)) : null,
                           fx,

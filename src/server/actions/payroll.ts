@@ -28,6 +28,7 @@ import {
   fetchOffCycleItemsForWorkerPeriod,
   fetchPeriodIdsForPayments,
   fetchPeriodSummaries,
+  fetchPreviousRegularPeriodId,
   fetchProcessPayments,
   fetchRates,
   fetchRoster,
@@ -35,6 +36,7 @@ import {
   findCurrentOpenDraft,
   findOrCreateOffCycleBatch,
   findPeriod,
+  hasInAppRecalc,
   insertOffCycleItems,
   markPaymentsPaid,
   markPaymentsUnpaid,
@@ -64,6 +66,7 @@ import { miscTotal } from '@/lib/pay/calc';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { payModelFor } from '@/lib/pay/expected-hours';
 import { resolveRate } from '@/lib/pay/rates';
+import { isCarriedOverClone } from '@/lib/payroll/carried-over';
 import { centavosToPhp, phpToCentavos } from '@/lib/payroll/mappers';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -284,6 +287,48 @@ export async function getSavedPayments(args: {
       ok: false,
       error: humanizeError(err, 'Lookup failed.'),
     };
+  }
+}
+
+/* ---------- Carried-over draft auto-recalc decision ---------- */
+
+/**
+ * Should this open regular draft be auto-recalculated on open?
+ *
+ * A legacy sibling app that shares this prod DB seeds a new period by cloning the
+ * previous period's payment rows, so the recalculate screen shows last period's
+ * amounts (misleading) until this app recomputes from the period's own hours. We
+ * recompute ONCE. The trigger is gated on the durable `recalculate` audit event
+ * (`hasInAppRecalc`) so it never runs a second time and can never overwrite edits
+ * made after the first calculate; the carried-over check scopes it to real clones
+ * and backstops a best-effort audit-write that was missed.
+ */
+export async function shouldAutoRecalcDraft(args: {
+  companyId: string;
+  periodId: string;
+}): Promise<ActionResult<{ auto: boolean }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const { data: pp } = await db
+      .from('pay_periods')
+      .select('period_start, period_end, state, kind')
+      .eq('id', args.periodId)
+      .maybeSingle();
+    if (pp?.state !== 'open' || pp.kind !== 'regular') return { ok: true, data: { auto: false } };
+    // Already calculated in this app → never auto-recalc again (protects edits).
+    if (await hasInAppRecalc(db, args.companyId, pp.period_start, pp.period_end))
+      return { ok: true, data: { auto: false } };
+    const current = await fetchSavedPayments(db, args.periodId);
+    if (current.length === 0) return { ok: true, data: { auto: false } };
+    const prevId = await fetchPreviousRegularPeriodId(db, args.companyId, pp.period_start);
+    const previous = prevId ? await fetchSavedPayments(db, prevId) : [];
+    return { ok: true, data: { auto: isCarriedOverClone(current, previous) } };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Auto-recalc check failed.') };
   }
 }
 
