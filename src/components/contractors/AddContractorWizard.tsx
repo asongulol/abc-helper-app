@@ -88,6 +88,13 @@ const EMPTY: FormState = {
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Hire-date sanity bounds for the native picker (real guard is the schema — #039).
+const HIRE_MIN = '2000-01-01';
+const HIRE_MAX = (() => {
+  const d = new Date();
+  return `${d.getFullYear() + 1}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+})();
 const checkRow = {
   display: 'flex',
   gap: 6,
@@ -498,6 +505,8 @@ export function AddContractorWizard({
           <Field label="Hire date *">
             <input
               type="date"
+              min={HIRE_MIN}
+              max={HIRE_MAX}
               value={form.hireDate}
               onChange={(e) => set('hireDate', e.target.value)}
             />

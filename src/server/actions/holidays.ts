@@ -8,6 +8,7 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchHolidaysConfig, updateHolidaysConfig } from '@/db/queries/holidays';
+import { humanizeError } from '@/lib/errors';
 import type { Holiday, HolidaysConfig } from '@/lib/pay/holidays';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -36,7 +37,7 @@ export async function loadHolidays(): Promise<Result<{ config: HolidaysConfig }>
     const config = await fetchHolidaysConfig(db, scope.companyId);
     return { ok: true, data: { config } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Load failed.' };
+    return { ok: false, error: humanizeError(e, 'Load failed.') };
   }
 }
 
@@ -79,6 +80,6 @@ export async function saveHolidaysForYear(args: {
     });
     return { ok: true, data: { config } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Save failed.' };
+    return { ok: false, error: humanizeError(e, 'Save failed.') };
   }
 }

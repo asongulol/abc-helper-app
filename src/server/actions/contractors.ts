@@ -17,6 +17,7 @@ import {
   updateWorkerProfile,
 } from '@/db/queries/workers';
 import type { Json } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import { saveRate } from '@/server/actions/payroll';
 import { type ActionResult, createPortalLogin } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -79,7 +80,7 @@ export async function addContractor(args: unknown): Promise<ActionResult<{ worke
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Create failed.',
+      error: humanizeError(err, 'Create failed.'),
     };
   }
 }
@@ -179,7 +180,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Save failed.',
+      error: humanizeError(err, 'Save failed.'),
     };
   }
 }
@@ -214,7 +215,7 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Status update failed.',
+      error: humanizeError(err, 'Status update failed.'),
     };
   }
 }
@@ -270,7 +271,7 @@ export async function listInvoiceClients(): Promise<ActionResult<ClientOption[]>
     const scoped = admin.isOwner ? clients : clients.filter((c) => admin.companyIds.includes(c.id));
     return { ok: true, data: scoped };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Failed to load clients.' };
+    return { ok: false, error: humanizeError(err, 'Failed to load clients.') };
   }
 }
 
@@ -595,7 +596,7 @@ export async function hireContractor(
     }
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Hire failed.',
+      error: humanizeError(err, 'Hire failed.'),
     };
   }
 }
@@ -628,7 +629,7 @@ export async function setWorkerPhoto(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Failed to set photo.',
+      error: humanizeError(err, 'Failed to set photo.'),
     };
   }
 }
@@ -653,7 +654,7 @@ export async function getWorkerPhotoUrl(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Failed to load photo.',
+      error: humanizeError(err, 'Failed to load photo.'),
     };
   }
 }
@@ -701,7 +702,7 @@ export async function getWorkerCompanies(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Failed to load engagements.',
+      error: humanizeError(err, 'Failed to load engagements.'),
     };
   }
 }
@@ -760,7 +761,7 @@ export async function saveWorkerCompanyLink(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Save failed.',
+      error: humanizeError(err, 'Save failed.'),
     };
   }
 }
@@ -802,7 +803,7 @@ export async function assignWorkerCompany(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Assign failed.',
+      error: humanizeError(err, 'Assign failed.'),
     };
   }
 }
@@ -847,7 +848,7 @@ export async function unassignWorkerCompany(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Remove failed.',
+      error: humanizeError(err, 'Remove failed.'),
     };
   }
 }

@@ -57,6 +57,7 @@ import {
   type UnpaidSessionRow,
 } from '@/db/queries/sessions';
 import { periodFor } from '@/lib/dates/periods';
+import { humanizeError } from '@/lib/errors';
 import { centavos, mulRatioMinor, sumMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { miscTotal } from '@/lib/pay/calc';
@@ -134,7 +135,7 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Rate save failed.',
+      error: humanizeError(err, 'Rate save failed.'),
     };
   }
 }
@@ -153,7 +154,7 @@ export async function getRateHistory(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Lookup failed.',
+      error: humanizeError(err, 'Lookup failed.'),
     };
   }
 }
@@ -187,7 +188,7 @@ export async function calculatePeriodDraft(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Calculate failed.',
+      error: humanizeError(err, 'Calculate failed.'),
     };
   }
 }
@@ -237,7 +238,7 @@ export async function restorePaymentsSnapshot(
     });
     return { ok: true, data: { restored } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Undo failed.' };
+    return { ok: false, error: humanizeError(err, 'Undo failed.') };
   }
 }
 
@@ -258,7 +259,7 @@ export async function getPeriodSummaries(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Lookup failed.',
+      error: humanizeError(err, 'Lookup failed.'),
     };
   }
 }
@@ -281,7 +282,7 @@ export async function getSavedPayments(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Lookup failed.',
+      error: humanizeError(err, 'Lookup failed.'),
     };
   }
 }
@@ -368,7 +369,7 @@ export async function lockPeriod(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Lock failed.',
+      error: humanizeError(err, 'Lock failed.'),
     };
   }
 }
@@ -421,7 +422,7 @@ export async function unlockPeriod(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Unlock failed.',
+      error: humanizeError(err, 'Unlock failed.'),
     };
   }
 }
@@ -543,7 +544,7 @@ export async function updatePaymentRowAction(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Update failed.',
+      error: humanizeError(err, 'Update failed.'),
     };
   }
 }
@@ -579,7 +580,7 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Delete failed.',
+      error: humanizeError(err, 'Delete failed.'),
     };
   }
 }
@@ -620,7 +621,7 @@ export async function deleteAllStatements(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Delete failed.',
+      error: humanizeError(err, 'Delete failed.'),
     };
   }
 }
@@ -643,7 +644,7 @@ export async function getProcessPayments(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Lookup failed.',
+      error: humanizeError(err, 'Lookup failed.'),
     };
   }
 }
@@ -686,7 +687,7 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Mark paid failed.',
+      error: humanizeError(err, 'Mark paid failed.'),
     };
   }
 }
@@ -722,7 +723,7 @@ export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCo
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Mark unpaid failed.',
+      error: humanizeError(err, 'Mark unpaid failed.'),
     };
   }
 }
@@ -764,7 +765,7 @@ export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ marke
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Mark all unpaid failed.',
+      error: humanizeError(err, 'Mark all unpaid failed.'),
     };
   }
 }
@@ -808,7 +809,7 @@ export async function toggleWiseRowLock(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Toggle lock failed.',
+      error: humanizeError(err, 'Toggle lock failed.'),
     };
   }
 }
@@ -845,7 +846,7 @@ export async function getOffCycleEligibleWorkers(args: {
     workers.sort((a, b) => a.name.localeCompare(b.name));
     return { ok: true, data: { workers } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -908,7 +909,7 @@ export async function getSessionsInLockedPeriods(args: {
     }
     return { ok: true, data: { sessions: out } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -938,7 +939,7 @@ export async function getRecentSessions(args: {
     const sessions = await fetchRecentSessionsForWorkers(createServiceClient(), workerIds);
     return { ok: true, data: { sessions } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -955,7 +956,7 @@ export async function getUnpaidSessions(args: {
     const sessions = await fetchUnpaidApprovedSessions(createServiceClient(), args.workerId);
     return { ok: true, data: { sessions } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -974,7 +975,7 @@ export async function getOffCycleItems(args: {
     const items = await fetchOffCycleItemsForWorkerPeriod(db, args.periodId, args.workerId);
     return { ok: true, data: { items } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -1144,7 +1145,7 @@ export async function addOffCyclePayItem(
 
     return { ok: true, data: { netPhp, count: rows.length } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Add off-cycle pay failed.' };
+    return { ok: false, error: humanizeError(err, 'Add off-cycle pay failed.') };
   }
 }
 
@@ -1224,7 +1225,7 @@ export async function getSalariedCatchUpCandidates(args: {
       : [];
     return { ok: true, data: { period, candidates, salariedWorkers } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Lookup failed.' };
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
 
@@ -1373,7 +1374,7 @@ export async function addSalariedCatchUp(
 
     return { ok: true, data: { netPhp, amountPhp: centavosToPhp(amount) } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Add catch-up pay failed.' };
+    return { ok: false, error: humanizeError(err, 'Add catch-up pay failed.') };
   }
 }
 
@@ -1510,7 +1511,7 @@ export async function payApprovedSessions(args: {
       data: { paidInto: 'draft', count: res.count, periodStart: draft.periodStart },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Add to draft failed.' };
+    return { ok: false, error: humanizeError(err, 'Add to draft failed.') };
   }
 }
 
@@ -1542,7 +1543,7 @@ export async function payApprovedSessionsToNextPeriod(args: {
     if (!res.ok) return res;
     return { ok: true, data: { count: res.count, periodStart: p.start } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Add to next period failed.' };
+    return { ok: false, error: humanizeError(err, 'Add to next period failed.') };
   }
 }
 
@@ -1584,7 +1585,7 @@ export async function routeSessionsToOffCycleBatch(args: {
     });
     return { ok: true, data: { batchId: batch.id, count: res.count } };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
+    return { ok: false, error: humanizeError(err, 'Off-cycle batch failed.') };
   }
 }
 
@@ -1625,7 +1626,7 @@ export async function openOffCycleBatch(args: {
       },
     };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Off-cycle batch failed.' };
+    return { ok: false, error: humanizeError(err, 'Off-cycle batch failed.') };
   }
 }
 
@@ -1683,7 +1684,7 @@ export async function removeOffCyclePayItem(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Remove off-cycle pay failed.',
+      error: humanizeError(err, 'Remove off-cycle pay failed.'),
     };
   }
 }

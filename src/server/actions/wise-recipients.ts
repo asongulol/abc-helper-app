@@ -15,6 +15,7 @@
  */
 
 import { createServiceClient } from '@/db/clients/service';
+import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import {
@@ -38,7 +39,7 @@ type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 const ok = <T>(data: T): Result<T> => ({ ok: true, data });
 const fail = <T>(e: unknown): Result<T> => ({
   ok: false,
-  error: e instanceof Error ? e.message : String(e ?? 'Failed'),
+  error: humanizeError(e, 'Failed'),
 });
 
 type WorkerWiseRow = {

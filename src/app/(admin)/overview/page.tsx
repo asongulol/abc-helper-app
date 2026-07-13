@@ -248,17 +248,21 @@ export default async function OverviewPage() {
         <StatTile
           icon="📉"
           label="Coverage gaps"
-          value={coverageGaps.length}
+          value={coverageGaps.measured === 0 ? '—' : coverageGaps.gaps.length}
           sub={
-            coverageGaps.length > 0
-              ? 'contractor(s) under expected hours'
-              : 'All contractors on track'
+            coverageGaps.measured === 0
+              ? 'No coverage targets set'
+              : coverageGaps.gaps.length > 0
+                ? 'contractor(s) under expected hours'
+                : `All ${coverageGaps.measured} on track`
           }
-          tone={coverageGaps.length > 0 ? 'warn' : 'good'}
+          tone={
+            coverageGaps.gaps.length > 0 ? 'warn' : coverageGaps.measured === 0 ? 'neutral' : 'good'
+          }
         />
       </div>
 
-      {coverageGaps.length > 0 && (
+      {coverageGaps.gaps.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
           <b>Coverage gaps — this period</b>
           <div className="sub" style={{ margin: '4px 0 10px' }}>
@@ -283,7 +287,7 @@ export default async function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {coverageGaps.map((g) => (
+                {coverageGaps.gaps.map((g) => (
                   <tr key={g.workerId}>
                     <td>{g.workerName}</td>
                     <td style={{ textAlign: 'right' }}>{g.workedHours.toFixed(1)}h</td>

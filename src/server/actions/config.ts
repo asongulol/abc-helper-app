@@ -16,6 +16,7 @@ import { createServiceClient } from '@/db/clients/service';
 import { companyUsageCounts, parseOnboardingConfig } from '@/db/queries/config';
 import type { Json } from '@/db/types';
 import { EDITABLE_FIELD_KEYS } from '@/lib/config/fields';
+import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import { AGREEMENT_TEMPLATES_TAG, PORTAL_SETTINGS_TAG } from '@/server/config-cache';
@@ -28,7 +29,7 @@ export type ActionResult<T = undefined> = [T] extends [undefined]
 
 const fail = (e: unknown): { ok: false; error: string } => ({
   ok: false,
-  error: e instanceof Error ? e.message : String(e ?? 'Unknown error'),
+  error: humanizeError(e),
 });
 
 const nz = (s: string | null | undefined): string | null => {

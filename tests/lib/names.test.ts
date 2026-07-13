@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { looseKey, nameKey, nameTokens } from '@/lib/names';
+import { fullName, looseKey, nameKey, nameTokens } from '@/lib/names';
+
+describe('fullName (display) — #037 one helper everywhere', () => {
+  it('joins first + middle + last, skipping blanks', () => {
+    expect(fullName({ firstName: 'Maria', middleName: 'Clara', lastName: 'Santos' })).toBe(
+      'Maria Clara Santos',
+    );
+    expect(fullName({ firstName: 'Maria', middleName: null, lastName: 'Santos' })).toBe(
+      'Maria Santos',
+    );
+    expect(fullName({ firstName: 'Cher' })).toBe('Cher');
+    expect(fullName({})).toBe('');
+  });
+});
 
 describe('name keys (legacy nameTokens/nameKey/looseKey ~4313)', () => {
   it('strict key is order- and middle-name-insensitive', () => {

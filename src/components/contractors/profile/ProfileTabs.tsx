@@ -34,6 +34,9 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [] 
           gap: 4,
           marginBottom: 16,
           borderBottom: '1px solid var(--border)',
+          // Scroll the tab row within its own box instead of overflowing the
+          // page at 390px (flex items keep their natural width). (#022)
+          overflowX: 'auto',
         }}
       >
         {tabs.map((t) => (

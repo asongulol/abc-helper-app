@@ -6,7 +6,8 @@ import { getCurrentWorker } from '@/server/auth/worker';
 
 /**
  * Authenticated portal layout — verifies the contractor session and renders
- * the portal shell. Unauthenticated requests redirect to /portal/login.
+ * the portal shell. Unauthenticated requests redirect to /portal/login (the
+ * proxy gate is the first line of defense and carries `?next=` — see proxy.ts).
  */
 export default async function PortalAuthedLayout({ children }: { children: ReactNode }) {
   const worker = await getCurrentWorker();

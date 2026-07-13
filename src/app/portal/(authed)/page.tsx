@@ -36,6 +36,8 @@ function curPeriod(todayISO: string): {
   return { start: iso(16), end: iso(lastDay), pay: `${ny}-${pad(nm)}-15` };
 }
 
+export const metadata = { title: 'Home — Contractor Portal' };
+
 export default async function PortalHomePage() {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');

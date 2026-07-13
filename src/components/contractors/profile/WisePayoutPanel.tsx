@@ -10,6 +10,7 @@
 import { useEffect, useState, useTransition } from 'react';
 import { Badge, Spinner } from '@/components/ui';
 import { useToast } from '@/components/ui/Toast';
+import { fullName } from '@/lib/names';
 import { wiseGetRecipient } from '@/server/actions/wise';
 import {
   addWorkerWiseContact,
@@ -23,9 +24,6 @@ import {
   type WisePayoutState,
 } from '@/server/actions/wise-recipients';
 import { SECTION_H4 } from './types';
-
-const fullName = (s: WisePayoutState): string =>
-  [s.firstName, s.middleName, s.lastName].filter(Boolean).join(' ').trim();
 
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase();
 

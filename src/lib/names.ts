@@ -8,6 +8,17 @@
  * record with an extra middle name still matches.
  */
 
+/**
+ * Canonical worker display name: first + middle + last, blanks skipped.
+ * One helper so every screen shows the same person the same way (was inlined
+ * a dozen places; the roster table used to drop the middle name — #037).
+ */
+export const fullName = (w: {
+  firstName?: string | null;
+  middleName?: string | null;
+  lastName?: string | null;
+}): string => [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
+
 export const nameTokens = (raw: string | null | undefined): string[] => {
   if (!raw) return [];
   const s = String(raw)

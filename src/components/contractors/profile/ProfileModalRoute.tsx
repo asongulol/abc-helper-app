@@ -13,9 +13,9 @@ interface Props {
 }
 
 /**
- * Client wrapper for the intercept route's modal: supplies router-based close
- * (back to the list) and save revalidation. Closing returns to `/contractors`
- * via `router.back()`; saving refreshes so the underlying list reflects edits.
+ * Client wrapper for the intercept route's modal: supplies save revalidation.
+ * ProfilePanel owns close (it unwinds its own Back-guard history entry back to
+ * `/contractors`); saving refreshes so the underlying list reflects edits.
  */
 export function ProfileModalRoute({ worker, companyId, companyName, companies }: Props) {
   const router = useRouter();
@@ -27,7 +27,6 @@ export function ProfileModalRoute({ worker, companyId, companyName, companies }:
       companyId={companyId}
       companyName={companyName}
       companies={companies}
-      onClose={() => router.back()}
       onSaved={(_updated: RosterWorker) => {
         notify('Saved.', { type: 'success' });
         router.refresh();

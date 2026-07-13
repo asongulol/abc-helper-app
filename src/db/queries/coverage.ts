@@ -205,10 +205,12 @@ export const getCoverageGaps = async (
   periodStart: string,
   periodEnd: string,
   underThreshold = 0.6,
-): Promise<CoverageGap[]> => {
+): Promise<{ gaps: CoverageGap[]; measured: number }> => {
   const expectations = await fetchCoverageExpectations(db, companyId, periodStart, periodEnd);
   const expected = expectations.filter((e) => e.expectedHours > 0);
-  if (expected.length === 0) return [];
+  // `measured` = contractors with an expected-hours baseline. 0 means nothing is
+  // being measured — the caller must not read that as "all on track" (#029).
+  if (expected.length === 0) return { gaps: [], measured: 0 };
   const actuals = await fetchActualHours(
     db,
     companyId,
@@ -216,5 +218,5 @@ export const getCoverageGaps = async (
     periodStart,
     periodEnd,
   );
-  return classifyCoverage(expected, actuals, underThreshold);
+  return { gaps: classifyCoverage(expected, actuals, underThreshold), measured: expected.length };
 };

@@ -21,7 +21,9 @@ import {
 } from '@/db/queries/documents';
 import { fetchOwnProfile, fetchPortalSettings, insertMoodCheckin } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
+import { validateProfileFields } from '@/lib/profile/validate';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
@@ -117,6 +119,11 @@ export async function updateOwnProfile(
       : [];
     const allowed = new Set(adminAllowed.filter((f) => SAFE_FIELDS.has(f)));
 
+    const invalid = validateProfileFields(
+      Object.fromEntries(Object.entries(fields).filter(([k]) => allowed.has(k))),
+    );
+    if (invalid) return { ok: false, error: invalid };
+
     const { patch, extra } = buildPatch(fields, allowed);
 
     // workers.first_name / last_name are NOT NULL — buildPatch turns a cleared
@@ -160,7 +167,7 @@ export async function updateOwnProfile(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Update failed.',
+      error: humanizeError(err, 'Update failed.'),
     };
   }
 }
@@ -269,7 +276,7 @@ export async function completeOnboardingTab(args: { tab: string }): Promise<Acti
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Tab completion failed.',
+      error: humanizeError(err, 'Tab completion failed.'),
     };
   }
 }
@@ -324,7 +331,7 @@ export async function advanceFromStage1(): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Advance failed.',
+      error: humanizeError(err, 'Advance failed.'),
     };
   }
 }
@@ -383,7 +390,7 @@ export async function finishOnboarding(): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Finish onboarding failed.',
+      error: humanizeError(err, 'Finish onboarding failed.'),
     };
   }
 }
@@ -535,7 +542,7 @@ export async function signAgreement(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Sign failed.',
+      error: humanizeError(err, 'Sign failed.'),
     };
   }
 }
@@ -629,7 +636,7 @@ export async function countersignAgreement(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Countersign failed.',
+      error: humanizeError(err, 'Countersign failed.'),
     };
   }
 }
@@ -741,7 +748,7 @@ export async function reviewDocument(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Review failed.',
+      error: humanizeError(err, 'Review failed.'),
     };
   }
 }
@@ -835,7 +842,7 @@ export async function resolveMissingDocument(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not update the document.',
+      error: humanizeError(err, 'Could not update the document.'),
     };
   }
 }
@@ -872,7 +879,7 @@ export async function clearMissingDocumentResolution(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not update the document.',
+      error: humanizeError(err, 'Could not update the document.'),
     };
   }
 }
@@ -927,7 +934,7 @@ export async function setSignedDate(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Set signed date failed.',
+      error: humanizeError(err, 'Set signed date failed.'),
     };
   }
 }
@@ -956,7 +963,7 @@ export async function saveMoodCheckin(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not save check-in.',
+      error: humanizeError(err, 'Could not save check-in.'),
     };
   }
 }
@@ -988,7 +995,7 @@ export async function getDocumentSignedUrl(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not open document.',
+      error: humanizeError(err, 'Could not open document.'),
     };
   }
 }
@@ -1036,7 +1043,7 @@ export async function getAdminDocumentUrl(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not open document.',
+      error: humanizeError(err, 'Could not open document.'),
     };
   }
 }
@@ -1105,7 +1112,7 @@ export async function deleteContractorDocument(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Delete failed.',
+      error: humanizeError(err, 'Delete failed.'),
     };
   }
 }
@@ -1135,7 +1142,7 @@ export async function revealMyTools(): Promise<
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Could not reveal tools.',
+      error: humanizeError(err, 'Could not reveal tools.'),
     };
   }
 }
@@ -1151,7 +1158,7 @@ export async function ackMyTools(): Promise<ActionResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Acknowledge failed.',
+      error: humanizeError(err, 'Acknowledge failed.'),
     };
   }
 }

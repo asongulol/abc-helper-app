@@ -21,6 +21,7 @@
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchPeriodIdsForPayments, syncPeriodPaidState } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -112,7 +113,7 @@ export async function getReconcileOverview(
 
     return { ok: true, data: { periods, totalReadySent, pendingPeriods } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: humanizeError(e) };
   }
 }
 
@@ -163,6 +164,6 @@ export async function reconcileAllPending(
 
     return { ok: true, data: { reconciled, periods: pendingPeriods } };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    return { ok: false, error: humanizeError(e) };
   }
 }

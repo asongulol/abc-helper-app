@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
 import { ProfileTabs } from './profile/ProfileTabs';
@@ -12,7 +12,6 @@ type Props = {
   companyName?: string | undefined;
   /** All companies (employer + clients) for the engagements assign-to select. */
   companies?: { id: string; name: string }[] | undefined;
-  onClose: () => void;
   onSaved: (updated: RosterWorker) => void;
 };
 
@@ -21,21 +20,50 @@ type Props = {
  * (`@modal/(.)[workerId]`) on soft navigation. Hard navigation renders
  * `ContractorProfilePage` instead. Both share `useContractorProfile`.
  */
-export function ProfilePanel({
-  worker,
-  companyId,
-  companyName,
-  companies = [],
-  onClose,
-  onSaved,
-}: Props) {
+export function ProfilePanel({ worker, companyId, companyName, companies = [], onSaved }: Props) {
   const p = useContractorProfile(worker, companyId, { onSaved });
   const [pendingClose, setPendingClose] = useState(false);
 
+  // Reflect current dirtiness into the popstate handler without re-binding it.
+  const dirtyRef = useRef(p.dirty);
+  dirtyRef.current = p.dirty;
+  const closingRef = useRef(false);
+  const armedRef = useRef(false);
+
+  // Close the intercept modal. We arm one extra ("sentinel") history entry (see
+  // the effect) so a browser Back is caught while the modal stays mounted, so
+  // unwinding pops TWO entries (sentinel + the modal route) back to the list.
+  const closeModal = useCallback(() => {
+    closingRef.current = true;
+    window.history.go(-2);
+  }, []);
+
   const guardedClose = () => {
     if (p.dirty) setPendingClose(true);
-    else onClose();
+    else closeModal();
   };
+
+  // Guard the browser/OS Back button. App Router unmounts the intercept modal on
+  // popstate without routing through guardedClose, so edits vanish silently
+  // (#018). Arm a sentinel so the first Back lands on it (modal still mounted),
+  // then surface the same unsaved-changes prompt the ×/Esc/backdrop paths use.
+  useEffect(() => {
+    if (!armedRef.current) {
+      window.history.pushState(null, '', window.location.href);
+      armedRef.current = true;
+    }
+    const onPop = () => {
+      if (closingRef.current) {
+        closingRef.current = false;
+        return; // our own closeModal() — let Next render the list
+      }
+      window.history.pushState(null, '', window.location.href); // re-arm
+      if (dirtyRef.current) setPendingClose(true);
+      else closeModal();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [closeModal]);
 
   return (
     <Modal title={p.fullName || 'New contractor'} onClose={guardedClose} maxWidth={720}>
@@ -67,7 +95,7 @@ export function ProfilePanel({
               className="btn danger"
               onClick={() => {
                 setPendingClose(false);
-                onClose();
+                closeModal();
               }}
             >
               Discard changes

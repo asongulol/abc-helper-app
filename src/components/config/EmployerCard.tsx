@@ -30,6 +30,18 @@ const parseOrgId = (raw: string): number | null => {
 };
 
 /**
+ * Validate the Hubstaff org ID field. Blank is allowed (no link); a non-numeric
+ * entry used to be silently discarded to null under a "Saved" toast (#027), so
+ * surface it as an error instead. Must be a positive integer.
+ */
+const orgIdError = (raw: string): string | null => {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  return Number.isInteger(n) && n > 0 ? null : 'Hubstaff org ID must be a positive number.';
+};
+
+/**
  * Employer modal body (manifest 22) — mirrors the legacy CompaniesModal with
  * `kind="employer"`: an "Add an employer (tenant)" card, then the single active
  * employer listed with its details and an inline Edit. The employer is the
@@ -76,6 +88,11 @@ export const EmployerCard = ({ employer }: EmployerCardProps) => {
       toast.notify('Enter a company name.', { type: 'error' });
       return;
     }
+    const orgErr = orgIdError(addOrg);
+    if (orgErr) {
+      toast.notify(orgErr, { type: 'error' });
+      return;
+    }
     startTransition(async () => {
       try {
         const res = await saveEmployer({
@@ -102,6 +119,11 @@ export const EmployerCard = ({ employer }: EmployerCardProps) => {
     if (!editForm || !employer) return;
     if (!editForm.name.trim()) {
       toast.notify("Name can't be empty.", { type: 'error' });
+      return;
+    }
+    const orgErr = orgIdError(editForm.hubstaffOrgId);
+    if (orgErr) {
+      toast.notify(orgErr, { type: 'error' });
       return;
     }
     startTransition(async () => {

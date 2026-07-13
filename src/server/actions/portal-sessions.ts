@@ -10,6 +10,7 @@
 
 import { createServiceClient } from '@/db/clients/service';
 import { fetchWorkerClients, findSessionOnDate, insertSession } from '@/db/queries/sessions';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { CreateContractorSessionSchema } from '@/types/schemas/sessions';
@@ -60,6 +61,6 @@ export async function createContractorSession(args: unknown): Promise<ActionResu
     });
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Could not submit session.' };
+    return { ok: false, error: humanizeError(err, 'Could not submit session.') };
   }
 }

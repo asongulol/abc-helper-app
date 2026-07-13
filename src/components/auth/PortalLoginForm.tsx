@@ -3,6 +3,13 @@
 import Script from 'next/script';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { createBrowserSupabase } from '@/db/clients/browser';
+import { safeNext } from '@/lib/auth/safe-next';
+
+/** Post-login destination from `?next=`, constrained to a portal path (#045). */
+const postLoginDest = (): string => {
+  const n = safeNext(new URLSearchParams(window.location.search).get('next'));
+  return n.startsWith('/portal') && n !== '/portal/login' ? n : '/portal';
+};
 
 /**
  * Contractor portal sign-in — email/password with a self-serve password reset.
@@ -54,7 +61,7 @@ export const PortalLoginForm = () => {
       setBusy(false);
       return;
     }
-    window.location.href = '/portal';
+    window.location.href = postLoginDest();
   };
 
   const reset = async () => {

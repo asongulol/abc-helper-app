@@ -15,6 +15,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { seedOnboardingProgress } from '@/db/queries/onboarding';
 import { decryptWorkerTools } from '@/db/queries/secrets';
+import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
@@ -239,7 +240,7 @@ export async function createPortalLogin(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Create login failed.',
+      error: humanizeError(err, 'Create login failed.'),
     };
   }
 }
@@ -314,7 +315,7 @@ export async function resetPortalPassword(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Reset failed.',
+      error: humanizeError(err, 'Reset failed.'),
     };
   }
 }
@@ -341,7 +342,7 @@ export async function revokePortalLogin(args: { workerId: string }): Promise<Act
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Revoke failed.',
+      error: humanizeError(err, 'Revoke failed.'),
     };
   }
 }
@@ -395,7 +396,7 @@ export async function resendHireEmails(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Resend failed.',
+      error: humanizeError(err, 'Resend failed.'),
     };
   }
 }
@@ -465,7 +466,7 @@ export async function sendToolsEmail(args: { workerId: string }): Promise<Action
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Tools email failed.',
+      error: humanizeError(err, 'Tools email failed.'),
     };
   }
 }
@@ -555,7 +556,7 @@ export async function withdrawOffer(args: { workerId: string }): Promise<ActionR
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Withdraw failed.',
+      error: humanizeError(err, 'Withdraw failed.'),
     };
   }
 }
@@ -660,7 +661,7 @@ export async function deleteContractor(args: {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Delete failed.',
+      error: humanizeError(err, 'Delete failed.'),
     };
   }
 }

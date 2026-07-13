@@ -136,11 +136,39 @@ export const AdminShell = ({
   const signOut = async () => {
     setSigningOut(true);
     try {
-      await createBrowserSupabase().auth.signOut();
+      // Local scope: sign out this device only, not every session open elsewhere. (#031)
+      await createBrowserSupabase().auth.signOut({ scope: 'local' });
     } finally {
       window.location.href = '/login';
     }
   };
+
+  // Back after sign-out can repaint this admin view from the browser's cache —
+  // a live-looking payroll page with a dead session (bfcache, or an HTTP-cached
+  // document on a back/forward nav). Either way the proxy never re-checked auth,
+  // so force a real load, which redirects a signed-out user to /login. Fires only
+  // on cache-served full-document loads (persisted, or navigation type
+  // back_forward), never on a fresh navigate/reload, so there's no loop and
+  // in-app client-side Back is unaffected. (#023)
+  useEffect(() => {
+    // A fresh cache-served back/forward document fires `pageshow` before this
+    // effect attaches, so catch that case by inspecting the navigation type on
+    // mount; `pageshow`/persisted covers a true bfcache restore (listener already
+    // attached from before). Reload re-requests through the proxy, which sends a
+    // signed-out user to /login. navType is 'reload' after reload → no loop.
+    const navType = (
+      performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    )?.type;
+    if (navType === 'back_forward') {
+      window.location.reload();
+      return;
+    }
+    const onShow = (e: PageTransitionEvent) => {
+      if (e.persisted) window.location.reload();
+    };
+    window.addEventListener('pageshow', onShow);
+    return () => window.removeEventListener('pageshow', onShow);
+  }, []);
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
 

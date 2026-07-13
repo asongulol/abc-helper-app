@@ -5,6 +5,8 @@ import { fetchOwnDocuments } from '@/db/queries/portal';
 import { fetchOutstandingDocSlots } from '@/server/actions/portal-docs';
 import { getCurrentWorker } from '@/server/auth/worker';
 
+export const metadata = { title: 'Docs — Contractor Portal' };
+
 export default async function PortalDocsPage() {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');

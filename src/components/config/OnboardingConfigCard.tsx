@@ -299,10 +299,16 @@ export const OnboardingConfigCard = ({ config, onClose }: OnboardingConfigCardPr
                 Expires after{' '}
                 <input
                   type="number"
+                  min={1}
+                  max={120}
                   value={doc.freshness_months ?? ''}
                   onChange={(e) =>
                     updateDoc(i, {
-                      freshness_months: e.target.value === '' ? undefined : Number(e.target.value),
+                      // Clamp to 1–120 months so a stray -5 / 999999999 can't be saved (#044).
+                      freshness_months:
+                        e.target.value === ''
+                          ? undefined
+                          : Math.max(1, Math.min(120, Math.trunc(Number(e.target.value)) || 1)),
                     })
                   }
                   placeholder="—"

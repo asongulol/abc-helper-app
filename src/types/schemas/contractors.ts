@@ -8,6 +8,27 @@ import { uuid } from './uuid';
 
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
+/**
+ * Sanity-check a hire date (YYYY-MM-DD) — rejects typos like 1900 or 2099 that a
+ * native `max` can't stop once the value is typed/pasted (#039). Lower bound
+ * 2000; upper bound one year ahead (future-dated hires are legitimate). ISO
+ * strings compare lexicographically, so no Date parsing is needed for the
+ * bounds. Returns an error message or null; shared by this schema (server) and
+ * the profile form's client-side validate() so the two never drift.
+ */
+export function hireDateRangeError(d: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return 'must be an ISO date (YYYY-MM-DD)';
+  const now = new Date();
+  const maxDate = `${now.getUTCFullYear() + 1}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  return d >= '2000-01-01' && d <= maxDate
+    ? null
+    : 'Hire date must be between 2000 and one year from now.';
+}
+
+const HireDateSchema = IsoDateSchema.refine((d) => hireDateRangeError(d) === null, {
+  message: 'Hire date must be between 2000 and one year from now.',
+});
+
 export const PayoutMethodSchema = z.enum(['wise', 'bpi', 'gcash', 'paymaya', 'paypal']);
 /**
  * Contract types. FT/PT are salaried (expected-hours performance ratio). PHS
@@ -102,7 +123,7 @@ export const SaveWorkerProfileSchema = z
       .or(z.literal(''))
       .transform((v) => v || null),
     mobile: z.string().max(40).nullable(),
-    hireDate: IsoDateSchema.nullable(),
+    hireDate: HireDateSchema.nullable(),
     phAddress: z.string().max(255).nullable(),
     permanentAddress: z.string().max(255).nullable(),
     addressLandmark: z.string().max(255).nullable(),
@@ -205,7 +226,7 @@ export const HireContractorSchema = z
     role: z.string().min(1, 'Role required').max(100),
     ratePhp: z.number().min(0).default(0),
     contractDate: IsoDateSchema.nullable().default(null),
-    hireDate: IsoDateSchema,
+    hireDate: HireDateSchema,
     healthAllowanceEligible: z.boolean().default(true),
     thirteenthMonthEligible: z.boolean().default(true),
     /** Daily shift, stored in Philippine time (HH:MM). */

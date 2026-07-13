@@ -36,8 +36,8 @@ export const parseDocUploadForm = (
   const issuedRaw = form.get('issuedOn');
   const issuedOn = typeof issuedRaw === 'string' && issuedRaw ? issuedRaw : null;
 
-  if (!(file instanceof File) || file.size === 0)
-    return { ok: false, error: 'Choose a file first.' };
+  if (!(file instanceof File)) return { ok: false, error: 'Choose a file first.' };
+  if (file.size === 0) return { ok: false, error: 'File is empty.' };
   if (!VALID_KINDS.has(kind)) return { ok: false, error: 'Unknown document type.' };
   if (!ALLOWED_MIME.has(file.type)) return { ok: false, error: 'File must be a PDF, JPG or PNG.' };
   if (file.size > MAX_BYTES) return { ok: false, error: 'File is too large (max 10 MB).' };

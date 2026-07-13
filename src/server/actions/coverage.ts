@@ -9,6 +9,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -61,7 +62,7 @@ export async function setCoverageTarget(args: unknown): Promise<ActionResult> {
     revalidatePath('/coverage');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+    return { ok: false, error: humanizeError(err, 'Update failed.') };
   }
 }
 
@@ -90,6 +91,6 @@ export async function clearCoverageTarget(args: unknown): Promise<ActionResult> 
     revalidatePath('/coverage');
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Update failed.' };
+    return { ok: false, error: humanizeError(err, 'Update failed.') };
   }
 }

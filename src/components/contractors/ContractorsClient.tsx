@@ -17,6 +17,7 @@ import {
 import type { AnnouncementRow } from '@/db/queries/config';
 import type { RosterWorker } from '@/db/queries/workers';
 import { clientAlias } from '@/lib/clients';
+import { fullName } from '@/lib/names';
 import type { RateRow } from '@/lib/pay/rates';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
 import { setContractorLinkStatus } from '@/server/actions/contractors';
@@ -55,15 +56,6 @@ type RowShape = RosterWorker & {
   _statusLabel: 'active' | 'inactive';
 };
 
-function fullName(w: RosterWorker): string {
-  return [w.firstName, w.middleName, w.lastName].filter(Boolean).join(' ').trim();
-}
-
-/** First + last only — the table column reads cleaner; confirmations use fullName. */
-function tableName(w: RosterWorker): string {
-  return [w.firstName, w.lastName].filter(Boolean).join(' ').trim();
-}
-
 /** Avatar fallback when no photo: initials of the first two words of the name. */
 function initials(name: string): string {
   return (
@@ -71,7 +63,10 @@ function initials(name: string): string {
       .split(/\s+/)
       .filter(Boolean)
       .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? '')
+      // [...w][0] takes the first CODE POINT, not the first UTF-16 unit — an
+      // emoji name ("Beny 😀") otherwise yields a lone surrogate that renders a
+      // broken glyph and trips a hydration mismatch (#024).
+      .map((w) => [...w][0]?.toUpperCase() ?? '')
       .join('') || '?'
   );
 }
@@ -120,7 +115,7 @@ export function ContractorsClient({
         if (r.workerId !== updated.workerId) return r;
         const shaped: RowShape = {
           ...updated,
-          _name: tableName(updated),
+          _name: fullName(updated),
           _statusLabel: isActive(updated) ? 'active' : 'inactive',
         };
         return shaped;
@@ -283,7 +278,13 @@ export function ContractorsClient({
               type="button"
               className="btn ghost sm"
               disabled={busyIds.has(r.workerId)}
-              onClick={() => handleDeactivate(r)}
+              // stopPropagation: the whole row is a link to the profile — without
+              // this the row's onClick also fires, stacking the profile modal on
+              // top of the confirm dialog and burying its Cancel (#006).
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeactivate(r);
+              }}
             >
               Deactivate
             </button>
@@ -292,7 +293,10 @@ export function ContractorsClient({
               type="button"
               className="btn sm"
               disabled={busyIds.has(r.workerId)}
-              onClick={() => handleReactivate(r)}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReactivate(r);
+              }}
             >
               Reactivate
             </button>
@@ -301,7 +305,10 @@ export function ContractorsClient({
             <button
               type="button"
               className="btn danger-outline sm"
-              onClick={() => setDeleteTarget(r)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleteTarget(r);
+              }}
             >
               Delete
             </button>
@@ -323,7 +330,9 @@ export function ContractorsClient({
               the full profile.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* flexWrap keeps this button cluster from forcing page-level horizontal
+              scroll at 390px — it wraps onto its own lines instead (#022). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <label
               style={{
                 fontSize: 13,
@@ -475,7 +484,7 @@ function isActive(w: RosterWorker): boolean {
 function buildRows(roster: RosterWorker[]): RowShape[] {
   return roster.map((w) => ({
     ...w,
-    _name: tableName(w),
+    _name: fullName(w),
     _statusLabel: isActive(w) ? ('active' as const) : ('inactive' as const),
   }));
 }

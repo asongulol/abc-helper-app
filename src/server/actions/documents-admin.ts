@@ -14,6 +14,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
+import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -74,7 +75,7 @@ export async function addDocument(input: AddDocumentInput): Promise<ActionResult
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'Add failed.',
+      error: humanizeError(err, 'Add failed.'),
     };
   }
 }
