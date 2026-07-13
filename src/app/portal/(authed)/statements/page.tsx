@@ -4,6 +4,8 @@ import { createServerSupabase } from '@/db/clients/server';
 import { fetchOwnPayments } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 
+export const metadata = { title: 'Pay slips — Contractor Portal' };
+
 export default async function PortalStatementsPage() {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');

@@ -32,6 +32,13 @@ export const AdminLoginForm = () => {
   const [emailOpen, setEmailOpen] = useState(isLocalStack);
 
   const signInWithGoogle = async () => {
+    // On the local stack Google is disabled; signInWithOAuth would redirect the
+    // whole tab to a raw JSON 400 (the SDK navigates before it can error). Keep
+    // the failure in-app instead. Prod has Google wired, so it proceeds there. (#032)
+    if (isLocalStack) {
+      setErr('Google sign-in isn’t enabled on the local stack — use email below.');
+      return;
+    }
     setBusy('google');
     setErr('');
     const supabase = createBrowserSupabase();

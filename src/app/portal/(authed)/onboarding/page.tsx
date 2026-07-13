@@ -16,6 +16,8 @@ const REQUIRED_KINDS: AgreementKind[] = [
   'baa',
 ];
 
+export const metadata = { title: 'Onboarding — Contractor Portal' };
+
 export default async function PortalOnboardingPage() {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');

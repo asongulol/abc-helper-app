@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { DocReminderOverlay } from './DocReminderOverlay';
-import { FromNewYork, nyHourNow, skyPhase } from './FromNewYork';
+import { FromNewYork } from './FromNewYork';
 import { type HomePay, PortalPayActivity } from './PortalPayActivity';
 import { ToolsPopup } from './ToolsPopup';
 
@@ -125,8 +125,17 @@ export const PortalDashboard = ({
     : '';
   const greetTL =
     phHour < 12 ? 'Magandang umaga' : phHour < 18 ? 'Magandang hapon' : 'Magandang gabi';
-  const nyPh = skyPhase(mounted ? nyHourNow() : 9);
-  const greetEmoji = nyPh.night ? '🌙' : '☀️';
+  // Icon + subtitle key to Manila (the contractor's own clock), consistent with
+  // the greeting text. The "From New York" panel below carries NY's clock. (#036)
+  const greetEmoji = phHour >= 6 && phHour < 18 ? '☀️' : '🌙';
+  const greetSub =
+    phHour < 5
+      ? 'Rest easy — the day will keep.'
+      : phHour < 12
+        ? 'Hope your morning is off to a good start.'
+        : phHour < 18
+          ? 'Hope your afternoon is going well.'
+          : 'Winding down for the evening.';
   const initials =
     (greetName || '?')
       .trim()
@@ -163,7 +172,7 @@ export const PortalDashboard = ({
             {greetName ? `, ${greetName}` : ''} {greetEmoji}
           </h2>
           <div className="sub" style={{ margin: '1px 0 0' }}>
-            {nyPh.sign}
+            {greetSub}
           </div>
         </div>
       </div>

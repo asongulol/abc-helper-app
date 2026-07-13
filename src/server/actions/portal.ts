@@ -23,6 +23,7 @@ import { fetchOwnProfile, fetchPortalSettings, insertMoodCheckin } from '@/db/qu
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
+import { validateProfileFields } from '@/lib/profile/validate';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
@@ -117,6 +118,11 @@ export async function updateOwnProfile(
       ? (settings.editable_fields as string[])
       : [];
     const allowed = new Set(adminAllowed.filter((f) => SAFE_FIELDS.has(f)));
+
+    const invalid = validateProfileFields(
+      Object.fromEntries(Object.entries(fields).filter(([k]) => allowed.has(k))),
+    );
+    if (invalid) return { ok: false, error: invalid };
 
     const { patch, extra } = buildPatch(fields, allowed);
 

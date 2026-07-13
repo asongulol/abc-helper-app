@@ -77,7 +77,9 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
   const signOut = async () => {
     setSigningOut(true);
     try {
-      await createBrowserSupabase().auth.signOut();
+      // Local scope: sign out this device only, not every session the contractor
+      // has open elsewhere (a global sign-out killed their phone silently). (#031)
+      await createBrowserSupabase().auth.signOut({ scope: 'local' });
     } finally {
       window.location.href = '/portal/login';
     }

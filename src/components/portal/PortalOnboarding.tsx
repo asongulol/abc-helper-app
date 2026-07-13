@@ -115,11 +115,13 @@ export const PortalOnboarding = ({
 
   const currentStage = progress?.current_stage ?? 'stage1_sign';
   const isComplete = !!progress?.completed_at && currentStage === 'complete';
-  const stagesDone = progress
-    ? (progress.stage1_complete ? 1 : 0) +
-      (progress.stage2_complete ? 1 : 0) +
-      (progress.stage3_complete ? 1 : 0)
-    : 0;
+  // A stage only reads as "done" once every prior stage is done too. Guards the
+  // contradictory "Stage 2 ✓ Done" shown above "Finish Stage 1 first." when a
+  // legacy row has out-of-order flags (stage1=f, stage2=t) — #015.
+  const s1done = !!progress?.stage1_complete;
+  const s2done = s1done && !!progress?.stage2_complete;
+  const s3done = s2done && !!progress?.stage3_complete;
+  const stagesDone = (s1done ? 1 : 0) + (s2done ? 1 : 0) + (s3done ? 1 : 0);
 
   // --- canvas drawing helpers ---
   const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -307,7 +309,7 @@ export const PortalOnboarding = ({
           }}
         >
           <h3>Stage 1 — Sign Agreements</h3>
-          {progress?.stage1_complete && <Badge tone="good">Done</Badge>}
+          {s1done && <Badge tone="good">Done</Badge>}
         </div>
         <p className="sub">Sign each agreement in order.</p>
 
@@ -391,10 +393,10 @@ export const PortalOnboarding = ({
           }}
         >
           <h3>Stage 2 — Complete Profile</h3>
-          {progress?.stage2_complete && <Badge tone="good">Done</Badge>}
+          {s2done && <Badge tone="good">Done</Badge>}
         </div>
-        {!progress?.stage1_complete && <p className="sub">Finish Stage 1 first.</p>}
-        {progress?.stage1_complete && (
+        {!s1done && <p className="sub">Finish Stage 1 first.</p>}
+        {s1done && (
           <>
             <p className="sub">Fill in each section then mark it complete.</p>
             <div
@@ -450,10 +452,10 @@ export const PortalOnboarding = ({
           }}
         >
           <h3>Stage 3 — Documents</h3>
-          {progress?.stage3_complete && <Badge tone="good">Done</Badge>}
+          {s3done && <Badge tone="good">Done</Badge>}
         </div>
-        {!progress?.stage2_complete && <p className="sub">Finish Stage 2 first.</p>}
-        {progress?.stage2_complete && !progress.stage3_complete && (
+        {!s2done && <p className="sub">Finish Stage 2 first.</p>}
+        {s2done && !s3done && (
           <>
             <p className="sub">
               Upload your required documents (resume, diploma, NBI clearance, government ID — front
@@ -470,7 +472,7 @@ export const PortalOnboarding = ({
             </button>
           </>
         )}
-        {progress?.stage2_complete && progress.stage3_complete && (
+        {s3done && (
           <p className="sub" style={{ color: 'var(--good)' }}>
             All documents approved.
           </p>

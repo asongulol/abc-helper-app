@@ -5,6 +5,8 @@ import { fetchOwnProfile } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { getCachedPortalSettings } from '@/server/config-cache';
 
+export const metadata = { title: 'Profile — Contractor Portal' };
+
 export default async function PortalProfilePage() {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');

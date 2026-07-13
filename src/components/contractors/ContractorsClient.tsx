@@ -330,7 +330,9 @@ export function ContractorsClient({
               the full profile.
             </p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* flexWrap keeps this button cluster from forcing page-level horizontal
+              scroll at 390px — it wraps onto its own lines instead (#022). */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <label
               style={{
                 fontSize: 13,

@@ -119,9 +119,17 @@ export const HolidaysCard = () => {
   const handleAdd = () => {
     const date = addDateRef.current?.value ?? '';
     const name = addNameRef.current?.value?.trim() ?? '';
-    if (!date || !name) return;
+    // Previously both of these no-op'd silently (#026) — say why nothing happened.
+    if (!date || !name) {
+      notify('Enter both a date and a name for the holiday.', { type: 'warn' });
+      return;
+    }
     if (date.slice(0, 4) !== String(state.year)) {
       notify(`Pick a date in ${state.year}.`, { type: 'warn' });
+      return;
+    }
+    if (state.holidays.some((h) => h.date === date)) {
+      notify('That date is already in the list.', { type: 'warn' });
       return;
     }
     dispatch({ type: 'add', holiday: { date, name } });
@@ -129,7 +137,14 @@ export const HolidaysCard = () => {
     if (addNameRef.current) addNameRef.current.value = '';
   };
 
-  const handleSave = () =>
+  const handleSave = () => {
+    // Holidays feed the payroll expected-hours calc — confirm before committing (#026).
+    if (
+      !window.confirm(
+        `Save ${state.holidays.length} holiday(s) for ${state.year}? This changes the expected working hours payroll uses for ${state.year}.`,
+      )
+    )
+      return;
     startSaving(async () => {
       const res = await saveHolidaysForYear({ year: state.year, holidays: state.holidays });
       if (!res.ok) {
@@ -139,6 +154,7 @@ export const HolidaysCard = () => {
       setConfig(res.data.config); // re-syncs the year list and clears dirty
       notify(`Saved ${state.year} holidays.`, { type: 'success' });
     });
+  };
 
   const yearOptions = Array.from({ length: 5 }, (_, i) => currentYear - 1 + i);
 
@@ -147,8 +163,9 @@ export const HolidaysCard = () => {
       <p className="sub">
         Holidays reduce expected working hours by one day per occurrence (8h FT / 4h PT). A holiday
         landing on a weekend is observed on the closest working day — Saturday → the Friday before,
-        Sunday → the Monday after. <b>Saved per year and applied to payroll</b> — a year you never
-        save falls back to the standard PH holidays.
+        Sunday → the Monday after. <b>Saved per year and applied to payroll.</b> A year you never
+        save falls back to a standard default set (US federal holidays) — edit any year and Save to
+        set your own.
       </p>
 
       <div className="row" style={{ alignItems: 'center', marginBottom: 12 }}>

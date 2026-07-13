@@ -72,7 +72,14 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
         ),
       );
     }
-    return NextResponse.redirect(new URL(isPortal ? PORTAL_LOGIN : ADMIN_LOGIN, request.url));
+    if (isPortal) {
+      // Preserve the requested portal path so login can return the contractor
+      // there instead of always landing on Home (#045).
+      const loginUrl = new URL(PORTAL_LOGIN, request.url);
+      loginUrl.searchParams.set('next', pathname + request.nextUrl.search);
+      return NextResponse.redirect(loginUrl);
+    }
+    return NextResponse.redirect(new URL(ADMIN_LOGIN, request.url));
   }
 
   // Role resolution (RLS lets each user see only their own membership rows).
