@@ -13,6 +13,7 @@ import { type Centavos, centavos, majorToMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
 import type { PaymentDraft, RosterRow, TimeEntryRow } from '@/lib/payroll/mappers';
+import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
 
@@ -1142,6 +1143,10 @@ export const fetchPaymentDetail = async (
   db: Db,
   paymentId: string,
 ): Promise<PaymentDetail | null> => {
+  // Route params can be anything a user types in the URL; a non-UUID id would
+  // otherwise hit Postgres and throw "invalid input syntax for type uuid".
+  // Treat that the same as "not found" so callers' existing notFound() runs.
+  if (!uuid().safeParse(paymentId).success) return null;
   const { data, error } = await db
     .from('payments')
     .select(

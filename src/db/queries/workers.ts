@@ -7,6 +7,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cache } from 'react';
 import type { Database } from '@/db/types';
+import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
 
@@ -198,6 +199,9 @@ export const fetchWorkerLink = async (
   workerId: string,
   companyId: string,
 ): Promise<RosterWorker | null> => {
+  // A non-UUID route param would otherwise throw a raw Postgres cast error;
+  // treat it as "no such worker" so callers' existing notFound() runs.
+  if (!uuid().safeParse(workerId).success) return null;
   const SEL2 =
     'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 

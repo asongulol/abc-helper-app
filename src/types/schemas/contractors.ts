@@ -92,9 +92,9 @@ export const SaveWorkerProfileSchema = z
     workerId: uuid(),
     companyId: uuid(),
     // worker table fields
-    firstName: z.string().min(1).max(80),
+    firstName: z.string().min(1).max(80, 'Name is too long (max 80 characters).'),
     middleName: z.string().max(80).nullable(),
-    lastName: z.string().min(1).max(80),
+    lastName: z.string().min(1).max(80, 'Name is too long (max 80 characters).'),
     email: z
       .string()
       .email()
@@ -145,7 +145,12 @@ export const SaveWorkerProfileSchema = z
     role: z.string().max(100).nullable(),
     hubstaffName: z.string().max(100).nullable(),
     weeklyHours: z.number().min(0).max(168).nullable(),
-    billRateUsd: z.number().min(0).max(100000).nullable().optional(),
+    billRateUsd: z
+      .number()
+      .min(0, 'Rate must be between 0 and 100,000.')
+      .max(100000, 'Rate must be between 0 and 100,000.')
+      .nullable()
+      .optional(),
     sessionRateUsd: z.number().min(0).max(100000).nullable().optional(),
     linkStatus: WorkerStatusSchema,
   })
