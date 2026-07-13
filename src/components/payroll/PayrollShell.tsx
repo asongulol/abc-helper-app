@@ -7,6 +7,7 @@
  */
 
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
@@ -1002,7 +1003,7 @@ export const PayrollShell = ({
                         <th scope="col">Net ₱</th>
                         <th scope="col">≈ USD</th>
                         <th scope="col">Via</th>
-                        {isOpen && <th scope="col" />}
+                        <th scope="col" />
                       </tr>
                     </thead>
                     <tbody>
@@ -1201,8 +1202,15 @@ export const PayrollShell = ({
                                 payoutMethodLabel(r.payoutMethod)
                               )}
                             </td>
-                            {isOpen && (
-                              <td style={{ textAlign: 'right' }}>
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              <Link
+                                href={`/payroll/${r.paymentId}/print`}
+                                target="_blank"
+                                className="btn ghost sm"
+                              >
+                                Print
+                              </Link>
+                              {isOpen && (
                                 <button
                                   type="button"
                                   className="btn ghost sm"
@@ -1211,13 +1219,14 @@ export const PayrollShell = ({
                                     borderColor: 'var(--bad)',
                                     color: 'var(--bad)',
                                     padding: '2px 8px',
+                                    marginLeft: 6,
                                   }}
                                   onClick={() => handleDeleteStatement(r.paymentId, r.name)}
                                 >
                                   Delete
                                 </button>
-                              </td>
-                            )}
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
@@ -1232,7 +1241,7 @@ export const PayrollShell = ({
                         </td>
                         <td />
                         <td />
-                        {isOpen && <td />}
+                        <td />
                       </tr>
                     </tfoot>
                   </table>
