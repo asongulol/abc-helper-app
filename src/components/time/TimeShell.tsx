@@ -121,6 +121,9 @@ export const TimeShell = ({
         <AddSessionForm
           companyId={companyId}
           defaultDate={period.start}
+          periodStart={period.start}
+          periodEnd={period.end}
+          unpaidMode={unpaidMode}
           onCreated={handleRefresh}
         />
       </div>

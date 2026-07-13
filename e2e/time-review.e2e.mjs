@@ -24,10 +24,14 @@ const { chromium } = pw;
 const BASE = process.env.E2E_BASE_URL ?? 'http://localhost:3000';
 const OUT = new URL('.', import.meta.url).pathname;
 
-// Stable fixture ids. Maria comes from `npm run dev:bootstrap` (supabase/seed.sql).
+// Stable fixture ids. Workers + the client come from `npm run dev:bootstrap`.
 const EMPLOYER = 'e0000000-0000-0000-0000-0000000000e2';
 const WORKER = 'a0000000-0000-0000-0000-000000000001';
 const NAME = 'Maria Santos';
+// Per-session contractor (contract 'PS') + billed client — drives the
+// "Recently added sessions" list, which is period-scoped the same way.
+const WORKER_PS = 'a0000000-0000-0000-0000-000000000002';
+const CLIENT = 'c0000000-0000-0000-0000-000000000001';
 
 // ── Semi-monthly period math (mirror of src/lib/dates/periods.ts, kept tiny) ──
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -135,6 +139,47 @@ const seed = async () => {
       entry(paid.start, 36000, 'approved'), //   10.00h — in a PAID period → excluded from "unpaid"
     ]),
   });
+
+  // Per-session contractor + two unpaid sessions (one in the arrears period, one
+  // in a far older period) to prove the "Recently added sessions" list scopes too.
+  await rest('worker_companies?on_conflict=company_id,worker_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=ignore-duplicates' },
+    body: JSON.stringify({
+      company_id: EMPLOYER,
+      worker_id: WORKER_PS,
+      contract: 'PS',
+      status: 'active',
+      role: 'Therapist',
+      hubstaff_name: 'Jose Rizal',
+    }),
+  });
+  await rest(`service_sessions?worker_id=eq.${WORKER_PS}`, { method: 'DELETE' });
+  await rest('service_sessions', {
+    method: 'POST',
+    body: JSON.stringify([
+      {
+        company_id: CLIENT,
+        worker_id: WORKER_PS,
+        session_date: arrears.start,
+        session_type: 'Initial IFSP',
+        units: 1,
+        child_initials: 'INPER',
+        eiid: 'EI-IN',
+        approval: 'pending',
+      },
+      {
+        company_id: CLIENT,
+        worker_id: WORKER_PS,
+        session_date: older.start,
+        session_type: 'Initial IFSP',
+        units: 1,
+        child_initials: 'OUTPER',
+        eiid: 'EI-OUT',
+        approval: 'pending',
+      },
+    ]),
+  });
 };
 
 const results = [];
@@ -142,6 +187,13 @@ const check = (name, cond, detail = '') => {
   results.push(!!cond);
   console.log(`${cond ? '✓ PASS' : '✗ FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`);
 };
+// Wait briefly for a locator to become visible (async client-side refetch).
+const seen = (loc) =>
+  loc
+    .first()
+    .waitFor({ state: 'visible', timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
 
 // Preflight: fail with a clear message if the app isn't up.
 await fetch(`${BASE}/login`).catch(() => {
@@ -190,6 +242,16 @@ try {
     rowDefault,
   );
 
+  // Session list is period-scoped too.
+  check(
+    'arrears view: session list shows the in-period session',
+    await seen(page.getByText('INPER')),
+  );
+  check(
+    'arrears view: session list HIDES the out-of-period session',
+    (await page.getByText('OUTPER').count()) === 0,
+  );
+
   // Toggle: all unpaid (cross-period, coverage hidden, paid excluded).
   await page.getByRole('button', { name: 'Show all unpaid' }).click();
   await page.waitForURL(/unpaid=1/, { timeout: 20000 });
@@ -223,6 +285,16 @@ try {
     'unpaid view: EXCLUDES the paid-period entry (would be 16.00h)',
     !/\b16\.00\b/.test(rowUnpaid),
     rowUnpaid,
+  );
+
+  // Session list spans periods in "all unpaid" mode.
+  check(
+    'unpaid view: session list shows the in-period session',
+    await seen(page.getByText('INPER')),
+  );
+  check(
+    'unpaid view: session list shows the out-of-period session too',
+    await seen(page.getByText('OUTPER')),
   );
   await page.screenshot({ path: `${OUT}/shot-2-unpaid.png`, fullPage: true });
 

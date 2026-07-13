@@ -920,6 +920,10 @@ export async function getSessionsInLockedPeriods(args: {
  */
 export async function getRecentSessions(args: {
   companyId: string;
+  /** Period bounds — when set, scope the list to sessions dated within them.
+   *  Omit (the "show all unpaid" toggle) to span every period. */
+  start?: string;
+  end?: string;
 }): Promise<ActionResult<{ sessions: RecentSessionRow[] }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -936,7 +940,9 @@ export async function getRecentSessions(args: {
       .map((r) => r.workerId);
     // Service client + explicit worker-id scoping (sessions are CLIENT-company
     // RLS-scoped; we restrict to this employer's roster).
-    const sessions = await fetchRecentSessionsForWorkers(createServiceClient(), workerIds);
+    const sessions = await fetchRecentSessionsForWorkers(createServiceClient(), workerIds, {
+      ...(args.start && args.end ? { start: args.start, end: args.end } : {}),
+    });
     return { ok: true, data: { sessions } };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Lookup failed.') };
