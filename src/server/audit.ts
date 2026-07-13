@@ -14,8 +14,12 @@ export const logEvent = async (entry: {
 }): Promise<void> => {
   try {
     const supabase = await createServerSupabase();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
     await supabase.from('audit_log').insert({
       company_id: entry.companyId ?? null,
+      actor: user?.email ?? null,
       action: entry.action,
       entity: entry.entity,
       detail: entry.detail ?? null,

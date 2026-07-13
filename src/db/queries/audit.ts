@@ -76,10 +76,17 @@ const mapRow = (r: {
   detail: r.detail,
 });
 
-/** Paged audit_log, newest first; filter on action+entity text + date range. */
+/**
+ * Paged audit_log, newest first; filter on action+entity text + date range.
+ *
+ * No `company_id` scoping here — RLS (`is_company_admin(company_id)`) already
+ * scopes visible rows per admin, and NULL/client-company rows (e.g.
+ * invoice_voided, portal_login.*) have no employer-company match to filter on.
+ * `companyId` is kept in the signature for call-site compatibility.
+ */
 export const getAuditLogPage = async (
   db: Db,
-  companyId: string,
+  _companyId: string,
   opts: { page: number; pageSize: number } & AuditFilters,
 ): Promise<AuditLogPage> => {
   const { page, pageSize } = opts;
@@ -89,7 +96,6 @@ export const getAuditLogPage = async (
   let query = db
     .from('audit_log')
     .select(SELECT_COLS, { count: 'exact' })
-    .eq('company_id', companyId)
     .order('created_at', { ascending: false })
     .range(from, to);
   query = applyAuditFilters(query, opts);
@@ -106,14 +112,13 @@ export const getAuditLogPage = async (
  */
 export const getAuditLogForExport = async (
   db: Db,
-  companyId: string,
+  _companyId: string,
   opts: AuditFilters & { max?: number } = {},
 ): Promise<AuditLogRow[]> => {
   const max = opts.max ?? 5000;
   let query = db
     .from('audit_log')
     .select(SELECT_COLS)
-    .eq('company_id', companyId)
     .order('created_at', { ascending: false })
     .limit(max);
   query = applyAuditFilters(query, opts);
