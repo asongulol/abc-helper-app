@@ -1688,22 +1688,27 @@ export async function payApprovedSessions(args: {
 }
 
 /**
- * No open draft → pay these sessions in the scheduled period that OWNS their
- * dates, creating it open if it doesn't exist yet.
+ * No open draft → pay these sessions in a scheduled period, creating it open if
+ * it doesn't exist yet. Defaults to the period that OWNS their dates; the caller
+ * may name a LATER one via `periodStart` (the owning run is closed, or the pay
+ * is deliberately held a cycle).
  *
- * NOT the period containing today: payroll runs a half-month in arrears, so on
+ * Never the period containing today: payroll runs a half-month in arrears, so on
  * Jul 28 the next payroll to go out is Jul 1–15 (pay date Jul 31), not the
  * in-progress Jul 16–31 (pay date Aug 15). Keying off today pushed Jul 1–14
  * sessions a full cycle late AND joined them to a window that doesn't contain
  * them — the exact thing audit #001/#009 forbids.
  *
- * A period that is already locked/paid is refused rather than reopened
- * (upsertOpenPeriod would force state back to 'open'); the off-period batch is
- * the mechanism for paying into a closed cycle.
+ * An EARLIER period is refused outright: a run whose window closed before the
+ * work happened cannot be the one that pays for it. A period that is already
+ * locked/paid is refused rather than reopened (upsertOpenPeriod would force
+ * state back to 'open'); the off-period batch is how you pay into a closed cycle.
  */
 export async function payApprovedSessionsToNextPeriod(args: {
   companyId: string;
   sessionIds: string[];
+  /** Canonical period start to pay in; defaults to the sessions' own period. */
+  periodStart?: string;
 }): Promise<ActionResult<{ count: number; periodStart: string }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -1723,7 +1728,19 @@ export async function payApprovedSessionsToNextPeriod(args: {
       };
     const first = sessions[0];
     if (!first) return { ok: false, error: 'No sessions selected.' };
-    const p = periodFor(first.sessionDate);
+    const owning = periodFor(first.sessionDate);
+    let p = owning;
+    if (args.periodStart && args.periodStart !== owning.start) {
+      const chosen = periodFor(args.periodStart);
+      if (chosen.start !== args.periodStart)
+        return { ok: false, error: 'Pick a semi-monthly pay period (the 1st–15th or 16th–EOM).' };
+      if (chosen.start < owning.start)
+        return {
+          ok: false,
+          error: `The ${chosen.start} – ${chosen.end} period ended before this work happened. Pay it in ${owning.start} – ${owning.end} or later.`,
+        };
+      p = chosen;
+    }
     const existing = await findPeriod(db, args.companyId, p.start, p.end);
     if (existing && existing.state !== 'open')
       return {
@@ -1739,6 +1756,20 @@ export async function payApprovedSessionsToNextPeriod(args: {
       false,
     );
     if (!res.ok) return res;
+    // This routes money into a run and left no trace: when Jul 1–14 sessions
+    // turned up in the Jul 16–31 batch, the audit log could not say who put
+    // them there or which run they meant to pick.
+    await logEvent({
+      companyId: args.companyId,
+      action: 'pay_sessions_period',
+      entity: period.id,
+      detail: {
+        count: res.count,
+        period: `${p.start} → ${p.end}`,
+        owning_period: `${owning.start} → ${owning.end}`,
+        chosen: p.start !== owning.start,
+      },
+    });
     return { ok: true, data: { count: res.count, periodStart: p.start } };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Add to next period failed.') };
