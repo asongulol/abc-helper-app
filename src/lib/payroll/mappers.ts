@@ -357,6 +357,15 @@ export type PaymentDraft = {
   off_cycle_php: number;
   net_php: number;
   misc_items: MiscItem[];
+  /**
+   * The engine gross kept behind a manual override, and the marker `overridden`
+   * is read from (`computed_gross_php != null`). A rebuild writes the engine's
+   * own gross into `gross_php`, so there is nothing left to revert to — it must
+   * clear this, or the row keeps claiming an override and ↺ restores a gross the
+   * engine has since replaced. `mergeManualColumns` re-arms it when the rebuild
+   * is a single-row one that must PRESERVE the override.
+   */
+  computed_gross_php: number | null;
   fx_rate: number | null;
   payout_currency: 'PHP';
   payout_amount: number;
@@ -397,6 +406,7 @@ export const toPaymentDraft = (
     off_cycle_php: centavosToPhp(r.offCycle),
     net_php: centavosToPhp(r.net),
     misc_items: [],
+    computed_gross_php: null,
     fx_rate: opts.fxRate ?? null,
     payout_currency: 'PHP',
     payout_amount: centavosToPhp(r.net),

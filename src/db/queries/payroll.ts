@@ -14,6 +14,7 @@ import { type Centavos, centavos, majorToMinor, sumMinor } from '@/lib/money';
 import { type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
 import {
+  centavosToPhp,
   isInactiveWorker,
   type PaymentDraft,
   type RosterRow,
@@ -527,6 +528,10 @@ export type PaymentComponents = {
   pddPhp: number;
   bonusPhp: number;
   miscItems: MiscItem[];
+  /** Engine gross behind a manual override; null = not overridden (RP-07). */
+  computedGrossPhp: number | null;
+  /** Audit prose, incl. the override line `applyGrossOverride` writes. */
+  note: string | null;
 };
 
 export const fetchPaymentForWorker = async (
@@ -537,7 +542,7 @@ export const fetchPaymentForWorker = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items',
+      'id, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, note',
     )
     .eq('pay_period_id', payPeriodId)
     .eq('worker_id', workerId)
@@ -552,6 +557,8 @@ export const fetchPaymentForWorker = async (
     pddPhp: Number(data.pdd_lunch_php ?? 0),
     bonusPhp: Number(data.bonus_php ?? 0),
     miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
+    computedGrossPhp: data.computed_gross_php == null ? null : Number(data.computed_gross_php),
+    note: data.note,
   };
 };
 
@@ -562,7 +569,10 @@ export const fetchPaymentForWorker = async (
  * surgical path safe: every column the rebuild would have recomputed is carried
  * through verbatim, so a manual misc/bonus/PDD/gross-override survives (RP-20).
  */
-export const composeNetCentavos = (c: PaymentComponents, offCycle: Centavos): Centavos =>
+export const composeNetCentavos = (
+  c: Pick<PaymentComponents, 'grossPhp' | 'haPhp' | 't13Php' | 'pddPhp' | 'bonusPhp' | 'miscItems'>,
+  offCycle: Centavos,
+): Centavos =>
   sumMinor([
     centavos(majorToMinor(Number(c.grossPhp ?? 0))),
     centavos(majorToMinor(c.haPhp)),
@@ -679,6 +689,39 @@ export const fetchPeriodCalcFlags = async (db: Db, periodId: string): Promise<Pe
     .maybeSingle();
   if (error) throw new Error(`period calc flags: ${error.message}`);
   return { includeHa: data?.include_ha ?? true, includeThirteenth: data?.include_13 ?? false };
+};
+
+/**
+ * Other regular periods of the same calendar year whose Calculate already ran
+ * the 13th-month accrual (RP-29).
+ *
+ * The accrual is stateless — `calc.ts` adds a full month's thirteenth every time
+ * the toggle is ticked, so a second run in the same year pays it twice and the
+ * engine cannot see that, because a pure function has no idea what the other
+ * periods did. Only this layer can: the toggle is now recorded per period
+ * (`include_13`, migration 32), so "already accrued this year" is one read.
+ *
+ * Deliberately a WARNING, not a block — a 13th month paid in two installments
+ * (a May half and a December half) is normal here, and the app must not decide
+ * that for the admin. It just has to stop being silent.
+ */
+export const fetchThirteenthAccrualPeriods = async (
+  db: Db,
+  companyId: string,
+  year: number,
+  excludePeriodId: string,
+): Promise<string[]> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('id, period_start, period_end')
+    .eq('company_id', companyId)
+    .eq('include_13', true)
+    .gte('period_start', `${year}-01-01`)
+    .lte('period_start', `${year}-12-31`)
+    .neq('id', excludePeriodId)
+    .order('period_start');
+  if (error) throw new Error(`13th-month periods: ${error.message}`);
+  return (data ?? []).map((p) => `${p.period_start} → ${p.period_end}`);
 };
 
 export type OpenDraft = { id: string; periodStart: string; periodEnd: string };
@@ -833,7 +876,10 @@ export const upsertDraftPayments = async (
   db: Db,
   companyId: string,
   payPeriodId: string,
-  drafts: readonly PaymentDraft[],
+  // `note` rides along only on the single-row rebuild that re-arms a gross
+  // override (mergeManualColumns) — a batch recalc never sets it, so the bulk
+  // payload's keys stay uniform.
+  drafts: readonly (PaymentDraft & { note?: string })[],
 ): Promise<void> => {
   if (drafts.length === 0) return;
   const rows = drafts.map((d) => ({
@@ -1223,6 +1269,62 @@ export const applyGrossOverride = (
     grossPhp: overridePhp,
     computedGrossPhp: computed,
     note: `${OVERRIDE_NOTE} (computed ${computed})`,
+  };
+};
+
+/**
+ * Carry a row's MANUAL columns across a single-worker rebuild (RP-20).
+ *
+ * `recomputeWorkerDraft` runs the engine for one worker and upserts the result,
+ * so gross/HA/13th/off-cycle are correctly rebuilt — but Misc items, bonus, PDD
+ * lunch and a gross override are not engine outputs at all. They exist only on
+ * the stored row, and an upsert of the raw draft silently deleted them: adding a
+ * single off-cycle session to a contractor who had a ₱3,000 bonus dropped the
+ * bonus, with no confirm and no undo.
+ *
+ * The engine still owns everything it computes — that is why this is a merge and
+ * not the surgical `setPaymentOffCycle` write: every caller but the salaried
+ * catch-up marks or frees sessions, which legitimately moves gross, so gross
+ * MUST be rebuilt. The override is re-armed against the NEW engine gross, so ↺
+ * reverts to what the engine would pay today rather than a stale figure.
+ */
+export const mergeManualColumns = (
+  draft: PaymentDraft,
+  manual: PaymentComponents | null,
+): PaymentDraft & { note?: string } => {
+  if (!manual) return draft;
+  const gross =
+    manual.computedGrossPhp == null || manual.grossPhp == null
+      ? null
+      : applyGrossOverride(
+          { grossPhp: draft.gross_php, computedGrossPhp: null, note: manual.note },
+          manual.grossPhp,
+        );
+  const merged: PaymentDraft = {
+    ...draft,
+    ...(gross ? { gross_php: gross.grossPhp, computed_gross_php: gross.computedGrossPhp } : {}),
+    pdd_lunch_php: manual.pddPhp,
+    bonus_php: manual.bonusPhp,
+    misc_items: manual.miscItems,
+  };
+  const netPhp = centavosToPhp(
+    composeNetCentavos(
+      {
+        grossPhp: merged.gross_php,
+        haPhp: merged.health_allowance_php,
+        t13Php: merged.thirteenth_month_php,
+        pddPhp: merged.pdd_lunch_php,
+        bonusPhp: merged.bonus_php,
+        miscItems: merged.misc_items,
+      },
+      centavos(majorToMinor(merged.off_cycle_php)),
+    ),
+  );
+  return {
+    ...merged,
+    net_php: netPhp,
+    payout_amount: netPhp,
+    ...(gross?.note ? { note: gross.note } : {}),
   };
 };
 
