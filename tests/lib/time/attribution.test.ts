@@ -75,3 +75,57 @@ describe('attributionStatus', () => {
     expect(attributionStatus('Nobody Here', idx)).toBe('unmatched');
   });
 });
+
+// ── RP-39: a shared name key decides who gets paid — don't guess it ──────────
+describe('duplicate-name ambiguity', () => {
+  const dupes: RosterLink[] = [
+    {
+      workerId: 'w1',
+      hubstaffName: null,
+      firstName: 'Maria',
+      middleName: 'A.',
+      lastName: 'Santos',
+      isInactive: false,
+    },
+    {
+      workerId: 'w2',
+      hubstaffName: null,
+      firstName: 'Maria',
+      middleName: 'L.',
+      lastName: 'Santos',
+      isInactive: false,
+    },
+  ];
+  const idx = buildMatchIndex(dupes);
+
+  it('refuses a name that two workers answer to, instead of first-wins', () => {
+    // Both real names key to "maria santos" — whoever was indexed first used to
+    // silently collect the other's hours.
+    expect(matchName('Maria Santos', idx)).toBeNull();
+    expect(attributionStatus('Maria Santos', idx)).toBe('ambiguous');
+  });
+
+  it('separates ambiguous from unmatched so the banner can say which', () => {
+    expect(attributionStatus('Nobody Here', idx)).toBe('unmatched');
+  });
+
+  it('still resolves the spellings that name exactly one of them', () => {
+    expect(matchName('Maria A. Santos', idx)?.workerId).toBe('w1');
+    expect(matchName('Maria L. Santos', idx)?.workerId).toBe('w2');
+    expect(attributionStatus('Maria L. Santos', idx)).toBe('matched');
+  });
+
+  it('does not flag one worker indexed under several of their own names', () => {
+    const idxSolo = buildMatchIndex([
+      {
+        workerId: 'w1',
+        hubstaffName: 'Alice Smith',
+        firstName: 'Alice',
+        middleName: null,
+        lastName: 'Smith',
+        isInactive: false,
+      },
+    ]);
+    expect(matchName('Alice Smith', idxSolo)?.workerId).toBe('w1');
+  });
+});

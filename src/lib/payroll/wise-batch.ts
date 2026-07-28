@@ -6,10 +6,15 @@
  * (abc-work-app index.html ~9866).
  *
  * Wise-only by construction: only rows whose payout method is `wise` are
- * eligible, and rows missing a Wise recipient UUID can't be uploaded — they are
- * returned in `dropped` so the caller can warn rather than emit a file Wise
- * would reject. BPI / gcash / paymaya / paypal rows are never included.
+ * eligible, and rows Wise would reject — no recipient UUID, or a net of zero —
+ * are returned in `dropped` with a reason so the caller can warn rather than
+ * emit a file Wise rejects. BPI / gcash / paymaya / paypal are never included.
  */
+
+// Shared with the other two CSV builders — quoting + formula-injection guard.
+// Wise's importer is unaffected by injection, but the escape is numeric-safe so
+// the amount / UUID columns come out byte-identical to the template.
+import { escapeCsvField } from '@/lib/csv';
 
 export type WiseBatchRow = {
   name: string;
@@ -40,15 +45,18 @@ const fmtAmount = (n: number): string => {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 };
 
-const escapeCsvField = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+/** A Wise row that can't be uploaded, with the reason to show the admin. */
+export type DroppedWiseRow = WiseBatchRow & {
+  reason: 'no Wise recipient UUID' | 'no amount';
+};
 
 export interface WiseBatchResult {
   csv: string;
   filename: string;
-  /** Wise rows with a UUID — the ones written to the CSV. */
+  /** Wise rows with a UUID and a positive net — the ones written to the CSV. */
   included: WiseBatchRow[];
-  /** Wise rows dropped because they have no recipient UUID. */
-  dropped: WiseBatchRow[];
+  /** Wise rows Wise would reject, each carrying why. */
+  dropped: DroppedWiseRow[];
 }
 
 export const buildWiseBatch = (
@@ -62,11 +70,25 @@ export const buildWiseBatch = (
 ): WiseBatchResult => {
   const src = opts.sourceCurrency ?? 'USD';
   const tgt = opts.targetCurrency ?? 'PHP';
+  // `amount` below is netPhp with amountCurrency='target' — a PESO figure. Any
+  // other target would have Wise read ₱50,000 as $50,000 (~58× overpay) on every
+  // row. Payouts are PHP-only (docs/money-core-spec.md), so refuse rather than
+  // emit a file that pays the wrong currency.
+  if (tgt !== 'PHP') throw new Error(`Wise batch target currency must be PHP (got ${tgt}).`);
 
   // Only Wise rows are eligible for the batch upload (never BPI / others).
   const wiseRows = rows.filter((r) => r.payoutMethod === 'wise');
-  const included = wiseRows.filter((r) => !!r.wiseRecipientUuid);
-  const dropped = wiseRows.filter((r) => !r.wiseRecipientUuid);
+  // RP-60: a zero net writes `amount` 0 and Wise rejects the row — sometimes the
+  // whole upload, taking the other contractors' payments with it. The API path
+  // already skips these (`triageDraftRow`: "no amount"); the manual file didn't.
+  // Lock refuses a null or negative net but not a zero one.
+  const included = wiseRows.filter((r) => !!r.wiseRecipientUuid && r.netPhp > 0);
+  const dropped: DroppedWiseRow[] = wiseRows
+    .filter((r) => !r.wiseRecipientUuid || !(r.netPhp > 0))
+    .map((r) => ({
+      ...r,
+      reason: r.wiseRecipientUuid ? ('no amount' as const) : ('no Wise recipient UUID' as const),
+    }));
 
   const ref = `Payroll ${opts.periodEnd}`.trim();
   const lines = included.map((r) =>

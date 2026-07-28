@@ -9,6 +9,8 @@
  *
  * Auth gates (ported from the legacy in-function gate):
  *   wiseDraft / wiseBatch  → OWNER only
+ *   wisePullRecipientIds   → any admin to PREVIEW, OWNER to link (RP-56 — a link
+ *                            decides where that contractor's pay lands)
  *   wisePoll  / wiseMatch  → any admin
  *     (the cron path — x-cron-secret — stays in the deployed Deno edge function
  *      supabase/functions/wise-payouts/index.ts; this action covers the
@@ -19,6 +21,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchPeriodStatesForPayments, unpayablePeriodReason } from '@/db/queries/payroll';
+import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
 import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
@@ -63,6 +67,23 @@ function fail<T>(error: unknown): WiseActionResult<T> {
   return { ok: false, error: msg };
 }
 
+/**
+ * RP-52: "you can only pay a locked run" was enforced only by `process/page.tsx`
+ * refusing to render. These are HTTP endpoints — a call carrying open-period
+ * payment ids drafts REAL transfers for amounts the next recalculate changes,
+ * and RP-10 then refuses to unlock the period because the draft exists. Same
+ * gate the mark-paid actions use.
+ */
+async function unpayableDraftReason(
+  db: ReturnType<typeof createServiceClient>,
+  paymentIds: string[],
+): Promise<string | null> {
+  return unpayablePeriodReason(
+    await fetchPeriodStatesForPayments(db, paymentIds),
+    'drafted into Wise',
+  );
+}
+
 // ─── OWNER-only staging actions ───────────────────────────────────────────────
 
 /**
@@ -77,6 +98,9 @@ export async function wiseDraft(paymentIds: string[]): Promise<WiseActionResult<
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const db = createServiceClient();
+    const unpayable = await unpayableDraftReason(db, parsed.data.paymentIds);
+    if (unpayable) return fail(unpayable);
+
     const { results } = await serviceDraft(db, parsed.data.paymentIds);
 
     void logEvent({
@@ -116,8 +140,42 @@ export async function wiseBatch(
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const db = createServiceClient();
-    const { batchGroupId, results } = await serviceBatch(db, parsed.data.items, parsed.data.name);
+    const batchItems = parsed.data.items;
 
+    const unpayable = await unpayableDraftReason(
+      db,
+      batchItems.map((i) => i.paymentId),
+    );
+    if (unpayable) return fail(unpayable);
+
+    // RP-54: the per-row overrides are client input. Load each payment's worker
+    // identity BEFORE drafting so (a) a recipient the worker doesn't own is
+    // refused — it would pay their net into someone else's account, and the
+    // matcher would still call it reconciled — and (b) the audit entry can carry
+    // the drafted amount, which net_php never records.
+    const { data: rowData, error: rowErr } = await db
+      .from('payments')
+      .select('id, net_php, workers(wise_recipient_id, wise_recipients, first_name, last_name)')
+      .in(
+        'id',
+        batchItems.map((i) => i.paymentId),
+      );
+    if (rowErr) return fail(rowErr.message);
+    const rows = (rowData ?? []) as DraftPaymentRow[];
+
+    const foreign = foreignRecipientRows(batchItems, rows);
+    if (foreign.length > 0) {
+      const f = foreign[0] as { recipientId: number; name: string };
+      return fail(
+        `Recipient #${f.recipientId} is not on ${f.name}'s profile` +
+          (foreign.length > 1 ? ` (and ${foreign.length - 1} more row(s))` : '') +
+          '. Add it on the contractor profile first.',
+      );
+    }
+
+    const { batchGroupId, results } = await serviceBatch(db, batchItems, parsed.data.name);
+
+    const byId = new Map(rows.map((r) => [r.id, r]));
     void logEvent({
       action: 'wise_batch',
       entity: 'payments',
@@ -125,6 +183,17 @@ export async function wiseBatch(
         batchGroupId,
         count: results.length,
         drafted: results.filter((r) => r.status === 'drafted').length,
+        // Per-row trail: what was actually drafted vs. the locked net it came from.
+        rows: batchItems.map((i) => {
+          const row = byId.get(i.paymentId);
+          const { recipientId, amountPhp } = resolveDraftRow(row ?? { net_php: null }, i);
+          return {
+            paymentId: i.paymentId,
+            amountPhp,
+            recipientId,
+            netPhp: row?.net_php ?? null,
+          };
+        }),
       },
     });
 
@@ -290,21 +359,31 @@ export interface PullRecipientsResult {
   alreadyLinked: number;
   matched: number;
   unmatched: number;
+  /** Rows actually written this call — 0 on a preview (no `linkRecipientIds`). */
+  linked: number;
   rows: PullRecipientRow[];
 }
 
 /**
- * Admin: pull recipient IDs from Wise and store them on matched contractors
- * (legacy "Pull IDs from Wise", manifest 21). READ-ONLY against Wise — lists
- * saved recipients and, per recipient, finds its contractor by stored Wise ID
- * first (→ "already linked"), then by normalized name (→ "matched", writing the
- * numeric recipient id onto an active unlinked worker); otherwise "unmatched".
- * Returns the full per-recipient breakdown so the UI shows the legacy table.
- * Never pulls bank details and moves no money.
+ * Pull recipient IDs from Wise (legacy "Pull IDs from Wise", manifest 21).
+ * READ-ONLY against Wise — lists saved recipients and, per recipient, finds its
+ * contractor by stored Wise ID first (→ "already linked"), then by normalized
+ * name (→ "matched"); otherwise "unmatched". Returns the full per-recipient
+ * breakdown so the UI shows the legacy table. Never pulls bank details and
+ * moves no money.
+ *
+ * RP-56: a bare normalized-name hit is a PROPOSAL, not a link — writing it sets
+ * where that contractor's pay lands, so it needs the same confirmation and the
+ * same OWNER gate as drafting. Call with no args to preview; call again with the
+ * recipient ids the owner confirmed to write those links.
  */
-export async function wisePullRecipientIds(): Promise<WiseActionResult<PullRecipientsResult>> {
+export async function wisePullRecipientIds(
+  linkRecipientIds?: number[],
+): Promise<WiseActionResult<PullRecipientsResult>> {
   try {
-    await requireAdmin();
+    const confirmed = new Set(linkRecipientIds ?? []);
+    // Preview is a read (any admin); writing payee identity is owner-only.
+    await (confirmed.size > 0 ? requireOwner() : requireAdmin());
     const { recipients } = await serviceRecipients();
 
     const db = createServiceClient();
@@ -336,10 +415,11 @@ export async function wisePullRecipientIds(): Promise<WiseActionResult<PullRecip
       })),
     );
 
-    // Write a freshly name-matched recipient id onto its contractor; downgrade
-    // the row to "unmatched" if the write fails so the count stays honest.
+    // Write only the name-matches the owner explicitly confirmed; downgrade the
+    // row to "unmatched" if the write fails so the count stays honest.
+    let linked = 0;
     for (const row of rows) {
-      if (row.status === 'matched' && row.contractor) {
+      if (row.status === 'matched' && row.contractor && confirmed.has(row.recipientId)) {
         const { error: upErr } = await db
           .from('workers')
           .update({ wise_recipient_id: row.recipientId })
@@ -347,6 +427,9 @@ export async function wisePullRecipientIds(): Promise<WiseActionResult<PullRecip
         if (upErr) {
           row.status = 'unmatched';
           row.contractor = null;
+        } else {
+          row.linked = true;
+          linked++;
         }
       }
     }
@@ -358,10 +441,10 @@ export async function wisePullRecipientIds(): Promise<WiseActionResult<PullRecip
     void logEvent({
       action: 'wise_pull_recipient_ids',
       entity: 'workers',
-      detail: { total: recipients.length, alreadyLinked, matched, unmatched },
+      detail: { total: recipients.length, alreadyLinked, matched, unmatched, linked },
     });
-    revalidatePath('/contractors');
-    return ok({ total: recipients.length, alreadyLinked, matched, unmatched, rows });
+    if (linked > 0) revalidatePath('/contractors');
+    return ok({ total: recipients.length, alreadyLinked, matched, unmatched, linked, rows });
   } catch (e) {
     return fail(e);
   }

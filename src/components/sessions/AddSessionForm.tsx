@@ -12,7 +12,7 @@
  * `workerId` to hide the picker).
  */
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
@@ -109,13 +109,28 @@ export const AddSessionForm = ({
   // Just-approved session ids with no open draft to add them to (decision modal).
   const [noDraftSessions, setNoDraftSessions] = useState<string[] | null>(null);
 
+  /**
+   * RP-48: every list on this screen used `res.ok ? res.data : []`, so a failed
+   * fetch rendered as a healthy empty state — "no clients assigned", "No
+   * sessions waiting" — and an admin would reasonably conclude there was
+   * nothing there. Say what failed and leave whatever is on screen alone.
+   */
+  const loaded = useCallback(
+    <T,>(res: { ok: true; data: T } | { ok: false; error: string }, what: string) => {
+      if (res.ok) return res.data;
+      notify(`Couldn't load ${what}: ${res.error}`, { type: 'error', persistent: true });
+      return null;
+    },
+    [notify],
+  );
+
   const reloadRecent = async (wid: string) => {
     if (!wid) {
       setRecent([]);
       return;
     }
-    const res = await getWorkerSessions({ companyId, workerId: wid });
-    setRecent(res.ok ? res.data.sessions : []);
+    const data = loaded(await getWorkerSessions({ companyId, workerId: wid }), 'recent sessions');
+    if (data) setRecent(data.sessions);
   };
 
   // Worker picker options (per-session only) — only when not controlled.
@@ -124,12 +139,13 @@ export const AddSessionForm = ({
     let live = true;
     getOffCycleEligibleWorkers({ companyId }).then((res) => {
       if (!live) return;
-      setWorkers(res.ok ? res.data.workers.filter((w) => w.basis === 'per_session') : []);
+      const data = loaded(res, 'the contractor list');
+      if (data) setWorkers(data.workers.filter((w) => w.basis === 'per_session'));
     });
     return () => {
       live = false;
     };
-  }, [companyId, controlled]);
+  }, [companyId, controlled, loaded]);
 
   // #1: remember the last-picked contractor across navigation so the entered
   // (pending) sessions stay visible on return — until they're approved/deleted.
@@ -163,7 +179,12 @@ export const AddSessionForm = ({
     setLoadingClients(true);
     getWorkerClients({ companyId, workerId }).then((res) => {
       if (!live) return;
-      const list = res.ok ? res.data.clients : [];
+      const data = loaded(res, "this contractor's clients");
+      if (!data) {
+        setLoadingClients(false);
+        return;
+      }
+      const list = data.clients;
       setClients(list);
       if (pendingClientId.current && list.some((c) => c.id === pendingClientId.current)) {
         setClientId(pendingClientId.current);
@@ -176,7 +197,7 @@ export const AddSessionForm = ({
     return () => {
       live = false;
     };
-  }, [companyId, workerId]);
+  }, [companyId, workerId, loaded]);
 
   // The selected worker's recent sessions (so a just-added one is visible).
   useEffect(() => {
@@ -187,12 +208,13 @@ export const AddSessionForm = ({
     let live = true;
     getWorkerSessions({ companyId, workerId }).then((res) => {
       if (!live) return;
-      setRecent(res.ok ? res.data.sessions : []);
+      const data = loaded(res, 'recent sessions');
+      if (data) setRecent(data.sessions);
     });
     return () => {
       live = false;
     };
-  }, [companyId, workerId]);
+  }, [companyId, workerId, loaded]);
 
   // Employer-wide "Recently added" list — fetched on mount, then after each
   // add/edit/delete so it always reflects what was just entered (uncontrolled).
@@ -201,8 +223,11 @@ export const AddSessionForm = ({
     !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
   const reloadAll = async () => {
     if (controlled) return;
-    const res = await getRecentSessions({ companyId, ...sessionRange });
-    setRecentAll(res.ok ? res.data.sessions : []);
+    const data = loaded(
+      await getRecentSessions({ companyId, ...sessionRange }),
+      'the recently-added list',
+    );
+    if (data) setRecentAll(data.sessions);
   };
   useEffect(() => {
     if (controlled) return;
@@ -210,12 +235,14 @@ export const AddSessionForm = ({
     const range =
       !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
     getRecentSessions({ companyId, ...range }).then((res) => {
-      if (live) setRecentAll(res.ok ? res.data.sessions : []);
+      if (!live) return;
+      const data = loaded(res, 'the recently-added list');
+      if (data) setRecentAll(data.sessions);
     });
     return () => {
       live = false;
     };
-  }, [companyId, controlled, periodStart, periodEnd, unpaidMode]);
+  }, [companyId, controlled, periodStart, periodEnd, unpaidMode, loaded]);
 
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;

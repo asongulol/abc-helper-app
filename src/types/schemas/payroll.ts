@@ -21,11 +21,26 @@ export type PeriodKey = z.infer<typeof PeriodKeySchema>;
 
 export const PayoutMethodSchema = z.enum(['wise', 'bpi', 'gcash', 'paymaya', 'paypal']);
 
+/**
+ * RP-28: a misc amount carries MAGNITUDE only — `kind` carries the sign
+ * (`miscTotal` negates 'deduction' and adds everything else). An unvalidated
+ * `{kind:'deduction', amount:-5000}` therefore ADDED ₱5,000 to net instead of
+ * subtracting it. The editor only ever emits amounts > 0, so requiring a finite
+ * non-negative number rejects nothing the UI can produce. Strings are checked on
+ * their numeric value because the column is jsonb and stores either.
+ */
+const magnitude = z
+  .union([z.number(), z.string()])
+  .nullish()
+  .refine((v) => v == null || (Number.isFinite(Number(v)) && Number(v) >= 0), {
+    message: 'Misc amounts and hours must be a positive number — the kind carries the sign.',
+  });
+
 export const MiscItemSchema = z.object({
   kind: z.string().min(1),
   label: z.string().optional(),
-  amount: z.union([z.number(), z.string()]).optional().nullable(),
-  hours: z.union([z.number(), z.string()]).optional().nullable(),
+  amount: magnitude,
+  hours: magnitude,
 });
 
 /** Effective-dated rate save (legacy `saveRate`/`upsertRate`). PHP major units. */
@@ -49,6 +64,11 @@ export type RateSaveInput = z.infer<typeof RateSaveSchema>;
  * pay_periods that each pull the shared work_dates and double-pay them.
  */
 export const CalculateDraftSchema = PeriodKeySchema.extend({
+  /**
+   * RP-66: display-only. The server IGNORES this and derives the stored pay
+   * date from periodFor(periodStart) — the arrears rule, not the caller. Kept
+   * on the schema because the payroll shell still posts it.
+   */
   payDate: IsoDateSchema,
   includeHealthAllowance: z.boolean().default(true),
   includeThirteenth: z.boolean().default(false),
@@ -94,11 +114,16 @@ export const UpdatePaymentRowSchema = z.object({
 });
 export type UpdatePaymentRowInput = z.infer<typeof UpdatePaymentRowSchema>;
 
-/** F6: restore a recalc undo snapshot (full payment rows captured pre-recalc). */
+/** F6: restore a recalc undo snapshot. */
 export const RestoreSnapshotSchema = z.object({
   companyId: uuid(),
   periodId: uuid(),
-  snapshot: z.array(z.record(z.string(), z.unknown())),
+  /**
+   * RP-23: IGNORED. The server restores the snapshot calculateDraft parked on
+   * the period; these rows used to be inserted verbatim, money columns/`status`/
+   * `paid_at` included. Kept optional because the payroll shell still posts it.
+   */
+  snapshot: z.array(z.record(z.string(), z.unknown())).optional(),
 });
 export type RestoreSnapshotInput = z.infer<typeof RestoreSnapshotSchema>;
 
@@ -118,11 +143,8 @@ export const MarkPaidSchema = z.object({
 });
 export type MarkPaidInput = z.infer<typeof MarkPaidSchema>;
 
-export const MarkUnpaidSchema = z.object({
-  paymentIds: z.array(uuid()).min(1),
-  companyId: uuid(),
-});
-export type MarkUnpaidInput = z.infer<typeof MarkUnpaidSchema>;
+/* RP-53: MarkUnpaidSchema removed with the per-row `markUnpaid` action it was
+ * the only input for — see the note in src/server/actions/payroll.ts. */
 
 export const MarkAllUnpaidSchema = z.object({
   periodId: uuid(),

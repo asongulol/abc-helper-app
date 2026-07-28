@@ -81,6 +81,12 @@ export interface ImportHubstaffTimeResult {
   rowsWritten: number;
   membersSeen: number;
   unmatched: string[];
+  /** Approved days whose Hubstaff number changed — protected, and the admin is
+   *  told. Dropping these here is what made the sync report "0 entries" while
+   *  silently sitting on a 4h → 8h divergence (RP-36). */
+  divergences: number;
+  /** Decided day-rows the sync refused to overwrite. */
+  skippedDecided: number;
   window: { start: string; stop: string };
 }
 
@@ -137,6 +143,8 @@ export async function importHubstaffTime(
         rowsWritten: summary.rowsWritten,
         membersSeen: summary.membersSeen,
         unmatched: summary.unmatched,
+        divergences: summary.divergences.length,
+        skippedDecided: summary.skippedDecided,
         window: summary.window,
       },
     };

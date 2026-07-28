@@ -23,6 +23,7 @@ import { centavosToPhp, fmtDate, money } from '@/lib/format';
 import { centavos } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { usdReference } from '@/lib/pay/calc';
+import { hasManualAdjustments, type MiscEdit, miscPatch } from '@/lib/payroll/row-edit';
 import { recomputeNetCentavos } from '@/lib/payroll/row-net';
 import { payoutMethodLabel, periodStateLabel, periodStateTone } from '@/lib/payroll/status-pills';
 import {
@@ -38,7 +39,6 @@ import {
   unlockPeriod,
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
-import type { MiscModalPayload } from './MiscModal';
 
 // Misc-items editor (496 lines) loads on first open, gated behind miscRowId.
 const MiscModal = dynamic(() => import('./MiscModal').then((m) => m.MiscModal), { ssr: false });
@@ -60,6 +60,8 @@ type EditableRow = {
   workedHours: number;
   expectedHours: number;
   ratio: number;
+  /** Approved session count — non-null ONLY on a per-session row (RP-32). */
+  units: number | null;
   ratePhp: number | null;
   grossPhp: number | null;
   computedGrossPhp: number | null;
@@ -94,9 +96,14 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   workedHours: p.workedHours,
   expectedHours: p.expectedHours,
   ratio: p.ratio,
+  units: p.units,
   ratePhp: p.ratePhp,
   grossPhp: p.grossPhp,
-  computedGrossPhp: p.grossPhp,
+  // RP-07: the computed gross lives in its own column while an override is in
+  // place. Falling back to the stored gross is only for a NON-overridden row
+  // (where they are the same) — and for pre-RP-07 rows whose capture the old
+  // note-rewriting bug already destroyed.
+  computedGrossPhp: p.computedGrossPhp ?? p.grossPhp,
   overridden: p.overridden,
   haPhp: p.haPhp,
   t13Php: p.t13Php,
@@ -107,7 +114,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   offCyclePhp: p.offCyclePhp,
   netPhp: p.netPhp,
   payoutMethod: p.payoutMethod,
-  inactive: false,
+  inactive: p.inactive,
 });
 
 const recomputeRow = (r: EditableRow): EditableRow => {
@@ -150,9 +157,11 @@ export const PayrollShell = ({
   const [payDate, setPayDate] = useState(defaultPeriod.payDate);
   const [currentPeriod, setCurrentPeriod] = useState<PeriodSummaryRow | null>(null);
 
-  // FX
-  const [fx, setFx] = useState(DEFAULT_FX);
+  // FX — kept as raw text so the field can be cleared and "0." stays typable
+  // (RP-33); every consumer reads the parsed `fxNum`.
+  const [fx, setFx] = useState(String(DEFAULT_FX));
   const [fxNote, setFxNote] = useState('');
+  const fxNum = Number.parseFloat(fx) || DEFAULT_FX;
 
   // Toggles
   const [includeHA, setIncludeHA] = useState(true);
@@ -162,6 +171,9 @@ export const PayrollShell = ({
   const [rows, setRows] = useState<EditableRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const suppressSave = useRef(false);
+  // RP-26: set by an actual edit (row patch or a typed FX). Without it the
+  // debounced save fired on mere page load and rewrote every row.
+  const dirty = useRef(false);
 
   // F6: snapshot of the pre-recalc rows, so a recalc that overwrote manual
   // overrides/adjustments can be undone while the period is still open.
@@ -179,10 +191,13 @@ export const PayrollShell = ({
   const [miscRowId, setMiscRowId] = useState<string | null>(null);
   const [showOffCycle, setShowOffCycle] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
-    kind: 'recalculate' | 'deleteAll' | 'unlock' | 'lock';
+    kind: 'recalculate' | 'deleteAll' | 'deleteRow' | 'unlock' | 'lock';
     message?: string;
     consequence?: string;
     confirmWord?: string;
+    /** `deleteRow` only — the statement the confirm applies to. */
+    paymentId?: string;
+    name?: string;
   } | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
 
@@ -199,7 +214,7 @@ export const PayrollShell = ({
         at: number;
       } | null;
       if (cached && Date.now() - cached.at < 3_600_000) {
-        setFx(cached.rate);
+        setFx(String(cached.rate));
         setFxNote(cached.note);
         return;
       }
@@ -216,7 +231,7 @@ export const PayrollShell = ({
           const rate = +(+php).toFixed(4);
           const time = (d as Record<string, string>)?.time_last_update_utc?.slice(5, 16) ?? 'today';
           const note = `live rate ${(+php).toFixed(2)} as of ${time}`;
-          setFx(rate);
+          setFx(String(rate));
           setFxNote(note);
           try {
             sessionStorage.setItem(CACHE_KEY, JSON.stringify({ rate, note, at: Date.now() }));
@@ -314,10 +329,7 @@ export const PayrollShell = ({
   // that explains why the amounts just changed.
   const handleCalculate = async (skipConfirm = false, auto = false) => {
     // Show destructive-recalc confirm if there are overrides
-    const adjusted = (rows ?? []).filter(
-      (r) =>
-        r.overridden || r.haPhp > 0 || r.pddPhp > 0 || r.bonusPhp > 0 || r.miscItems.length > 0,
-    );
+    const adjusted = (rows ?? []).filter(hasManualAdjustments);
     if (!skipConfirm && adjusted.length > 0) {
       const names =
         adjusted
@@ -328,7 +340,7 @@ export const PayrollShell = ({
         kind: 'recalculate',
         message: `This period has ${adjusted.length} contractor(s) with manual overrides or adjustments:\n   ${names}`,
         consequence:
-          'Recalculating rebuilds every amount from tracked hours only and OVERWRITES those values (allowances reset to 0, overrides and Misc items discarded).',
+          'Recalculating rebuilds every amount from tracked hours and OVERWRITES those values: allowances and 13th-month are recomputed from the toggles above, and gross overrides, lunch, bonus and Misc items are discarded.',
         confirmWord: 'RECALCULATE',
       });
       return;
@@ -347,7 +359,7 @@ export const PayrollShell = ({
         payDate,
         includeHealthAllowance: includeHA,
         includeThirteenth: include13,
-        fxRate: fx,
+        fxRate: fxNum,
       });
       if (!res.ok) {
         notify(res.error, { type: 'error', persistent: true });
@@ -440,6 +452,7 @@ export const PayrollShell = ({
 
   // Patch a row value and recompute net locally (optimistic); debounced server save
   const patchRow = (workerId: string, patch: Partial<EditableRow>) => {
+    dirty.current = true;
     setRows(
       (prev) =>
         prev?.map((r) => (r.workerId === workerId ? recomputeRow({ ...r, ...patch }) : r)) ?? null,
@@ -453,7 +466,10 @@ export const PayrollShell = ({
   const saveDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const firstPendingAt = useRef<number | null>(null);
   useEffect(() => {
-    if (!rows?.length || currentPeriod?.state !== 'open') {
+    // RP-26: nothing to save until an edit has actually happened. This used to
+    // run on mount and rewrite every row's fx_rate and override note without
+    // the admin touching anything.
+    if (!dirty.current || !rows?.length || currentPeriod?.state !== 'open') {
       firstPendingAt.current = null;
       return;
     }
@@ -464,26 +480,48 @@ export const PayrollShell = ({
     saveDebounce.current = setTimeout(async () => {
       firstPendingAt.current = null;
       if (suppressSave.current) return;
-      // Batch-save all rows
-      for (const r of rows) {
-        await updatePaymentRowAction({
-          paymentId: r.paymentId,
-          companyId,
-          grossPhpOverride: r.overridden ? r.grossPhp : null,
-          haPhp: r.haPhp,
-          t13Php: r.t13Php,
-          pddPhp: r.pddPhp,
-          bonusPhp: r.bonusPhp,
-          miscItems: r.miscItems,
-          payoutMethod: r.payoutMethod as (typeof PAYOUT_METHODS)[number] | null,
-          fxRate: fx,
-        });
-      }
+      dirty.current = false;
+      // RP-06: the result used to be discarded, so a Zod rejection, a period
+      // locked by another admin mid-edit, or a network failure left the
+      // optimistic row on screen showing a value the DB never took. Reload the
+      // saved batch on any failure so the screen matches what will be locked.
+      const failed: string[] = [];
+      let firstError = '';
+      await Promise.all(
+        rows.map(async (r) => {
+          // A dropped connection rejects rather than returning ok:false.
+          try {
+            const res = await updatePaymentRowAction({
+              paymentId: r.paymentId,
+              companyId,
+              grossPhpOverride: r.overridden ? r.grossPhp : null,
+              haPhp: r.haPhp,
+              t13Php: r.t13Php,
+              pddPhp: r.pddPhp,
+              bonusPhp: r.bonusPhp,
+              miscItems: r.miscItems,
+              payoutMethod: r.payoutMethod as (typeof PAYOUT_METHODS)[number] | null,
+              fxRate: fxNum,
+            });
+            if (res.ok) return;
+            firstError ||= res.error;
+          } catch {
+            firstError ||= "Couldn't reach the server.";
+          }
+          failed.push(r.displayName || r.name);
+        }),
+      );
+      if (failed.length === 0) return;
+      notify(`Not saved — ${failed.join(', ')}: ${firstError} Reloaded the saved amounts.`, {
+        type: 'error',
+        persistent: true,
+      });
+      await loadSaved();
     }, wait);
     return () => {
       if (saveDebounce.current) clearTimeout(saveDebounce.current);
     };
-  }, [rows, companyId, currentPeriod, fx]);
+  }, [rows, companyId, currentPeriod, fxNum, notify, loadSaved]);
 
   // Lock & Save
   const handleLock = async () => {
@@ -491,11 +529,31 @@ export const PayrollShell = ({
       notify('Calculate first.', { type: 'warn' });
       return;
     }
+    // RP-18: the server refuses an unconfirmed lock that pays inactive rows or
+    // rows with no payout method; acknowledging here is what `confirmed` means.
+    const flagged = rows.filter((r) => r.inactive || !r.payoutMethod);
+    if (flagged.length > 0) {
+      const names = flagged.map((r) => r.displayName || r.name).join(', ');
+      if (
+        !window.confirm(
+          `${flagged.length} contractor(s) are inactive or have no payout method (${names}). Lock and pay them anyway?`,
+        )
+      )
+        return;
+    }
     setBusy(true);
     try {
-      const res = await lockPeriod({ companyId, periodStart, periodEnd });
+      const res = await lockPeriod({
+        companyId,
+        periodStart,
+        periodEnd,
+        confirmed: flagged.length > 0,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error', persistent: true });
+        // The refusal may name rows this screen loaded before they went
+        // inactive — reload so the next click can actually confirm them.
+        await loadSaved();
         return;
       }
       notify(`Locked ${res.data.lockedCount} statement(s).`, {
@@ -601,14 +659,8 @@ export const PayrollShell = ({
   };
 
   // Misc modal save
-  const handleMiscSave = async (workerId: string, payload: MiscModalPayload) => {
-    patchRow(workerId, {
-      haPhp: payload.haPhp,
-      t13Php: payload.t13Php ?? 0,
-      pddPhp: payload.pddPhp,
-      bonusPhp: payload.bonusPhp,
-      miscItems: payload.miscItems,
-    });
+  const handleMiscSave = (row: EditableRow, payload: MiscEdit) => {
+    patchRow(row.workerId, miscPatch(row, payload));
     setMiscRowId(null);
   };
 
@@ -641,7 +693,7 @@ export const PayrollShell = ({
     (s, r) => s + (r.netPhp != null ? Math.round(r.netPhp * 100) : 0),
     0,
   );
-  const totalUsdCents = usdReference(centavos(totalNetCentavos), fx);
+  const totalUsdCents = usdReference(centavos(totalNetCentavos), fxNum);
 
   // Display order only (editing/patchRow still keys off `rows` by workerId).
   const sortedRows = useMemo(
@@ -863,7 +915,7 @@ export const PayrollShell = ({
                 {totalUsdCents != null && (
                   <span className="muted">
                     {' '}
-                    (≈ ${(totalUsdCents / 100).toFixed(2)} ref @ {fx} PHP/USD)
+                    (≈ ${(totalUsdCents / 100).toFixed(2)} ref @ {fxNum} PHP/USD)
                   </span>
                 )}
               </p>
@@ -880,10 +932,13 @@ export const PayrollShell = ({
             {currentPeriod && currentPeriod.state !== 'open' && (
               <Badge tone={periodStateTone(currentPeriod.state)}>🔒 {currentPeriod.state}</Badge>
             )}
+            {/* RP-30: the server refuses to lock a period that isn't open, so a
+                "Re-lock" click could only ever produce an error toast — use the
+                Unlock button beside it instead. */}
             <button
               type="button"
               className="btn"
-              disabled={busy || isPaid}
+              disabled={busy || !isOpen}
               onClick={() =>
                 setConfirmModal({
                   kind: 'lock',
@@ -894,7 +949,7 @@ export const PayrollShell = ({
                 })
               }
             >
-              {isLocked ? 'Re-lock batch' : isPaid ? 'Marked paid' : 'Lock batch for processing'}
+              {isLocked ? 'Locked' : isPaid ? 'Marked paid' : 'Lock batch for processing'}
             </button>
             {(isLocked || isPaid) && (
               <button
@@ -984,7 +1039,11 @@ export const PayrollShell = ({
               type="number"
               step="0.0001"
               value={fx}
-              onChange={(e) => setFx(Number.parseFloat(e.target.value) || DEFAULT_FX)}
+              onChange={(e) => {
+                setFx(e.target.value);
+                // A typed rate is a real edit — it is persisted per row.
+                dirty.current = true;
+              }}
               style={{ width: 90 }}
               aria-label="PHP per USD exchange rate"
             />
@@ -1015,7 +1074,12 @@ export const PayrollShell = ({
               + Sessions
             </button>
           )}
-          {undoSnapshot && currentPeriod?.state === 'open' && (
+          {/* RP-31: only offer the undo for the period it was captured in —
+              restoring it while looking at another period would write the
+              snapshot's rows into a batch you aren't seeing.
+              ponytail: in-memory only, so it still evaporates on refresh;
+              server-side snapshot storage (RP-23) is the upgrade path. */}
+          {undoSnapshot?.periodId === currentPeriod?.id && currentPeriod?.state === 'open' && (
             <button
               type="button"
               className="btn ghost sm"
@@ -1111,7 +1175,7 @@ export const PayrollShell = ({
                       {sortedRows.map((r) => {
                         const usdRef = usdReference(
                           r.netPhp != null ? centavos(Math.round(r.netPhp * 100)) : null,
-                          fx,
+                          fxNum,
                         );
                         const miscSum = r.miscItems.reduce((s, it) => {
                           const a = Number(it.amount) || 0;
@@ -1140,14 +1204,37 @@ export const PayrollShell = ({
                                 </Badge>
                               )}
                             </td>
-                            <td data-label="Worked h">{r.workedHours.toFixed(2)}</td>
-                            <td data-label="Exp h">{r.expectedHours}</td>
-                            <td data-label="Ratio">{(r.ratio * 100).toFixed(0)}%</td>
+                            {/* RP-32: per-session rows have no hours — showing
+                                0.00 / 0 / 0% read as broken. Units × rate is
+                                what makes their gross checkable. */}
+                            <td data-label="Worked h">
+                              {r.units != null
+                                ? `${r.units} session${r.units === 1 ? '' : 's'}`
+                                : r.workedHours.toFixed(2)}
+                            </td>
+                            <td data-label="Exp h">
+                              {r.units != null ? <span className="muted">—</span> : r.expectedHours}
+                            </td>
+                            <td data-label="Ratio">
+                              {r.units != null ? (
+                                <span className="muted">—</span>
+                              ) : (
+                                `${(r.ratio * 100).toFixed(0)}%`
+                              )}
+                            </td>
                             <td data-label="Rate ₱">
                               {r.ratePhp == null ? (
                                 <span className="muted">no rate</span>
                               ) : (
-                                r.ratePhp.toLocaleString('en-US')
+                                <>
+                                  {r.ratePhp.toLocaleString('en-US')}
+                                  {r.units != null && (
+                                    <span className="muted" style={{ fontSize: 11 }}>
+                                      {' '}
+                                      /session
+                                    </span>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td data-label="Gross ₱">
@@ -1322,7 +1409,16 @@ export const PayrollShell = ({
                                     padding: '2px 8px',
                                     marginLeft: 6,
                                   }}
-                                  onClick={() => handleDeleteStatement(r.paymentId, r.name)}
+                                  onClick={() =>
+                                    setConfirmModal({
+                                      kind: 'deleteRow',
+                                      paymentId: r.paymentId,
+                                      name: r.name,
+                                      message: `Delete ${r.name}'s pay statement for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}?`,
+                                      consequence:
+                                        'Manual overrides and Misc items on this statement are lost — recalculating rebuilds engine values only. Any off-cycle pay items on it are deleted too, and their sessions go back to unpaid.',
+                                    })
+                                  }
                                 >
                                   Delete
                                 </button>
@@ -1377,7 +1473,7 @@ export const PayrollShell = ({
               pddPhp={row.pddPhp}
               bonusPhp={row.bonusPhp}
               miscItems={row.miscItems}
-              onSave={(payload) => handleMiscSave(row.workerId, payload)}
+              onSave={(payload) => handleMiscSave(row, payload)}
               onClose={() => setMiscRowId(null)}
             />
           );
@@ -1441,6 +1537,22 @@ export const PayrollShell = ({
         />
       )}
 
+      {confirmModal?.kind === 'deleteRow' && (
+        <ConfirmDangerModal
+          title="Delete this pay statement?"
+          message={confirmModal.message}
+          consequence={confirmModal.consequence}
+          confirmLabel="Delete statement"
+          busy={busy}
+          onConfirm={() => {
+            const { paymentId, name } = confirmModal;
+            setConfirmModal(null);
+            if (paymentId) handleDeleteStatement(paymentId, name ?? 'the contractor');
+          }}
+          onCancel={() => setConfirmModal(null)}
+        />
+      )}
+
       {confirmModal?.kind === 'unlock' && (
         <Modal
           title="Unlock period for editing?"
@@ -1467,7 +1579,7 @@ export const PayrollShell = ({
             }}
           >
             Recalculating after unlock will REBUILD net amounts from hours — manual overrides
-            (gross, PDD lunch, 13th, bonus) will be wiped. Re-lock when done.
+            (gross, lunch, 13th, bonus) <b>and Misc items</b> will be wiped. Lock again when done.
           </div>
           <div className="field">
             <label htmlFor="unlock-reason">Reason (required — typed text enables Unlock)</label>

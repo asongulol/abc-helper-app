@@ -37,16 +37,46 @@ const TOLERANCE_CENTAVOS = majorToMinor(1.0); // 100
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
+/** Epoch ms for a nullable date string, or null when absent. */
+function ms(d: string | null | undefined): number | null {
+  return d ? new Date(d).getTime() : null;
+}
+
 /**
- * Anchor epoch ms for the match window: prefer paid_at — the app's own record
- * of when the batch was actually sent — over the period's scheduled pay_date
- * (a batch paid two weeks late would otherwise put every real transfer outside
- * the ±window and come back no_wise_transfer_in_window). Falls back to
- * pay_date, then period_end, then now.
+ * The match window for one payment, as anchor ± halfMs.
+ *
+ * Pay runs semi-monthly on half-month arrears: days 1–15 are paid by month end,
+ * days 16–EOM by the 15th of the next month — and pay_date is a DEADLINE, not an
+ * appointment. The transfer may legally leave on ANY day of [period_end, pay_date],
+ * a ~16-day span, so anchoring ±7d on either endpoint rejects real transfers:
+ * period Mar 1–15 / deadline Mar 31, sent Mar 17 → ±7d of Mar 31 is Mar 24–Apr 7
+ * → no_wise_transfer_in_window even though nothing was wrong.
+ *
+ * So anchor at the MIDPOINT of the legal window and take half its own span (+1d
+ * of slack for timezone skew and a send that slips past the deadline). Both halves
+ * of that are needed: the midpoint with a fixed ±7d still misses the deadline day,
+ * and a fixed ±16d anchored anywhere reaches into the NEXT period's legal window,
+ * where a similar amount would match the wrong period. windowDays stays a floor so
+ * callers can widen it deliberately.
  */
-function payDateMs(p: MatcherPayment): number {
-  const d = p.paid_at ?? p.pay_periods?.pay_date ?? p.pay_periods?.period_end;
-  return d ? new Date(d).getTime() : Date.now();
+function matchWindow(p: MatcherPayment, windowDays: number): { anchor: number; halfMs: number } {
+  const floorMs = windowDays * DAY_MS;
+
+  // paid_at is the app's own record of when the batch actually went out — a real
+  // date beats a scheduled range, so window tightly around it.
+  const paid = ms(p.paid_at);
+  if (paid !== null) return { anchor: paid, halfMs: floorMs };
+
+  const end = ms(p.pay_periods?.period_end);
+  const due = ms(p.pay_periods?.pay_date);
+  if (end !== null && due !== null && due > end) {
+    return { anchor: (end + due) / 2, halfMs: Math.max(floorMs, (due - end) / 2 + DAY_MS) };
+  }
+
+  // ponytail: rows written before RP-03 (lockPeriod overwrote pay_date with
+  // period_end, so due === end) fall back to the legacy ±windowDays anchor — no
+  // worse than today, and the real deadline isn't recoverable from such a row.
+  return { anchor: due ?? end ?? Date.now(), halfMs: floorMs };
 }
 
 /** Extract the transfer's created epoch ms. */
@@ -75,10 +105,9 @@ function isWithinTolerance(p: MatcherPayment, t: WiseTransfer): boolean {
   return centavoDelta(p, t) <= TOLERANCE_CENTAVOS;
 }
 
-/** True when the transfer was created within ±windowDays of the payment's pay_date. */
-function isInWindow(t: WiseTransfer, payTs: number, windowDays: number): boolean {
-  const tt = transferCreatedMs(t);
-  return Math.abs(tt - payTs) <= windowDays * DAY_MS;
+/** True when the transfer was created inside the payment's match window. */
+function isInWindow(t: WiseTransfer, w: { anchor: number; halfMs: number }): boolean {
+  return Math.abs(transferCreatedMs(t) - w.anchor) <= w.halfMs;
 }
 
 /**
@@ -262,7 +291,7 @@ export function decideRefresh(
  * Applies ALL legacy edge cases in order:
  *  1. No recipient keys stored → no_recipient
  *  2. No transfer in the recipient index → no_wise_transfer
- *  3. Transfer exists but outside ±windowDays → no_wise_transfer_in_window
+ *  3. Transfer exists but outside the match window → no_wise_transfer_in_window
  *  4. Exactly one within-tolerance candidate → matched_exact
  *  5. Multiple within-tolerance → closest-pay-date disambiguation → ambiguous_exact if true tie
  *  6. No within-tolerance candidate, one inWindow → unambiguous variance auto-override
@@ -273,7 +302,8 @@ export function decideRefresh(
  * @param dates       WiseDates for the chosen transfer — supplied by the service layer
  *                    (which fetches the detail endpoint for each candidate).
  *                    Pass a function so the pure matcher can request dates lazily.
- * @param windowDays  Half-window in days (default 7, legacy default).
+ * @param windowDays  MINIMUM half-window in days (legacy default 7). The period's
+ *                    own [period_end, pay_date] span widens it — see matchWindow.
  * @param nowIso      Current ISO timestamp.
  */
 export function decideMatch(
@@ -324,8 +354,9 @@ export function decideMatch(
   }
 
   // 3. Per-payment date window filter.
-  const payTs = payDateMs(p);
-  const inWindow = candidates.filter((t) => isInWindow(t, payTs, windowDays));
+  const w = matchWindow(p, windowDays);
+  const payTs = w.anchor;
+  const inWindow = candidates.filter((t) => isInWindow(t, w));
 
   if (inWindow.length === 0) {
     const tried = keys.length === 1 ? 'this recipient' : `${keys.length} known recipient ids`;
@@ -334,7 +365,9 @@ export function decideMatch(
         payment_id: p.id,
         worker_id: p.worker_id,
         outcome: 'no_wise_transfer_in_window',
-        reason: `Wise has transfers to ${tried} but none within ±${windowDays} days of pay_date`,
+        // Report the window actually used, not windowDays — they differ whenever
+        // the period's own [period_end, pay_date] span is the wider one.
+        reason: `Wise has transfers to ${tried} but none within ±${Math.round(w.halfMs / DAY_MS)} days of ${new Date(payTs).toISOString().slice(0, 10)}`,
         recipient_keys_tried: keys,
       },
     };
@@ -489,11 +522,8 @@ export function annotateOrphans(
     (r) => r.outcome === 'no_wise_transfer' || r.outcome === 'no_wise_transfer_in_window',
   ) as Extract<MatchResult, { outcome: 'no_wise_transfer' | 'no_wise_transfer_in_window' }>[];
 
-  const fitsPayment = (t: WiseTransfer, p: MatcherPayment): boolean => {
-    const tt = transferCreatedMs(t);
-    if (Math.abs(tt - payDateMs(p)) > windowDays * DAY_MS) return false;
-    return isWithinTolerance(p, t);
-  };
+  const fitsPayment = (t: WiseTransfer, p: MatcherPayment): boolean =>
+    isInWindow(t, matchWindow(p, windowDays)) && isWithinTolerance(p, t);
 
   // Count how many unmatched payments each orphan fits (for ambiguity flag).
   const fitCount = new Map<string, number>();

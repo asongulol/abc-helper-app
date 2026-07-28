@@ -128,14 +128,13 @@ Source: `payroll.ts`, `reconcile.ts`.
 | `restorePaymentsSnapshot` | Undo the most recent recalc by restoring a snapshot (open periods only) | `RestoreSnapshotSchema` | admin (scoped) | restore `payments`; audit `restore_recalc` |
 | `getPeriodSummaries` | Period summaries for a company | `{ companyId }` | admin (scoped) | read-only |
 | `getSavedPayments` | Saved payments for the editable draft table | `{ periodId, companyId }` | admin (scoped) | read-only |
-| `lockPeriod` | Lock a pay period (blocks on null/negative net or pending approved hours) | `LockPeriodSchema` | admin (scoped) | update `pay_periods`; audit `lock` |
+| `lockPeriod` | Lock a pay period (blocks on null/negative net or pending approved hours; warns on inactive / no-payout-method rows unless `confirmed`) | `LockPeriodSchema` | admin (scoped) | update `pay_periods`; stamp sessions paid; audit `lock` |
 | `unlockPeriod` | Unlock a locked (not yet paid) period | `UnlockPeriodSchema` | admin (scoped) | update `pay_periods`; audit `unlock_period` |
 | `updatePaymentRowAction` | Update editable fields on an open period's payment row (recomputes net) | `UpdatePaymentRowSchema` | admin (scoped) | update `payments` |
 | `deleteStatement` | Delete a single statement for a contractor | `DeleteStatementSchema` | admin (scoped) | delete statement/`payments`; audit `delete_statement` |
 | `deleteAllStatements` | Delete all statements in a period (open only) | `DeleteAllStatementsSchema` | admin (scoped) | delete statements; audit `delete_statement` (`whole_period`) |
 | `getProcessPayments` | Payments for the Process screen (locked/paid periods) | `{ periodId, companyId }` | admin (scoped) | read-only |
 | `markPaid` | Mark selected payments paid; sync period state | `MarkPaidSchema` | admin (scoped) | update `payments` + `pay_periods`; audit `mark_paid` |
-| `markUnpaid` | Mark selected payments unpaid; sync period state | `MarkUnpaidSchema` | admin (scoped) | update `payments` + `pay_periods`; audit `mark_unpaid` |
 | `markAllUnpaid` | Mark all non-Wise-transfer payments unpaid; step period back to LOCKED | `MarkAllUnpaidSchema` | admin (scoped) | update `payments` + `pay_periods`; audit `mark_unpaid` (`all`) |
 | `toggleWiseRowLock` | Lock / unlock a Wise transfer row (unlock requires a reason) | `ToggleWiseRowLockSchema` | admin (scoped) | update `payments`; audit `wise_lock_release` (on unlock) |
 
@@ -167,8 +166,8 @@ Source: `wise.ts`.
 
 | Action | Purpose | Input | Auth | Side effects |
 |---|---|---|---|---|
-| `wiseDraft` | Create a quote + draft transfer per payment (no funding) | `paymentIds: string[]` | owner | Wise API → update `payments` (`wise_transfer_id`, `fx_rate`); audit `wise_draft` |
-| `wiseBatch` | Draft transfers inside a Wise batch group (no funding) | `paymentIds: string[]` | owner | Wise API → update `payments` + batch group; audit `wise_batch` |
+| `wiseDraft` | Create a quote + draft transfer per payment (no funding; refuses rows whose period isn't locked) | `paymentIds: string[]` | owner | Wise API → update `payments` (`wise_transfer_id`, `fx_rate`); audit `wise_draft` |
+| `wiseBatch` | Draft transfers inside a Wise batch group (no funding; refuses rows whose period isn't locked) | `paymentIds: string[]` | owner | Wise API → update `payments` + batch group; audit `wise_batch` |
 | `wisePoll` | Reconcile — flip payments to `sent` on terminal Wise success (idempotent) | — (none) | admin | Wise API → update `payments` (audit inside service) |
 | `wiseMatch` | Backfill matcher for payments missing `wise_transfer_id` | `{ periodStart?, periodEnd?, payPeriodId?, windowDays?, refresh? }` | admin | Wise API → update `payments`; audit `wise_match` / `wise_match_override` |
 | `wiseStatus` | Transfer-status lookups for payment ids | `WiseStatusSchema` (`paymentIds: string[]`) | admin | Wise API read-only |

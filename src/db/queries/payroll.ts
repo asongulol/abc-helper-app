@@ -8,11 +8,17 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cache } from 'react';
+import { selectAll } from '@/db/queries/paging';
 import type { Database, Json } from '@/db/types';
-import { type Centavos, centavos, majorToMinor } from '@/lib/money';
-import type { MiscItem } from '@/lib/pay/calc';
+import { type Centavos, centavos, majorToMinor, sumMinor } from '@/lib/money';
+import { type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
-import type { PaymentDraft, RosterRow, TimeEntryRow } from '@/lib/payroll/mappers';
+import {
+  isInactiveWorker,
+  type PaymentDraft,
+  type RosterRow,
+  type TimeEntryRow,
+} from '@/lib/payroll/mappers';
 import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
@@ -24,15 +30,25 @@ export const fetchApprovedTime = async (
   start: string,
   end: string,
 ): Promise<TimeEntryRow[]> => {
-  const { data, error } = await db
-    .from('time_entries')
-    .select('worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval')
-    .eq('company_id', companyId)
-    .gte('work_date', start)
-    .lte('work_date', end)
-    .eq('approval', 'approved');
-  if (error) throw new Error(`time_entries: ${error.message}`);
-  return (data ?? []).map((t) => ({
+  // RP-11: this feeds gross pay and was unbounded — PostgREST caps an unbounded
+  // select at max_rows and drops the overflow silently (63 contractors × a
+  // 16-day period is already >1000 rows), so the last workers were underpaid.
+  // `.order('id')` gives the paging a stable total order; without it successive
+  // ranges can repeat or skip rows.
+  const data = await selectAll(
+    (from, to) =>
+      db
+        .from('time_entries')
+        .select('worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval')
+        .eq('company_id', companyId)
+        .gte('work_date', start)
+        .lte('work_date', end)
+        .eq('approval', 'approved')
+        .order('id')
+        .range(from, to),
+    'time_entries',
+  );
+  return data.map((t) => ({
     workerId: t.worker_id,
     sourceName: t.source_name,
     workDate: t.work_date,
@@ -434,6 +450,64 @@ export const markSessionsPaid = async (
   if (error) throw new Error(`mark sessions paid: ${error.message}`);
 };
 
+/**
+ * Stamp the paid marker on the sessions a REGULAR period's calc just paid — the
+ * same set `fetchSessionUnitsByWorkerByDate` summed (approved, in-window,
+ * `paid_at IS NULL`), for the per-session workers on the period. Without this a
+ * paid session stays unmarked and can be paid a second time off-cycle.
+ *
+ * One UPDATE per worker so each session records the payment that paid it, and
+ * because that stamp is what {@link clearPeriodSessionsPaid} releases on unlock:
+ * ledger-held sessions carry a NULL `paid_payment_id` and must survive it.
+ * Service client — sessions are CLIENT-company scoped (ADR-0004).
+ */
+export const markPeriodSessionsPaid = async (
+  db: Db,
+  workers: readonly { workerId: string; paymentId: string }[],
+  periodId: string,
+  from: string,
+  to: string,
+  paidAt: string,
+): Promise<void> => {
+  for (const w of workers) {
+    const { error } = await db
+      .from('service_sessions')
+      .update({ paid_at: paidAt, paid_pay_period_id: periodId, paid_payment_id: w.paymentId })
+      .eq('worker_id', w.workerId)
+      .eq('approval', 'approved')
+      .is('paid_at', null)
+      .gte('session_date', from)
+      .lte('session_date', to);
+    if (error) throw new Error(`mark period sessions paid: ${error.message}`);
+  }
+};
+
+/**
+ * Release the sessions a lock stamped (period unlocked → payable again).
+ * Off-cycle ledger sessions are stamped with a null `paid_payment_id` and are
+ * left alone — their pay line still exists and survives the unlock.
+ */
+export const clearPeriodSessionsPaid = async (db: Db, periodId: string): Promise<void> => {
+  const { error } = await db
+    .from('service_sessions')
+    .update({ paid_at: null, paid_pay_period_id: null, paid_payment_id: null })
+    .eq('paid_pay_period_id', periodId)
+    .not('paid_payment_id', 'is', null);
+  if (error) throw new Error(`clear period sessions paid: ${error.message}`);
+};
+
+/**
+ * The workers a period pays from SESSIONS: `payments.units` is non-null only on
+ * a per_session row (see toPaymentDraft), so it is the marker for "this row's
+ * gross is Σ session units × rate" and thus for whose sessions a lock stamps.
+ */
+export const sessionPaidWorkers = (
+  payments: readonly { workerId: string; paymentId: string; units: number | null }[],
+): { workerId: string; paymentId: string }[] =>
+  payments
+    .filter((p) => p.units != null)
+    .map((p) => ({ workerId: p.workerId, paymentId: p.paymentId }));
+
 /** Clear the worker-pay paid marker (off-cycle item removed). */
 export const clearSessionsPaid = async (db: Db, sessionIds: readonly string[]): Promise<void> => {
   if (sessionIds.length === 0) return;
@@ -480,6 +554,24 @@ export const fetchPaymentForWorker = async (
     miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
   };
 };
+
+/**
+ * Net for a surgical (non-rebuilding) write: the stored row's own components
+ * plus the ledger total — the same single-currency composition the engine and
+ * updatePaymentRowAction use. Keeping this in one place is what makes the
+ * surgical path safe: every column the rebuild would have recomputed is carried
+ * through verbatim, so a manual misc/bonus/PDD/gross-override survives (RP-20).
+ */
+export const composeNetCentavos = (c: PaymentComponents, offCycle: Centavos): Centavos =>
+  sumMinor([
+    centavos(majorToMinor(Number(c.grossPhp ?? 0))),
+    centavos(majorToMinor(c.haPhp)),
+    centavos(majorToMinor(c.t13Php)),
+    centavos(majorToMinor(c.pddPhp)),
+    centavos(majorToMinor(c.bonusPhp)),
+    miscTotal(c.miscItems),
+    offCycle,
+  ]);
 
 /** Surgical update of off_cycle_php + net_php on an existing (open) payment row.
  *  Matches updatePaymentRow semantics: leaves payout_amount untouched (Wise pays
@@ -543,13 +635,20 @@ export const findPeriod = async (
     : null;
 };
 
-/** Upsert the period as OPEN (legacy `saveDraft` step). Returns the row. */
+/** The allowance toggles a Calculate ran with — replayed when ONE row is later
+ *  rebuilt, so an off-cycle add can't silently change the run's rules (RP-20). */
+export type PeriodCalcFlags = { includeHa: boolean; includeThirteenth: boolean };
+
+/** Upsert the period as OPEN (legacy `saveDraft` step). Returns the row.
+ *  `flags` are written only by the full Calculate (it is the one caller that
+ *  knows them); omitting them leaves an existing period's flags untouched. */
 export const upsertOpenPeriod = async (
   db: Db,
   companyId: string,
   start: string,
   end: string,
   payDate: string,
+  flags?: PeriodCalcFlags,
 ): Promise<PeriodRef> => {
   const { data, error } = await db
     .from('pay_periods')
@@ -560,6 +659,7 @@ export const upsertOpenPeriod = async (
         period_end: end,
         pay_date: payDate,
         state: 'open',
+        ...(flags ? { include_ha: flags.includeHa, include_13: flags.includeThirteenth } : {}),
       },
       { onConflict: 'company_id,period_start,period_end' },
     )
@@ -567,6 +667,18 @@ export const upsertOpenPeriod = async (
     .single();
   if (error) throw new Error(`pay_periods upsert: ${error.message}`);
   return { id: data.id, state: data.state };
+};
+
+/** The toggles the period's last Calculate used (RP-20). Falls back to the
+ *  historical hardcode (HA on, 13th off) for a period that predates the columns. */
+export const fetchPeriodCalcFlags = async (db: Db, periodId: string): Promise<PeriodCalcFlags> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('include_ha, include_13')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`period calc flags: ${error.message}`);
+  return { includeHa: data?.include_ha ?? true, includeThirteenth: data?.include_13 ?? false };
 };
 
 export type OpenDraft = { id: string; periodStart: string; periodEnd: string };
@@ -582,6 +694,34 @@ export const resolveOpenDraftForDate = (
   periods: readonly OpenDraft[],
   date: string,
 ): OpenDraft | null => periods.find((p) => date >= p.periodStart && date <= p.periodEnd) ?? null;
+
+/**
+ * Which period /payroll should open on (RP-25). Summaries arrive newest-first,
+ * so "the first open draft with statements" landed on the IN-PROGRESS period
+ * whenever the legacy sibling app (shared prod DB) had already seeded it with
+ * cloned rows — with no admin action, and while the period actually awaiting
+ * payroll sat open behind it. Payroll runs a half-month in arrears, so prefer
+ * the draft for `arrearsStart` (= previousPeriod(today).start, /time's default),
+ * then fall back to the old newest-with-rows / any-open order.
+ *
+ * Off-cycle batches are never candidates: the caller turns the result into a
+ * semi-monthly window via periodFor(), which a batch's `today–today` label
+ * cannot represent.
+ */
+export const preferredOpenDraft = <
+  T extends { state: string; kind: string; periodStart: string; contractorCount: number },
+>(
+  periods: readonly T[],
+  arrearsStart: string,
+): T | null => {
+  const open = periods.filter((p) => p.state === 'open' && p.kind === 'regular');
+  return (
+    open.find((p) => p.periodStart === arrearsStart) ??
+    open.find((p) => p.contractorCount > 0) ??
+    open[0] ??
+    null
+  );
+};
 
 /**
  * The employer's OPEN regular draft whose window contains `date`, or null if
@@ -615,6 +755,19 @@ export type OffCycleBatch = {
   periodEnd: string;
   isNew: boolean;
 };
+
+/**
+ * Today in the OFFICE's calendar — the label an off-cycle batch is created
+ * with. `new Date().toISOString()` is UTC, so a New York admin working after
+ * ~8 PM opened a batch stamped TOMORROW (RP-67). 'en-CA' formats as YYYY-MM-DD;
+ * same Intl approach the portal already uses for its Manila day bucket.
+ *
+ * ponytail: the office zone is a constant. Make it a company setting the day a
+ * second office runs payroll.
+ */
+export const OFFICE_TIME_ZONE = 'America/New_York';
+export const officeToday = (now: Date = new Date()): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: OFFICE_TIME_ZONE }).format(now);
 
 /**
  * The employer's single OPEN off-cycle batch (kind='off_cycle'), creating one
@@ -739,6 +892,41 @@ export const fetchPaymentRowsForRestore = async (
 };
 
 /**
+ * Park the pre-recalc snapshot ON the period (RP-23). It used to travel to the
+ * browser and back, so every money column, `status` and `paid_at` came in as
+ * whatever the caller sent; server-held, the undo needs no client rows at all.
+ * Best-effort by design is NOT acceptable here — a silent failure would leave a
+ * stale snapshot that a later undo would restore as if it were current.
+ */
+export const savePriorPayments = async (
+  db: Db,
+  periodId: string,
+  rows: readonly PaymentSnapshotRow[],
+): Promise<void> => {
+  const { error } = await db
+    .from('pay_periods')
+    .update({ prior_payments: rows as unknown as Json })
+    .eq('id', periodId);
+  if (error) throw new Error(`save prior payments: ${error.message}`);
+};
+
+/** The server-held pre-recalc snapshot for a period, or [] when there is none. */
+export const fetchPriorPayments = async (
+  db: Db,
+  periodId: string,
+): Promise<PaymentSnapshotRow[]> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('prior_payments')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`prior payments: ${error.message}`);
+  return Array.isArray(data?.prior_payments)
+    ? (data.prior_payments as unknown as PaymentSnapshotRow[])
+    : [];
+};
+
+/**
  * Restore a previously-captured snapshot: delete the period's current rows and
  * re-insert the snapshot verbatim (F6 undo). company_id/pay_period_id are forced
  * to the verified values so a client can't inject rows into another period.
@@ -812,11 +1000,15 @@ export type SavedPayment = {
   name: string;
   /** First + last only — table display (less clutter); never used for payout. */
   displayName: string;
+  /** Approved session count — non-null ONLY on a per_session row. */
+  units: number | null;
   expectedHours: number;
   workedHours: number;
   ratio: number;
   ratePhp: number | null;
   grossPhp: number | null;
+  /** The engine's gross, kept while gross_php holds an override; null = none (RP-07). */
+  computedGrossPhp: number | null;
   haPhp: number;
   t13Php: number;
   pddPhp: number;
@@ -829,6 +1021,8 @@ export type SavedPayment = {
   miscItems: MiscItem[];
   payoutMethod: string | null;
   overridden: boolean;
+  /** Worker or company link is no longer active — lock-time warning (RP-18). */
+  inactive: boolean;
 };
 
 /* ---------- NEW: list periods with summary totals ---------- */
@@ -895,17 +1089,183 @@ export const fetchPeriodSummaries = cache(
 
 /* ---------- NEW: lock / unlock period ---------- */
 
-/** Transition period to 'locked'. Caller must verify no null-rate rows first. */
-export const lockPeriod = async (db: Db, periodId: string, payDate: string): Promise<void> => {
+/**
+ * Transition period to 'locked'. Caller must verify no null-rate rows first.
+ *
+ * RP-03: pay_date is deliberately NOT written here. The period already carries
+ * the correct arrears date from upsertOpenPeriod (periodFor().payDate); locking
+ * used to overwrite it with period_end — a date BEFORE the payment window even
+ * opens (Mar 1–15 is paid by Mar 31, Mar 16–31 by Apr 15).
+ */
+export const lockPeriod = async (db: Db, periodId: string): Promise<void> => {
   const { error } = await db
     .from('pay_periods')
     .update({
       state: 'locked',
       locked_at: new Date().toISOString(),
-      pay_date: payDate,
     })
     .eq('id', periodId);
   if (error) throw new Error(`lock period: ${error.message}`);
+};
+
+/**
+ * Salaried catch-up ledger rows that pay leftover hours FROM the period ending
+ * `periodEnd` (a salaried_hours row stores the ORIGINAL period's end as its
+ * work_date). Company-wide, not scoped to the period's current payment rows: a
+ * worker pruned from the period would still be rebuilt by a recalc.
+ */
+export const fetchSalariedCatchUpsForPeriodEnd = async (
+  db: Db,
+  companyId: string,
+  periodEnd: string,
+): Promise<{ workerName: string; units: number | null }[]> => {
+  const { data, error } = await db
+    .from('off_cycle_pay_items')
+    .select('units, workers(first_name, last_name)')
+    .eq('company_id', companyId)
+    .eq('basis', 'salaried_hours')
+    .eq('work_date', periodEnd);
+  if (error) throw new Error(`salaried catch-ups: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    workerName: [r.workers?.first_name, r.workers?.last_name].filter(Boolean).join(' ').trim(),
+    units: r.units,
+  }));
+};
+
+/**
+ * Why a period must NOT be locked yet, or null when it is safe. Both blockers
+ * are "work that exists but the draft doesn't pay", i.e. a silent UNDERPAY:
+ *
+ *  - F2: time entries still `pending` in the window are invisible to
+ *    fetchApprovedTime, so their hours are simply missing from gross.
+ *  - RP-22: approved, unpaid, in-window `service_sessions` beyond what the draft
+ *    captured (`payments.units`). A per-session worker's session that lands
+ *    AFTER the last Calculate — the OffCycleModal's "Add session" pane creates
+ *    pre-approved ones, so it is one click away — is in neither the draft nor
+ *    the lock's paid-stamp (which stamps exactly the workers the calc summed).
+ *    A worker with sessions but no row at all captured 0 and is fully unpaid.
+ *
+ * An OFF-CYCLE batch is exempt from both. Its window is the label `today–today`,
+ * so today's unrelated pending time is not its work (RP-34, and the "recalculate"
+ * the message asks for isn't even offered for a batch), and its pay comes from
+ * the ledger rather than from anything the window captures.
+ */
+export const lockBlockedReason = (
+  kind: 'regular' | 'off_cycle',
+  pendingTimeCount: number,
+  payments: readonly { workerId: string; name: string; units: number | null }[],
+  sessionUnitsByWorker: ReadonlyMap<string, number>,
+): string | null => {
+  if (kind === 'off_cycle') return null;
+  if (pendingTimeCount > 0)
+    return `${pendingTimeCount} time entr${pendingTimeCount === 1 ? 'y is' : 'ies are'} still pending approval in this period. Approve or reject them before locking, then recalculate.`;
+  const byWorker = new Map(payments.map((p) => [p.workerId, p]));
+  const missed = [...sessionUnitsByWorker]
+    .filter(([workerId, units]) => units > (byWorker.get(workerId)?.units ?? 0))
+    .map(([workerId]) => byWorker.get(workerId)?.name || 'Unnamed worker');
+  if (missed.length > 0)
+    return `${missed.length} contractor(s) have approved sessions in this period that this draft does not pay (${missed.join(', ')}). Recalculate before locking.`;
+  return null;
+};
+
+/**
+ * Rows the admin should look at before locking, or null when there is nothing
+ * to warn about (RP-18). Unlike lockBlockedReason these are NOT hard blocks:
+ * paying a contractor whose link just ended is legitimate, it just must not
+ * happen silently — which is what it did, because `confirmed` was never read
+ * and the inactive flag never left the engine.
+ */
+export const lockWarningReason = (
+  payments: readonly { name: string; inactive: boolean; payoutMethod: string | null }[],
+  confirmed: boolean,
+): string | null => {
+  if (confirmed) return null;
+  const named = (rows: readonly { name: string }[]) =>
+    rows.map((p) => p.name || 'Unnamed worker').join(', ');
+  const parts: string[] = [];
+  const inactive = payments.filter((p) => p.inactive);
+  if (inactive.length > 0)
+    parts.push(`${inactive.length} inactive contractor(s) (${named(inactive)})`);
+  const noMethod = payments.filter((p) => !p.payoutMethod);
+  if (noMethod.length > 0)
+    parts.push(`${noMethod.length} with no payout method (${named(noMethod)})`);
+  if (parts.length === 0) return null;
+  return `This run pays ${parts.join(' and ')}. Lock again to confirm.`;
+};
+
+const OVERRIDE_NOTE = 'Gross manually overridden';
+
+/**
+ * The gross-override state machine (RP-07). `computedGrossPhp` is captured on
+ * the FIRST override and left alone afterwards — re-deriving it from the stored
+ * gross (which by then IS the override) is what destroyed the engine's figure
+ * and made the ↺ button restore the override to itself.
+ *
+ * `note` is now prose only — the revertible value lives in the column, and
+ * `overridden` is read from the column too. It is still written for the audit
+ * trail, but a note this function did NOT write survives a clear: 287 prod rows
+ * carry "Historical import (Hubstaff daily report)" and every routine save used
+ * to blank it (and, while `overridden` came from the note, showed them as
+ * manually overridden).
+ */
+export const applyGrossOverride = (
+  cur: { grossPhp: number; computedGrossPhp: number | null; note: string | null },
+  overridePhp: number | null,
+): { grossPhp: number; computedGrossPhp: number | null; note: string | null } => {
+  const computed = cur.computedGrossPhp ?? cur.grossPhp;
+  if (overridePhp == null)
+    return {
+      grossPhp: computed,
+      computedGrossPhp: null,
+      note: cur.note?.startsWith(OVERRIDE_NOTE) ? null : (cur.note ?? null),
+    };
+  return {
+    grossPhp: overridePhp,
+    computedGrossPhp: computed,
+    note: `${OVERRIDE_NOTE} (computed ${computed})`,
+  };
+};
+
+/**
+ * Why a locked period must NOT be unlocked yet, or null when it is safe.
+ *
+ * Unlocking is only "reopen the draft" on paper — once open, a recalc rewrites
+ * net_php and pruneDraftPaymentsExcept can delete rows outright:
+ *  - RP-10: a payment carrying a wise_transfer_id has a LIVE draft in Wise built
+ *    from the old amount. Recalc/prune leaves that draft funded-and-unmatched
+ *    with nothing in the app pointing at it, so the transfer must be cancelled
+ *    in Wise first.
+ *  - RP-12: a salaried catch-up keyed to this period's end pays hours that a
+ *    recalc would fold back into gross — the same hours paid twice. The JSDoc
+ *    on addSalariedCatchUp has always said "remove the catch-up first"; this is
+ *    what enforces it.
+ *
+ * ponytail: ANY non-null wise_transfer_id blocks. The app stores no Wise-side
+ * transfer state, so a funded or cancelled transfer is indistinguishable from a
+ * live draft — an admin whose transfer is already funded has no in-app escape.
+ * Upgrade path: persist the transfer state (or clear the id on reconcile) and
+ * narrow this to genuinely live drafts.
+ */
+export const unlockBlockedReason = (
+  payments: readonly { name: string; wiseTransferId: string | null }[],
+  catchUps: readonly { workerName: string; units: number | null }[],
+): string | null => {
+  const reasons: string[] = [];
+  const drafted = payments.filter((p) => p.wiseTransferId).map((p) => p.name || 'Unnamed worker');
+  if (drafted.length > 0)
+    reasons.push(
+      `${drafted.length} payment(s) already have a Wise transfer drafted (${drafted.join(', ')}). Cancel the transfer(s) in Wise first, then unlock.`,
+    );
+  const items = catchUps.map((c) =>
+    c.units == null
+      ? c.workerName || 'Unnamed worker'
+      : `${c.workerName || 'Unnamed worker'} (${c.units}h)`,
+  );
+  if (items.length > 0)
+    reasons.push(
+      `${items.length} salaried catch-up item(s) already pay hours from this period (${items.join(', ')}). Remove them first, or recalculating will pay those hours twice.`,
+    );
+  return reasons.length > 0 ? reasons.join(' ') : null;
 };
 
 /** Transition period back to 'open'. Refuses 'paid'. */
@@ -927,6 +1287,7 @@ export const unlockPeriod = async (db: Db, periodId: string): Promise<void> => {
 
 export type PaymentRowFields = {
   grossPhp?: number | null;
+  computedGrossPhp?: number | null;
   haPhp?: number;
   t13Php?: number | null;
   pddPhp?: number;
@@ -945,6 +1306,8 @@ export const updatePaymentRow = async (
 ): Promise<void> => {
   const update: Database['public']['Tables']['payments']['Update'] = {};
   if ('grossPhp' in fields && fields.grossPhp != null) update.gross_php = fields.grossPhp;
+  // Explicit null clears the capture — must not be skipped like grossPhp above.
+  if ('computedGrossPhp' in fields) update.computed_gross_php = fields.computedGrossPhp;
   if ('haPhp' in fields) update.health_allowance_php = fields.haPhp;
   if ('t13Php' in fields && fields.t13Php != null) update.thirteenth_month_php = fields.t13Php;
   if ('pddPhp' in fields) update.pdd_lunch_php = fields.pddPhp;
@@ -1094,17 +1457,99 @@ export const fetchProcessPayments = async (
 
 /* ---------- NEW: mark paid / unpaid ---------- */
 
+/**
+ * The period states in which money may be marked moved. "Paying requires
+ * locked" was enforced ONLY by the /process page's routing, and migration 18
+ * deliberately leaves `status`/`paid_at` editable in any state — but server
+ * actions are HTTP endpoints, so posting an OPEN period's payment ids flipped
+ * rows to 'sent' in the middle of a calculation whose amounts are still being
+ * rewritten (RP-52). 'paid' is included so a re-mark, or a reversal on a fully
+ * paid period, still works.
+ */
+export const PAYABLE_PERIOD_STATES: readonly Database['public']['Enums']['pay_period_state'][] = [
+  'locked',
+  'paid',
+];
+
+/** Why this set of periods may not have its payments marked, or null. */
+export const unpayablePeriodReason = (
+  states: readonly Database['public']['Enums']['pay_period_state'][],
+  /** What the caller is about to do, for the message ("marked", "drafted into Wise"). */
+  verb = 'marked',
+): string | null => {
+  const bad = [...new Set(states.filter((s) => !PAYABLE_PERIOD_STATES.includes(s)))];
+  if (bad.length === 0) return null;
+  return `Payments can only be ${verb} once their period is locked — this selection includes ${bad.join(' / ')} period(s). Lock the period first.`;
+};
+
+/** Distinct period states behind the given payment ids (RP-52 gate). */
+export const fetchPeriodStatesForPayments = async (
+  db: Db,
+  paymentIds: string[],
+): Promise<Database['public']['Enums']['pay_period_state'][]> => {
+  if (paymentIds.length === 0) return [];
+  const { data, error } = await db
+    .from('payments')
+    .select('pay_periods(state)')
+    .in('id', paymentIds);
+  if (error) throw new Error(`period states for payments: ${error.message}`);
+  return [...new Set((data ?? []).flatMap((p) => (p.pay_periods ? [p.pay_periods.state] : [])))];
+};
+
+/** One period's state (RP-52 gate for the whole-period actions). */
+/** Does this period belong to this company? Guards actions the client scopes. */
+export const periodBelongsToCompany = async (
+  db: Db,
+  periodId: string,
+  companyId: string,
+): Promise<boolean> => {
+  if (!uuid().safeParse(periodId).success) return false;
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('company_id')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`period company: ${error.message}`);
+  return data?.company_id === companyId;
+};
+
+export const fetchPeriodState = async (
+  db: Db,
+  periodId: string,
+): Promise<Database['public']['Enums']['pay_period_state'] | null> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('state')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`period state: ${error.message}`);
+  return data?.state ?? null;
+};
+
+/**
+ * Statuses "mark paid" may move to 'sent'. RP-08: 'sent' and 'reconciled' are
+ * excluded — a reconciled row's money is already confirmed and its paid_at is
+ * the REAL Wise send date; re-marking regressed the status and overwrote that
+ * date with today, silently corrupting reporting.
+ */
+export const MARKABLE_PAID_STATUSES = ['draft', 'queued', 'failed'] as const;
+
+/** Mark payments sent. Returns the number of rows ACTUALLY updated — RLS and
+ *  the status filter can both match fewer rows than were requested (RP-61). */
 export const markPaymentsPaid = async (
   db: Db,
   paymentIds: string[],
   paidAt: string,
-): Promise<void> => {
-  if (paymentIds.length === 0) return;
-  const { error } = await db
+): Promise<number> => {
+  if (paymentIds.length === 0) return 0;
+  const { data, error } = await db
     .from('payments')
     .update({ status: 'sent', paid_at: paidAt })
-    .in('id', paymentIds);
+    .in('id', paymentIds)
+    .in('status', MARKABLE_PAID_STATUSES)
+    .select('id');
   if (error) throw new Error(`mark paid: ${error.message}`);
+  return (data ?? []).length;
 };
 
 export const markPaymentsUnpaid = async (db: Db, paymentIds: string[]): Promise<void> => {
@@ -1271,7 +1716,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name, status, worker_companies(company_id, status))',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -1283,11 +1728,13 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
       .join(' ')
       .trim(),
     displayName: [p.workers?.first_name, p.workers?.last_name].filter(Boolean).join(' ').trim(),
+    units: p.units == null ? null : Number(p.units),
     expectedHours: Number(p.expected_hours ?? 0),
     workedHours: Number(p.worked_hours ?? 0),
     ratio: Number(p.performance_ratio ?? 0),
     ratePhp: p.rate_php,
     grossPhp: p.gross_php,
+    computedGrossPhp: p.computed_gross_php == null ? null : Number(p.computed_gross_php),
     haPhp: Number(p.health_allowance_php ?? 0),
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
@@ -1297,6 +1744,17 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     netPhp: p.net_php,
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,
-    overridden: !!p.note,
+    // The capture IS the override marker. Sniffing `note` instead flagged 287
+    // prod rows whose note is "Historical import (Hubstaff daily report)" as
+    // manually overridden — blue cell, ↺ button, and a recalculate warning.
+    overridden: p.computed_gross_php != null,
+    // RP-18: same rule as buildStatements — either side of the link going
+    // non-active makes the row a warning. The embed returns every company the
+    // worker is linked to, so pick this payment's own link.
+    inactive: isInactiveWorker(
+      p.workers?.status ?? null,
+      (p.workers?.worker_companies ?? []).find((l) => l.company_id === p.company_id)?.status ??
+        null,
+    ),
   }));
 };

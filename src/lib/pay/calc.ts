@@ -77,7 +77,21 @@ export type ContractorRowInput = {
   hireDate?: string | null;
   healthAllowanceEligible?: boolean;
   thirteenthMonthEligible?: boolean;
-  /** Batch-level toggles (legacy `includeHA` / `include13`). */
+  /**
+   * Batch-level toggles (legacy `includeHA` / `include13`).
+   *
+   * RP-29 — caller precondition on `includeThirteenth`: the accrual is STATELESS
+   * (see `thirteenthAccrual`), so every run with the toggle on accrues afresh.
+   * Recalculating the SAME period is safe — the payment row is recomputed, not
+   * added to. Turning it on for a SECOND period accrues a second time, and this
+   * function cannot detect that: a once-per-year guard needs to know what other
+   * periods already accrued, which is cross-period state a pure function does not
+   * have. The guard belongs where the toggle is applied per period
+   * (`src/server/payroll.ts:150`, from `PayrollShell.tsx:201/394`) — check for a
+   * prior period in the same year with `thirteenth_month_php > 0` for the worker.
+   * `includeHealthAllowance` does NOT have this shape: `healthAllowance` is
+   * anniversary-period-gated, so extra runs pay 0.
+   */
   includeHealthAllowance?: boolean;
   includeThirteenth?: boolean;
   /** Manual per-period add-ons (0 on a fresh calculate; edited in the UI). */

@@ -82,7 +82,16 @@ export const attributeTimeEntries = (
   entries: readonly TimeEntryRow[],
   roster: readonly RosterRow[],
   /** (worker → work_dates) already paid via a per_hour off-cycle item — those
-   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum. */
+   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum.
+   *  ponytail: whole-DAY granularity. A date Set carries no units, so a 2-hour
+   *  off-cycle item drops all 8 tracked hours of that day (RP-27) — it underpays,
+   *  it never double-pays. Unreachable today: the off-cycle modal is per_session
+   *  only, though the action and schema both accept per_hour. To pay the
+   *  remainder instead, `fetchOffCycleItemsForPeriod` (src/db/queries/payroll.ts)
+   *  must bucket the items' `units` as hours-per-date rather than a date Set, and
+   *  this param widen to ReadonlyMap<string, ReadonlyMap<string, number>>. Note
+   *  an amount-only item stores `units: null`, so that case must keep the
+   *  whole-day drop regardless. */
   excludeDatesByWorker?: ReadonlyMap<string, ReadonlySet<string>>,
 ): AttributionResult => {
   const idx = buildMatchIndex(
@@ -117,6 +126,8 @@ export const attributeTimeEntries = (
       continue;
     }
     // Drop a day already paid via a per_hour off-cycle item (no double-pay).
+    // RP-27: this drops the day's FULL tracked hours, not the hours the item
+    // actually paid — see excludeDatesByWorker above for why and what it takes.
     if (excludeDatesByWorker?.get(wid)?.has(t.workDate)) continue;
     const secs = (Number(t.trackedSeconds) || 0) + (Number(t.ptoSeconds) || 0);
     secondsByWorker.set(wid, (secondsByWorker.get(wid) ?? 0) + secs);
@@ -178,6 +189,18 @@ export type StatementRow = {
   inactive: boolean;
   result: ContractorRowResult;
 };
+
+/**
+ * Is this row a "no longer active" warning? Either side going non-active counts
+ * — a worker archived globally, or their link to THIS company ended. A null
+ * status is unknown, not inactive (legacy rows), so it never warns.
+ *
+ * Shared with fetchSavedPayments (RP-18): the saved snapshot renders the flag
+ * long after buildStatements computed it, and both must agree on the rule.
+ */
+export const isInactiveWorker = (workerStatus: string | null, linkStatus: string | null): boolean =>
+  (linkStatus !== null && linkStatus !== 'active') ||
+  (workerStatus !== null && workerStatus !== 'active');
 
 export type BuildStatementsArgs = {
   periodStart: string;
@@ -247,9 +270,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       ...(args.holidays !== undefined ? { holidays: args.holidays } : {}),
       ...(offCycleEarnings !== undefined ? { offCycleEarnings } : {}),
     });
-    const inactive =
-      (link.linkStatus !== null && link.linkStatus !== 'active') ||
-      (w.status !== null && w.status !== 'active');
+    const inactive = isInactiveWorker(w.status, link.linkStatus);
     out.push({
       workerId,
       name: fullName(w) || workerId,

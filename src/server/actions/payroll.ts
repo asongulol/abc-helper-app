@@ -17,7 +17,10 @@ import type {
   SavedPayment,
 } from '@/db/queries/payroll';
 import {
+  applyGrossOverride,
+  clearPeriodSessionsPaid,
   clearSessionsPaid,
+  composeNetCentavos,
   countPendingTime,
   deleteAllStatements as dbDeleteAllStatements,
   deleteStatement as dbDeleteStatement,
@@ -27,26 +30,40 @@ import {
   deleteOffCycleItemsForStatements,
   fetchOffCycleItem,
   fetchOffCycleItemsForWorkerPeriod,
+  fetchOffCycleTotalForWorker,
+  fetchPaymentForWorker,
   fetchPeriodIdsForPayments,
+  fetchPeriodState,
+  fetchPeriodStatesForPayments,
   fetchPeriodSummaries,
   fetchPreviousRegularPeriodId,
+  fetchPriorPayments,
   fetchProcessPayments,
   fetchRates,
   fetchRoster,
+  fetchSalariedCatchUpsForPeriodEnd,
   fetchSavedPayments,
+  fetchSessionUnitsByWorker,
   findCurrentOpenDraft,
   findOrCreateOffCycleBatch,
   findPeriod,
   hasInAppRecalc,
   insertOffCycleItems,
+  lockBlockedReason,
+  lockWarningReason,
   markPaymentsPaid,
   markPaymentsUnpaid,
+  markPeriodSessionsPaid,
   markSessionsPaid,
-  type PaymentSnapshotRow,
+  officeToday,
   restorePaymentRows,
+  sessionPaidWorkers,
+  setPaymentOffCycle,
   setWiseRowLock,
   stepPeriodToLocked,
   syncPeriodPaidState,
+  unlockBlockedReason,
+  unpayablePeriodReason,
   updatePaymentRow,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
@@ -88,7 +105,6 @@ import {
   LockPeriodSchema,
   MarkAllUnpaidSchema,
   MarkPaidSchema,
-  MarkUnpaidSchema,
   RateSaveSchema,
   RemoveOffCyclePaySchema,
   RestoreSnapshotSchema,
@@ -198,8 +214,15 @@ export async function calculatePeriodDraft(
 }
 
 /**
- * F6: undo the most recent recalc by restoring the snapshot returned from
- * calculatePeriodDraft. Only valid while the period is still OPEN.
+ * F6: undo the most recent recalc. Only valid while the period is still OPEN.
+ *
+ * RP-23: the rows come from the snapshot calculateDraft parked on the period,
+ * NOT from the caller. `RestoreSnapshotSchema.snapshot` was
+ * `z.array(z.record(z.string(), z.unknown()))` and only company_id/pay_period_id
+ * were forced, so every money column plus `status` and `paid_at` inserted
+ * exactly as posted — bypassing the server-side net recomposition and the
+ * positive-gross rule. The client's copy is now ignored (kept on the schema
+ * because the payroll shell still posts it, same as CalculateDraftSchema.payDate).
  */
 export async function restorePaymentsSnapshot(
   args: unknown,
@@ -228,12 +251,11 @@ export async function restorePaymentsSnapshot(
     if (pp.state !== 'open')
       return { ok: false, error: 'Period is not open — cannot undo recalculation.' };
 
-    const restored = await restorePaymentRows(
-      db,
-      input.companyId,
-      input.periodId,
-      input.snapshot as unknown as PaymentSnapshotRow[],
-    );
+    const snapshot = await fetchPriorPayments(db, input.periodId);
+    if (snapshot.length === 0)
+      return { ok: false, error: 'No saved pre-recalculation snapshot for this period to undo.' };
+
+    const restored = await restorePaymentRows(db, input.companyId, input.periodId, snapshot);
     await logEvent({
       companyId: input.companyId,
       action: 'restore_recalc',
@@ -374,21 +396,41 @@ export async function lockPeriod(
       };
     }
 
-    // F2: refuse to lock while approved-pending hours exist in the period —
-    // pending time is invisible to the gross calc and would be silently
-    // underpaid. The admin must approve (to pay) or reject (to exclude) first.
-    const pendingCount = await countPendingTime(
-      db,
-      input.companyId,
-      input.periodStart,
-      input.periodEnd,
-    );
-    if (pendingCount > 0) {
-      return {
-        ok: false,
-        error: `${pendingCount} time entr${pendingCount === 1 ? 'y is' : 'ies are'} still pending approval in this period. Approve or reject them before locking, then recalculate.`,
-      };
+    // F2 / RP-22 / RP-34: refuse to lock while work exists in the window that
+    // this draft does not pay — time still pending approval, or approved unpaid
+    // sessions beyond the units the draft captured. Both are silent underpays.
+    // Skip the reads entirely for an off-cycle batch: its window is a label, so
+    // neither set is its work (the helper is exempt for the same reason).
+    const isOffCycle = period.kind === 'off_cycle';
+    let pendingCount = 0;
+    let sessionUnits = new Map<string, number>();
+    if (!isOffCycle) {
+      pendingCount = await countPendingTime(
+        db,
+        input.companyId,
+        input.periodStart,
+        input.periodEnd,
+      );
+      // Sessions are CLIENT-company RLS-scoped (invisible to the employer admin)
+      // — service client, restricted to this employer's per-session roster,
+      // which is exactly the set whose gross comes from sessions (ADR-0004).
+      const perSessionWorkerIds = (await fetchRoster(db, input.companyId))
+        .filter((r) => payModelFor(r.contract, r.payBasis) === 'per_session')
+        .map((r) => r.workerId);
+      sessionUnits = await fetchSessionUnitsByWorker(
+        createServiceClient(),
+        perSessionWorkerIds,
+        input.periodStart,
+        input.periodEnd,
+      );
     }
+    const blockedByWork = lockBlockedReason(
+      period.kind ?? 'regular',
+      pendingCount,
+      payments,
+      sessionUnits,
+    );
+    if (blockedByWork) return { ok: false, error: blockedByWork };
 
     // New-2: a negative net (e.g. a deduction larger than earnings) would lock
     // and pay through as a negative remittance. Refuse — the row must be fixed.
@@ -401,7 +443,32 @@ export async function lockPeriod(
       };
     }
 
-    await dbLockPeriod(db, period.id, input.periodEnd);
+    // RP-18: inactive contractors and rows with no payout method are legitimate
+    // to pay, but not silently — `confirmed` records that the admin saw them.
+    const warning = lockWarningReason(payments, input.confirmed === true);
+    if (warning) return { ok: false, error: warning };
+
+    // RP-03: no pay date passed — the period already holds the correct arrears
+    // date from its creation; the lock must not overwrite it with period_end.
+    await dbLockPeriod(db, period.id);
+
+    // The calc pays approved in-window sessions by the windowed sum, but nothing
+    // stamped them paid — so they stayed in the pickers and were re-payable
+    // off-cycle in one click. Stamp exactly the set the calc summed. Off-cycle
+    // batches are ledger-only and stamp at add time, so they're skipped here.
+    // ponytail: no transaction across PostgREST calls — the lock is what matters;
+    // a failed stamp surfaces as an error and re-locking is idempotent.
+    if (period.kind !== 'off_cycle') {
+      await markPeriodSessionsPaid(
+        createServiceClient(),
+        sessionPaidWorkers(payments),
+        period.id,
+        input.periodStart,
+        input.periodEnd,
+        new Date().toISOString(),
+      );
+    }
+
     const validCount = payments.filter((p) => p.netPhp != null).length;
 
     await logEvent({
@@ -452,7 +519,23 @@ export async function unlockPeriod(
         error: `Period is not locked (state: ${period.state}).`,
       };
 
+    // RP-10/RP-12: reopening the draft lets a recalc rewrite (or prune) rows,
+    // which silently orphans a live Wise draft and re-pays hours a salaried
+    // catch-up already covered. Refuse while either is outstanding.
+    // Off-cycle batches don't recalc salaried gross, and their period_end is
+    // just "today", so only their Wise drafts matter.
+    const blocked = unlockBlockedReason(
+      await fetchProcessPayments(db, period.id),
+      period.kind === 'off_cycle'
+        ? []
+        : await fetchSalariedCatchUpsForPeriodEnd(db, input.companyId, input.periodEnd),
+    );
+    if (blocked) return { ok: false, error: blocked };
+
     await dbUnlockPeriod(db, period.id);
+    // Release the sessions the lock stamped so the reopened draft can pay them
+    // again (off-cycle ledger sessions are left held — see the query).
+    await clearPeriodSessionsPaid(createServiceClient(), period.id);
 
     await logEvent({
       companyId: input.companyId,
@@ -504,7 +587,7 @@ export async function updatePaymentRowAction(
     const { data: cur, error: fe } = await db
       .from('payments')
       .select(
-        'gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, off_cycle_php, net_php, note, pay_period_id',
+        'gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, off_cycle_php, net_php, note, pay_period_id',
       )
       .eq('id', input.paymentId)
       .maybeSingle();
@@ -522,10 +605,23 @@ export async function updatePaymentRowAction(
 
     // Determine new field values
     const grossCur = phpToCentavos(cur.gross_php) ?? centavos(0);
-    const grossNew =
-      'grossPhpOverride' in input && input.grossPhpOverride != null
-        ? (phpToCentavos(input.grossPhpOverride) ?? grossCur)
-        : grossCur;
+    // RP-07: clearing an override now RESTORES the engine's gross, so gross is
+    // no longer constant across an edit — net has to follow it.
+    const gross =
+      'grossPhpOverride' in input
+        ? applyGrossOverride(
+            {
+              grossPhp: centavosToPhp(grossCur),
+              computedGrossPhp:
+                cur.computed_gross_php == null ? null : Number(cur.computed_gross_php),
+              note: cur.note ?? null,
+            },
+            input.grossPhpOverride == null
+              ? null
+              : centavosToPhp(phpToCentavos(input.grossPhpOverride) ?? grossCur),
+          )
+        : null;
+    const grossNew = gross ? (phpToCentavos(gross.grossPhp) ?? grossCur) : grossCur;
 
     const haNew =
       phpToCentavos(
@@ -557,22 +653,12 @@ export async function updatePaymentRowAction(
     const netC = sumMinor([grossNew, haNew, t13New, pddNew, bonusNew, miscC, offCycleC]);
     const netPhp = centavosToPhp(netC);
 
-    // Build note for gross override
-    let note = cur.note ?? null;
-    if ('grossPhpOverride' in input) {
-      if (input.grossPhpOverride != null) {
-        const computedGross = centavosToPhp(grossCur);
-        note = `Gross manually overridden (computed ${computedGross})`;
-      } else {
-        note = null;
-      }
-    }
-
     await updatePaymentRow(db, input.paymentId, {
-      ...('grossPhpOverride' in input
+      ...(gross
         ? {
-            grossPhp:
-              input.grossPhpOverride != null ? centavosToPhp(grossNew) : centavosToPhp(grossCur),
+            grossPhp: gross.grossPhp,
+            computedGrossPhp: gross.computedGrossPhp,
+            note: gross.note,
           }
         : {}),
       haPhp: centavosToPhp(haNew),
@@ -583,7 +669,6 @@ export async function updatePaymentRowAction(
       netPhp,
       ...('payoutMethod' in input ? { payoutMethod: input.payoutMethod ?? null } : {}),
       ...('fxRate' in input && input.fxRate != null ? { fxRate: input.fxRate } : {}),
-      note,
     });
 
     return { ok: true, data: { netPhp } };
@@ -740,8 +825,16 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
 
   try {
     const db = await createServerSupabase();
+    // RP-52: /process only ROUTES to the pay panel for a locked/paid batch —
+    // this action is an HTTP endpoint, so the state must be checked here too or
+    // an open period's rows flip to 'sent' mid-calculation.
+    const blocked = unpayablePeriodReason(await fetchPeriodStatesForPayments(db, input.paymentIds));
+    if (blocked) return { ok: false, error: blocked };
+
     const paidAt = input.paidAt ?? new Date().toISOString();
-    await markPaymentsPaid(db, input.paymentIds, paidAt);
+    // RP-61: report what actually changed — RLS and the already-paid filter
+    // (RP-08) both make this smaller than the requested id list.
+    const markedCount = await markPaymentsPaid(db, input.paymentIds, paidAt);
     const paidPeriodIds = await fetchPeriodIdsForPayments(db, input.paymentIds);
     await Promise.all(paidPeriodIds.map((pid) => syncPeriodPaidState(db, pid)));
     await logEvent({
@@ -749,12 +842,13 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
       action: 'mark_paid',
       entity: input.companyId,
       detail: {
-        count: input.paymentIds.length,
+        count: markedCount,
+        requested: input.paymentIds.length,
         method: 'manual',
         paid_at: paidAt,
       },
     });
-    return { ok: true, data: { markedCount: input.paymentIds.length } };
+    return { ok: true, data: { markedCount } };
   } catch (err) {
     return {
       ok: false,
@@ -763,41 +857,23 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
   }
 }
 
-export async function markUnpaid(args: unknown): Promise<ActionResult<{ markedCount: number }>> {
-  const admin = await getCurrentAdmin();
-  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
-
-  const parsed = MarkUnpaidSchema.safeParse(args);
-  if (!parsed.success)
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
-    };
-  const input = parsed.data;
-
-  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
-    return { ok: false, error: 'No access to this company.' };
-  }
-
-  try {
-    const db = await createServerSupabase();
-    await markPaymentsUnpaid(db, input.paymentIds);
-    const unpaidPeriodIds = await fetchPeriodIdsForPayments(db, input.paymentIds);
-    await Promise.all(unpaidPeriodIds.map((pid) => syncPeriodPaidState(db, pid)));
-    await logEvent({
-      companyId: input.companyId,
-      action: 'mark_unpaid',
-      entity: input.companyId,
-      detail: { count: input.paymentIds.length },
-    });
-    return { ok: true, data: { markedCount: input.paymentIds.length } };
-  } catch (err) {
-    return {
-      ok: false,
-      error: humanizeError(err, 'Mark unpaid failed.'),
-    };
-  }
-}
+/**
+ * RP-53: the per-row `markUnpaid` action is DELETED, not guarded.
+ *
+ * It had zero callers in src/ — the "reverse this one payment" path the UI once
+ * promised never existed (that copy has since been corrected), so every one of
+ * its bugs was reachable only by hand-posting to the endpoint: no
+ * `wise_locked_at` check and, unlike markAllUnpaid, no `wise_transfer_id`
+ * filter, so it would happily flip a funded, actually-sent Wise payment back to
+ * 'draft'. The `payments_lock_enforce` trigger does not protect
+ * `status`/`paid_at`, so nothing downstream would have stopped it either.
+ *
+ * Deleting removes the endpoint outright rather than shipping a guarded action
+ * nobody calls. Reversal is still available, wired and guarded, via
+ * markAllUnpaid (which excludes Wise-transfer rows). If per-row reversal is ever
+ * built, re-add it WITH the wise_locked_at / wise_transfer_id filters and the
+ * period-state gate below.
+ */
 
 export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ markedCount: number }>> {
   const admin = await getCurrentAdmin();
@@ -817,6 +893,11 @@ export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ marke
 
   try {
     const db = await createServerSupabase();
+    // RP-52: an OPEN period has nothing to reverse, and stepPeriodToLocked below
+    // would force it OUT of open — locking a draft mid-calculation.
+    const blocked = unpayablePeriodReason([(await fetchPeriodState(db, input.periodId)) ?? 'open']);
+    if (blocked) return { ok: false, error: blocked };
+
     // Only reverse non-wise-transfer rows (legacy: those with a Wise transfer need individual handling)
     const payments = await fetchProcessPayments(db, input.periodId);
     const toReverse = payments
@@ -1427,14 +1508,27 @@ export async function addSalariedCatchUp(
       throw e;
     }
 
-    const { netPhp } = await recomputeWorkerDraft({
-      companyId: input.companyId,
-      periodId: period.id,
-      periodStart: input.periodStart,
-      periodEnd: input.periodEnd,
-      workerId: input.workerId,
-      offCycleOnly: period.kind === 'off_cycle',
-    });
+    // RP-20: a catch-up's hours belong to ANOTHER (locked/paid) period, so it
+    // cannot change what this period's window captures — only the ledger total.
+    // Update off_cycle_php + net_php in place instead of rebuilding the row,
+    // which would reset this worker's manual misc/bonus/PDD/gross-override.
+    // No row yet (the worker has no other activity here) → build one.
+    const existing = await fetchPaymentForWorker(db, period.id, input.workerId);
+    let netPhp: number | null;
+    if (existing) {
+      const offCycleC = await fetchOffCycleTotalForWorker(db, period.id, input.workerId);
+      netPhp = centavosToPhp(composeNetCentavos(existing, offCycleC));
+      await setPaymentOffCycle(db, existing.paymentId, centavosToPhp(offCycleC), netPhp);
+    } else {
+      ({ netPhp } = await recomputeWorkerDraft({
+        companyId: input.companyId,
+        periodId: period.id,
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        workerId: input.workerId,
+        offCycleOnly: period.kind === 'off_cycle',
+      }));
+    }
 
     await logEvent({
       companyId: input.companyId,
@@ -1665,8 +1759,9 @@ export async function routeSessionsToOffCycleBatch(args: {
   if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
   try {
     const db = await createServerSupabase();
-    const today = new Date().toISOString().slice(0, 10);
-    const batch = await findOrCreateOffCycleBatch(db, args.companyId, today);
+    // RP-67: the batch label is the OFFICE's calendar day, not UTC's — after
+    // ~8 PM in New York the UTC date is already tomorrow.
+    const batch = await findOrCreateOffCycleBatch(db, args.companyId, officeToday());
     const res = await addApprovedSessionsToPeriod(
       db,
       args.companyId,
@@ -1699,8 +1794,9 @@ export async function openOffCycleBatch(args: {
     return { ok: false, error: 'No access to this company.' };
   try {
     const db = await createServerSupabase();
-    const today = new Date().toISOString().slice(0, 10);
-    const batch = await findOrCreateOffCycleBatch(db, args.companyId, today);
+    // RP-67: the batch label is the OFFICE's calendar day, not UTC's — after
+    // ~8 PM in New York the UTC date is already tomorrow.
+    const batch = await findOrCreateOffCycleBatch(db, args.companyId, officeToday());
     if (batch.isNew) {
       await logEvent({
         companyId: args.companyId,

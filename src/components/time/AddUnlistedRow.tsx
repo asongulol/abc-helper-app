@@ -26,6 +26,8 @@ interface AddUnlistedRowProps {
   contractorOptions: ContractorOption[];
   defaultPeriodStart: string;
   defaultPeriodEnd: string;
+  /** Column count of the host table — 7 in the unpaid view, 9 otherwise. */
+  colSpan: number;
   onDone: () => void;
 }
 
@@ -34,6 +36,7 @@ export const AddUnlistedRow = ({
   contractorOptions,
   defaultPeriodStart,
   defaultPeriodEnd,
+  colSpan,
   onDone,
 }: AddUnlistedRowProps) => {
   const { notify } = useToast();
@@ -66,14 +69,22 @@ export const AddUnlistedRow = ({
     let live = true;
     getWorkerClients({ companyId, workerId: selectedWorkerId }).then((res) => {
       if (!live) return;
-      const list = res.ok ? res.data.clients : [];
+      // A failed lookup used to render as "no client" — indistinguishable from a
+      // contractor who genuinely has none (RP-48). Say so instead.
+      if (!res.ok) {
+        setClients([]);
+        setClientId('');
+        notify(`Couldn't load this contractor's clients: ${res.error}`, { type: 'error' });
+        return;
+      }
+      const list = res.data.clients;
       setClients(list);
       setClientId(list.length === 1 ? (list[0]?.id ?? '') : '');
     });
     return () => {
       live = false;
     };
-  }, [companyId, selectedWorkerId]);
+  }, [companyId, selectedWorkerId, notify]);
 
   const reset = () => {
     setSelectedWorkerId('');
@@ -142,7 +153,7 @@ export const AddUnlistedRow = ({
 
   return (
     <tr style={{ background: '#fafafa' }}>
-      <td colSpan={9}>
+      <td colSpan={colSpan}>
         <div
           style={{
             display: 'flex',

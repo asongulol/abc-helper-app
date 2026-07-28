@@ -69,15 +69,32 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
         notify(`Hubstaff returned no activity for ${syncStart} → ${syncStop}.`, { type: 'info' });
         return;
       }
+      // The sync protects already-decided days and only logged it, so a
+      // 4h → 8h change on an approved day read as "Synced 0 entries" (RP-36).
+      // ponytail: counted loosely — the server half may report a count or the
+      // divergence list itself.
+      const extra = res.data as unknown as { divergences?: unknown; skippedDecided?: unknown };
+      const asCount = (v: unknown) => (Array.isArray(v) ? v.length : typeof v === 'number' ? v : 0);
+      const divergences = asCount(extra.divergences);
+      const skippedDecided = asCount(extra.skippedDecided);
+
       const unmatchedNote =
         unmatched.length > 0
           ? ` ${unmatched.length} member(s) couldn't be matched to a contractor and were skipped.`
           : '';
+      const decidedNote =
+        skippedDecided > 0
+          ? ` ${skippedDecided} already approved/rejected day(s) were left untouched.`
+          : '';
+      const divergenceNote =
+        divergences > 0
+          ? ` ⚠ ${divergences} of them now report DIFFERENT hours in Hubstaff — the approved value was kept. Check the audit log (time_divergence) and re-approve if the new number is right.`
+          : '';
       notify(
-        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}`,
+        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}${decidedNote}${divergenceNote}`,
         {
-          type: rowsWritten > 0 ? 'success' : 'info',
-          persistent: unmatched.length > 0,
+          type: divergences > 0 ? 'warn' : rowsWritten > 0 ? 'success' : 'info',
+          persistent: unmatched.length > 0 || divergences > 0,
         },
       );
       onImported();

@@ -974,11 +974,14 @@ export type Database = {
           expected_hours_ft: number
           expected_hours_pt: number
           id: string
+          include_13: boolean
+          include_ha: boolean
           kind: string
           locked_at: string | null
           pay_date: string | null
           period_end: string
           period_start: string
+          prior_payments: Json | null
           state: Database["public"]["Enums"]["pay_period_state"]
         }
         Insert: {
@@ -987,11 +990,14 @@ export type Database = {
           expected_hours_ft?: number
           expected_hours_pt?: number
           id?: string
+          include_13?: boolean
+          include_ha?: boolean
           kind?: string
           locked_at?: string | null
           pay_date?: string | null
           period_end: string
           period_start: string
+          prior_payments?: Json | null
           state?: Database["public"]["Enums"]["pay_period_state"]
         }
         Update: {
@@ -1000,11 +1006,14 @@ export type Database = {
           expected_hours_ft?: number
           expected_hours_pt?: number
           id?: string
+          include_13?: boolean
+          include_ha?: boolean
           kind?: string
           locked_at?: string | null
           pay_date?: string | null
           period_end?: string
           period_start?: string
+          prior_payments?: Json | null
           state?: Database["public"]["Enums"]["pay_period_state"]
         }
         Relationships: [
@@ -1021,6 +1030,7 @@ export type Database = {
         Row: {
           bonus_php: number
           company_id: string
+          computed_gross_php: number | null
           contract: string | null
           created_at: string
           deduction_php: number
@@ -1058,6 +1068,7 @@ export type Database = {
         Insert: {
           bonus_php?: number
           company_id: string
+          computed_gross_php?: number | null
           contract?: string | null
           created_at?: string
           deduction_php?: number
@@ -1095,6 +1106,7 @@ export type Database = {
         Update: {
           bonus_php?: number
           company_id?: string
+          computed_gross_php?: number | null
           contract?: string | null
           created_at?: string
           deduction_php?: number

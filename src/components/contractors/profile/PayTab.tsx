@@ -12,6 +12,7 @@ interface Props extends ProfileTabProps {
   companyId: string;
   companyName?: string | undefined;
   companies: { id: string; name: string }[];
+  isOwner: boolean;
   engagements: WorkerEngagement[];
   updateEng: (i: number, patch: Partial<WorkerEngagement>) => void;
   saveEng: (e: WorkerEngagement) => void;
@@ -27,6 +28,7 @@ export function PayTab({
   companyId,
   companyName,
   companies,
+  isOwner,
   engagements,
   updateEng,
   saveEng,
@@ -106,7 +108,7 @@ export function PayTab({
         <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
         <RateCard workerId={worker.workerId} companyId={companyId} />
       </section>
-      <WisePayoutPanel workerId={worker.workerId} />
+      <WisePayoutPanel workerId={worker.workerId} isOwner={isOwner} />
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Client engagements</h4>
         {engagements.length === 0 ? (
