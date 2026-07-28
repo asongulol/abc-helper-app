@@ -94,6 +94,7 @@ import {
   type CatchUpCandidate,
   calculateDraft,
   recomputeWorkerDraft,
+  reconcileApprovedTime,
   salariedCatchUpCandidates,
 } from '@/server/payroll';
 import {
@@ -326,6 +327,28 @@ export async function getSavedPayments(args: {
  * made after the first calculate; the carried-over check scopes it to real clones
  * and backstops a best-effort audit-write that was missed.
  */
+/**
+ * Pull approved time that isn't on this period's batch yet. Called when Calculate
+ * opens a period, so hours approved before the approve→Calculate transfer existed
+ * (or through any path that doesn't hit the approve buttons) still land. Writes
+ * nothing once the batch already covers every approved worker.
+ */
+export async function reconcilePeriodApprovedTime(args: {
+  companyId: string;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<ActionResult<{ workers: number }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    return { ok: true, data: await reconcileApprovedTime(args) };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not pull approved time onto Calculate.') };
+  }
+}
+
 export async function shouldAutoRecalcDraft(args: {
   companyId: string;
   periodId: string;

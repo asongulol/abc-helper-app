@@ -328,28 +328,91 @@ export const recomputeWorkerDraft = async (args: {
 };
 
 /**
- * Move approved time onto Calculate: build (or update) the pay batch for the
- * period each approved day falls in.
+ * Make one period's batch agree with the time approved in its window.
  *
- * Approval used to be a flag and nothing more — the hours stayed invisible on
- * /payroll until someone pressed Calculate, and since a period with no statements
- * isn't listed there at all, 200 approved entries looked like they went nowhere.
+ * The invariant is about STATE, not about events: approved hours belong on
+ * Calculate, whoever approved them and whenever. Reconciling only the entries
+ * someone just clicked leaves every other approved worker stranded — including
+ * everything approved before this existed, which has no click left to make.
  *
- * Same-pay-date merge: a batch is keyed on (company, period start, period end)
- * and its pay date is derived from that window, so approving the same days twice
- * lands in the batch that already exists rather than opening a second one.
- *   - empty batch  → one `calculateDraft` pass builds every row at once.
- *   - has rows     → `recomputeWorkerDraft` per touched worker, which MERGES
- *                    (RP-20): Misc items, bonus, PDD lunch and gross overrides a
- *                    human typed on the other rows survive untouched.
+ * A batch is keyed on (company, period start, period end) and its pay date is
+ * derived from that window, so the same pay date always resolves to the batch
+ * that already exists rather than opening a second one.
+ *   - empty batch → one `calculateDraft` pass builds every row at once.
+ *   - has rows    → `recomputeWorkerDraft` for the workers that are missing from
+ *                   it (plus `alsoWorkers`, whose hours just changed). That call
+ *                   MERGES (RP-20), so Misc items, bonus, PDD lunch and gross
+ *                   overrides a human typed survive.
  *
- * Both paths rebuild from *all* currently-approved time in the window, so this is
- * idempotent and doubles as the un-approve path: retract an entry and the row is
- * rebuilt smaller, or dropped when nothing payable is left.
+ * Recomputing only what's missing is what makes this safe to run on every visit
+ * to Calculate: once the batch is complete it costs two reads and writes nothing.
  *
  * Never touches a locked/paid batch (the payments trigger refuses it anyway —
  * hours approved after a run closes are the salaried catch-up card's job) or an
- * off-cycle batch (paid from its own ledger, not from tracked hours).
+ * off-cycle batch (paid from its own ledger, not from tracked hours). Creates a
+ * period only when there is something to put in it.
+ */
+const reconcilePeriod = async (
+  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  start: string,
+  end: string,
+  alsoWorkers: readonly string[],
+): Promise<{ workers: number; closed: boolean }> => {
+  const approved = await fetchApprovedTime(db, companyId, start, end);
+  const wanted = new Set(alsoWorkers);
+  for (const e of approved) if (e.workerId) wanted.add(e.workerId);
+  if (wanted.size === 0) return { workers: 0, closed: false };
+
+  const existing = await findPeriod(db, companyId, start, end);
+  if (existing && existing.state !== 'open') return { workers: 0, closed: true };
+  if (existing?.kind === 'off_cycle') return { workers: 0, closed: false };
+
+  // Created with the same defaults the Calculate card ticks; an existing period
+  // keeps whatever toggles its last run stored (upsert would overwrite them).
+  const period =
+    existing ??
+    (await upsertOpenPeriod(db, companyId, start, end, periodFor(start).payDate, {
+      includeHa: true,
+      includeThirteenth: false,
+    }));
+  const flags = await fetchPeriodCalcFlags(db, period.id);
+  const saved = await fetchSavedPayments(db, period.id);
+
+  if (saved.length === 0) {
+    const result = await calculateDraft({
+      companyId,
+      periodStart: start,
+      periodEnd: end,
+      payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
+      includeHealthAllowance: flags.includeHa,
+      includeThirteenth: flags.includeThirteenth,
+    });
+    return { workers: result.rows.length - result.skippedNoRate.length, closed: false };
+  }
+
+  const onBatch = new Set(saved.map((s) => s.workerId));
+  const todo = [...wanted].filter((w) => !onBatch.has(w) || alsoWorkers.includes(w));
+  // ponytail: sequential, and each call re-reads roster/rates/holidays. The list
+  // is normally empty or tiny; hoist the shared reads into a batch variant if a
+  // first reconcile of a big period ever feels slow.
+  for (const workerId of todo) {
+    await recomputeWorkerDraft({
+      companyId,
+      periodId: period.id,
+      periodStart: start,
+      periodEnd: end,
+      workerId,
+    });
+  }
+  return { workers: todo.length, closed: false };
+};
+
+/**
+ * Approve/reject/undo path: reconcile every period the decided days fall in.
+ * The decided workers are forced through the rebuild even when they're already
+ * on the batch — their hours are exactly what changed, and a full retraction has
+ * to shrink or drop the row rather than leave it waiting to be paid.
  */
 export const syncApprovedTimeToDrafts = async (args: {
   companyId: string;
@@ -360,52 +423,28 @@ export const syncApprovedTimeToDrafts = async (args: {
   const closedPeriods: string[] = [];
 
   for (const { start, end, workerIds } of groupWorkersByPeriod(args.entries)) {
-    const existing = await findPeriod(db, args.companyId, start, end);
-    if (existing && existing.state !== 'open') {
-      closedPeriods.push(`${start} – ${end}`);
-      continue;
-    }
-    if (existing?.kind === 'off_cycle') continue;
-    // Create with the same defaults the Calculate card ticks; an existing period
-    // keeps whatever toggles its last run stored (upsert would overwrite them).
-    const period =
-      existing ??
-      (await upsertOpenPeriod(db, args.companyId, start, end, periodFor(start).payDate, {
-        includeHa: true,
-        includeThirteenth: false,
-      }));
-    const flags = await fetchPeriodCalcFlags(db, period.id);
-
-    const saved = await fetchSavedPayments(db, period.id);
-    if (saved.length === 0) {
-      const result = await calculateDraft({
-        companyId: args.companyId,
-        periodStart: start,
-        periodEnd: end,
-        payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
-        includeHealthAllowance: flags.includeHa,
-        includeThirteenth: flags.includeThirteenth,
-      });
-      workers += result.rows.length - result.skippedNoRate.length;
-    } else {
-      // ponytail: sequential, and each call re-reads roster/rates/holidays. Fine
-      // for the incremental approvals that reach this branch (a handful of
-      // workers); hoist the shared reads into a batch variant if a bulk approve
-      // onto an already-built batch ever feels slow.
-      for (const workerId of workerIds) {
-        await recomputeWorkerDraft({
-          companyId: args.companyId,
-          periodId: period.id,
-          periodStart: start,
-          periodEnd: end,
-          workerId,
-        });
-        workers += 1;
-      }
-    }
+    const res = await reconcilePeriod(db, args.companyId, start, end, workerIds);
+    workers += res.workers;
+    if (res.closed) closedPeriods.push(`${start} – ${end}`);
   }
 
   return { workers, closedPeriods };
+};
+
+/**
+ * Opening Calculate on a period pulls in any approved time that isn't on the
+ * batch yet — the catch-up for hours approved before the transfer existed, or
+ * by any path that doesn't route through the approve buttons. A no-op once the
+ * batch is complete.
+ */
+export const reconcileApprovedTime = async (args: {
+  companyId: string;
+  periodStart: string;
+  periodEnd: string;
+}): Promise<{ workers: number }> => {
+  const db = await createServerSupabase();
+  const res = await reconcilePeriod(db, args.companyId, args.periodStart, args.periodEnd, []);
+  return { workers: res.workers };
 };
 
 export type CatchUpCandidate = {
