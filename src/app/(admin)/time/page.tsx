@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { TimeShell } from '@/components/time/TimeShell';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import { fetchWorkerClientsBatch } from '@/db/queries/sessions';
 import {
   fetchContractorOptions,
@@ -10,6 +11,7 @@ import {
   fetchUnpaidEntries,
 } from '@/db/queries/time';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { resolveHolidaysForRange } from '@/lib/pay/holidays';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -50,12 +52,13 @@ export default async function TimePage({
 
   const db = await createServerSupabase();
 
-  const [entries, roster, contractorOptions] = await Promise.all([
+  const [entries, roster, contractorOptions, holidaysConfig] = await Promise.all([
     unpaidMode
       ? fetchUnpaidEntries(db, companyId)
       : fetchPeriodEntries(db, companyId, period.start, period.end),
     fetchRosterLinks(db, companyId),
     fetchContractorOptions(db, companyId),
+    fetchHolidaysConfig(db, companyId),
   ]);
 
   // Each contractor's assigned CLIENT(s) — the invoicing target. Shown per row;
@@ -68,7 +71,11 @@ export default async function TimePage({
   for (const [workerId, list] of clientsByWorker) assignedClients[workerId] = list;
 
   const rows = groupByContractor(entries);
-  const stats = periodStats(period.start, period.end);
+  const stats = periodStats(
+    period.start,
+    period.end,
+    resolveHolidaysForRange(holidaysConfig, period.start, period.end),
+  );
 
   // Find source_names (from the shown entries) with no matching worker.
   const idx = buildMatchIndex(roster);

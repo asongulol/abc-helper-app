@@ -107,4 +107,15 @@ describe('periodStats', () => {
     expect(stats.workingDays).toBeGreaterThan(0);
     expect(stats.workingDays).toBeLessThanOrEqual(11);
   });
+
+  // Jul 1–15 2026 has 11 weekdays, but Jul 4 (Sat) is observed Fri Jul 3.
+  it('excludes observed holidays: Jul 1–15 2026 is 10 working days', () => {
+    const stats = periodStats('2026-07-01', '2026-07-15');
+    expect(stats.periodDays).toBe(15);
+    expect(stats.workingDays).toBe(10);
+  });
+
+  it('honours a company override that clears the year', () => {
+    expect(periodStats('2026-07-01', '2026-07-15', []).workingDays).toBe(11);
+  });
 });
