@@ -621,12 +621,16 @@ export type OffCycleBatch = {
  * dated `today` if none exists. The date window is a label only — an off-cycle
  * batch is paid purely from its off_cycle_pay_items (the regular calc is guarded
  * against it), so the window intentionally captures no hours/sessions.
+ *
+ * pay_date is also `today`: off-cycle means "pay now, off the schedule". It
+ * previously took periodFor(today).payDate — the IN-PROGRESS period's arrears
+ * pay date, 15–30 days out — which mislabeled a pay-now batch (ProcessPay
+ * header + mark-paid default date).
  */
 export const findOrCreateOffCycleBatch = async (
   db: Db,
   companyId: string,
   today: string,
-  payDate: string,
 ): Promise<OffCycleBatch> => {
   const { data: open, error: findErr } = await db
     .from('pay_periods')
@@ -652,7 +656,7 @@ export const findOrCreateOffCycleBatch = async (
       company_id: companyId,
       period_start: today,
       period_end: today,
-      pay_date: payDate,
+      pay_date: today,
       state: 'open',
       kind: 'off_cycle',
     })

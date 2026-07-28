@@ -1666,12 +1666,7 @@ export async function routeSessionsToOffCycleBatch(args: {
   try {
     const db = await createServerSupabase();
     const today = new Date().toISOString().slice(0, 10);
-    const batch = await findOrCreateOffCycleBatch(
-      db,
-      args.companyId,
-      today,
-      periodFor(today).payDate,
-    );
+    const batch = await findOrCreateOffCycleBatch(db, args.companyId, today);
     const res = await addApprovedSessionsToPeriod(
       db,
       args.companyId,
@@ -1705,12 +1700,7 @@ export async function openOffCycleBatch(args: {
   try {
     const db = await createServerSupabase();
     const today = new Date().toISOString().slice(0, 10);
-    const batch = await findOrCreateOffCycleBatch(
-      db,
-      args.companyId,
-      today,
-      periodFor(today).payDate,
-    );
+    const batch = await findOrCreateOffCycleBatch(db, args.companyId, today);
     if (batch.isNew) {
       await logEvent({
         companyId: args.companyId,

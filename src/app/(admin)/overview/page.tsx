@@ -19,7 +19,7 @@ import {
   getRecentPeriodNets,
 } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
-import { periodFor } from '@/lib/dates/periods';
+import { previousPeriod } from '@/lib/dates/periods';
 import { centavosToPhp, money } from '@/lib/format';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId, listCompanies } from '@/server/company';
@@ -74,7 +74,12 @@ export default async function OverviewPage() {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const period = periodFor(today);
+  // Arrears: the pay cycle being worked (calc → lock → pay) is the PREVIOUS
+  // half-month, not the one containing today. periodFor(today) has no payroll
+  // row while it accrues, so its net/pipeline/state never move and the pay-day
+  // countdown ("today"/"tomorrow") is unreachable (its pay date is always
+  // ≥15 days out). Same fix as the /payroll default.
+  const period = previousPeriod(today);
 
   const supabase = await createServerSupabase();
 
