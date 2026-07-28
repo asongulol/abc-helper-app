@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PayrollShell } from '@/components/payroll/PayrollShell';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchPeriodSummaries } from '@/db/queries/payroll';
+import { fetchPeriodSummaries, preferredOpenDraft } from '@/db/queries/payroll';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
@@ -38,22 +38,23 @@ export default async function PayrollPage({
 
   // Which period the editor opens on:
   //  1. an explicit ?period=<YYYY-MM-DD> deep-link (Process & Pay, ⌘K), else
-  //  2. the most recent OPEN draft that already has statements — so the unlocked
-  //     draft opens fully instead of an empty "current period" card that just
-  //     confuses (its hours aren't approved yet), else
-  //  3. any open draft, else the period awaiting payroll — the PRECEDING one,
+  //  2. the open draft for the period awaiting payroll — the PRECEDING one,
   //     since payroll runs a half-month in arrears (matches /time's review
-  //     default). The in-progress period isn't payable yet, and opening on it
-  //     hid the period the admin actually came to calculate.
+  //     default), else the most recent open draft that already has statements —
+  //     so the unlocked draft opens fully instead of an empty "current period"
+  //     card that just confuses (its hours aren't approved yet), else any open
+  //     draft, else the arrears period itself.
+  //  RP-25: (2) used to start at "newest open draft with statements", which the
+  //  legacy sibling app's cloned rows made true for the IN-PROGRESS period with
+  //  no admin action — hiding the period the admin actually came to calculate.
   // periodFor() throws on malformed input, so the deep-link is validated first.
-  const openDraft =
-    periods.find((p) => p.state === 'open' && p.contractorCount > 0) ??
-    periods.find((p) => p.state === 'open');
+  const arrears = previousPeriod(today);
+  const openDraft = preferredOpenDraft(periods, arrears.start);
   const defaultPeriod = isIsoDate(sp.period)
     ? periodFor(sp.period)
     : openDraft
       ? periodFor(openDraft.periodStart)
-      : previousPeriod(today);
+      : arrears;
 
   return (
     <PayrollShell

@@ -16,6 +16,7 @@ import {
   fetchLastPayoutMethods,
   fetchOffCycleItemsForPeriod,
   fetchPaymentRowsForRestore,
+  fetchPeriodCalcFlags,
   fetchRates,
   fetchRoster,
   fetchSalariedCatchUpUnits,
@@ -24,9 +25,11 @@ import {
   findPeriod,
   type PaymentSnapshotRow,
   pruneDraftPaymentsExcept,
+  savePriorPayments,
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
+import { periodFor } from '@/lib/dates/periods';
 import type { Centavos } from '@/lib/money';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { expectedHours, payModelFor } from '@/lib/pay/expected-hours';
@@ -97,7 +100,14 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     input.companyId,
     input.periodStart,
     input.periodEnd,
-    input.payDate,
+    // RP-66: derive the arrears pay date, never trust input.payDate — the schema
+    // canonicalizes the period window but not this field, so a client posting
+    // payDate '2026-12-25' for Mar 1–15 would be stored verbatim and inherited
+    // by payslips, statements, reports and the Wise matcher anchor.
+    periodFor(input.periodStart).payDate,
+    // RP-20: remember the toggles this run used, so rebuilding ONE row later
+    // (an off-cycle / catch-up add) replays them instead of guessing.
+    { includeHa: input.includeHealthAllowance, includeThirteenth: input.includeThirteenth },
   );
 
   // Off-cycle per-session/per-hour pay lines, re-applied here so they survive
@@ -153,6 +163,11 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   // them, so the caller can offer an Undo. Captured after upsertOpenPeriod so
   // period.id is known; before prune/upsert so the old values are still present.
   const priorSnapshot = await fetchPaymentRowsForRestore(db, period.id);
+  // RP-23: park it on the period. The Undo used to post these rows back from
+  // the browser and they were inserted verbatim — money columns, status and
+  // paid_at included. Restoring by reference removes that trust boundary; the
+  // returned copy is now only the UI's "is there anything to undo?" signal.
+  await savePriorPayments(db, period.id, priorSnapshot);
 
   const drafts = rows
     .map((r) => toPaymentDraft(r, { fxRate: input.fxRate }))
@@ -199,6 +214,15 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
  * Caller must have verified the admin + company scope and that the period is
  * open (the payments period-open trigger also enforces it). Returns the new net
  * (PHP major units), or null when the worker has no rate / no row was produced.
+ *
+ * ponytail (RP-20): the rebuild still discards the target worker's manual
+ * misc/bonus/PDD/gross-override. Only addSalariedCatchUp avoids it (via
+ * setPaymentOffCycle), because a catch-up's hours belong to another period and
+ * so cannot move this window's gross. Every other caller marks sessions paid or
+ * frees them, which legitimately DOES move gross, so a surgical
+ * off_cycle_php-only write there would double-pay. Upgrade path: have the
+ * engine return gross separately from the manual columns, then merge instead
+ * of upsert.
  */
 export const recomputeWorkerDraft = async (args: {
   companyId: string;
@@ -215,6 +239,11 @@ export const recomputeWorkerDraft = async (args: {
 }): Promise<{ netPhp: number | null }> => {
   const offCycleOnly = args.offCycleOnly ?? false;
   const db = await createServerSupabase();
+  // RP-20: replay the toggles the period's Calculate ran with. Hardcoding
+  // "HA on, 13th off" here rebuilt this one worker under different rules than
+  // the rest of the batch (a run with HA off silently regained it; a year-end
+  // run with the 13th-month accrual on silently lost it).
+  const flags = await fetchPeriodCalcFlags(db, args.periodId);
   const [entries, roster, rates, lastMethod, holidaysConfig] = await Promise.all([
     offCycleOnly
       ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
@@ -254,8 +283,8 @@ export const recomputeWorkerDraft = async (args: {
     roster: rosterOne,
     rates,
     lastPayoutMethod: lastMethod,
-    includeHealthAllowance: !offCycleOnly,
-    includeThirteenth: false,
+    includeHealthAllowance: offCycleOnly ? false : flags.includeHa,
+    includeThirteenth: offCycleOnly ? false : flags.includeThirteenth,
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
