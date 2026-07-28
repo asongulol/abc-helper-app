@@ -321,6 +321,17 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     for (const r of args.roster) {
       if (processed.has(r.workerId)) continue;
       if (!r.worker.healthAllowanceEligible) continue;
+      // Every loop above is ACTIVITY-driven, so an ended contractor can never
+      // reach them — no time, no sessions, no ledger row. This one is driven by
+      // a calendar date and roster membership alone, and `rates` are not
+      // end-dated when someone leaves, so without this guard a recalc conjures a
+      // ₱20k allowance for a contractor who left before the anniversary came
+      // round. Inactive rows with real work still pay (RP-18) — they surface
+      // above and only need acknowledging at lock.
+      // ponytail: judged at recalc time, since a link records only a status and
+      // no end date. Someone HA-eligible with zero time in the window who leaves
+      // later is skipped too; add an ended_on column if that case ever appears.
+      if (isInactiveWorker(r.worker.status, r.linkStatus)) continue;
       if (healthAllowance(r.worker.hireDate, args.periodStart, args.periodEnd) <= 0) continue;
       build(r.workerId, 0);
     }

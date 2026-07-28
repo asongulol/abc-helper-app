@@ -377,6 +377,48 @@ describe('F7: HA-eligible worker with zero approved time in their anniversary pe
     expect(draft?.net_php).toBe(20000);
   });
 
+  it('does NOT conjure the allowance for a contractor who has ended', () => {
+    // The repro: hire date 2019-07-09, both statuses "ended", rate never
+    // end-dated — a recalc of the anniversary period paid ₱20,000 to someone
+    // who had already left.
+    const ended = roster({
+      workerId: 'w1',
+      linkStatus: 'ended',
+      worker: { ...haWorker.worker, status: 'ended' },
+    });
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution: attributeTimeEntries([], [ended]),
+      roster: [ended],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('still pays an inactive contractor who actually worked in the period (RP-18)', () => {
+    // Only the conjured-from-a-date row is suppressed; real work still pays,
+    // flagged inactive so the lock makes the admin acknowledge it.
+    const ended = roster({
+      workerId: 'w1',
+      linkStatus: 'ended',
+      worker: { ...haWorker.worker, status: 'ended' },
+    });
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution: attributeTimeEntries(
+        [entry({ workerId: 'w1', workDate: '2026-06-02', trackedSeconds: 8 * 3600 })],
+        [ended],
+      ),
+      roster: [ended],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.inactive).toBe(true);
+    expect(rows[0]?.result.healthAllowance).toBe(2_000_000);
+  });
+
   it('does NOT build a zero-time row outside the anniversary period', () => {
     const attribution = attributeTimeEntries([], [haWorker]);
     const rows = buildStatements({
