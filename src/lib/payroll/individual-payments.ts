@@ -6,6 +6,9 @@
  * legacy `downloadIndividual` (abc-work-app index.html ~9879).
  */
 
+// Shared with the other two CSV builders — quoting + formula-injection guard.
+import { escapeCsvField } from '@/lib/payroll/bank-export';
+
 export type IndividualPaymentRow = {
   name: string;
   payoutMethod: string | null;
@@ -14,8 +17,6 @@ export type IndividualPaymentRow = {
   /** PHP major units (from the DB). */
   netPhp: number;
 };
-
-const escapeCsvField = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 export interface IndividualPaymentsResult {
   csv: string;

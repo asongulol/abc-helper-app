@@ -15,11 +15,20 @@ export type BankExportRow = {
   payoutMethod: string | null;
 };
 
-const escapeCsvField = (v: string): string => {
-  if (v.includes(',') || v.includes('"') || v.includes('\n')) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
+/** A value Excel reads back as a number — never prefix these (e.g. a -500 amount). */
+const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
+
+/**
+ * Shared CSV field escape for all three payroll builders (RP-62).
+ *
+ * Beyond RFC 4180 quoting, it neutralizes spreadsheet formula injection: admins
+ * open these files in Excel/Sheets, where a cell starting with = + - @ (or TAB /
+ * CR) is EXECUTED. A leading `'` keeps it text. Plain numbers are exempt so the
+ * amount columns stay machine-readable.
+ */
+export const escapeCsvField = (v: string): string => {
+  const s = /^[=+@\t\r-]/.test(v) && !PLAIN_NUMBER.test(v) ? `'${v}` : v;
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
 /**

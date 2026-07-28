@@ -11,6 +11,11 @@
  * would reject. BPI / gcash / paymaya / paypal rows are never included.
  */
 
+// Shared with the other two CSV builders — quoting + formula-injection guard.
+// Wise's importer is unaffected by injection, but the escape is numeric-safe so
+// the amount / UUID columns come out byte-identical to the template.
+import { escapeCsvField } from '@/lib/payroll/bank-export';
+
 export type WiseBatchRow = {
   name: string;
   email: string | null;
@@ -39,8 +44,6 @@ const fmtAmount = (n: number): string => {
   const v = Math.round(Number(n) * 100) / 100;
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
 };
-
-const escapeCsvField = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 export interface WiseBatchResult {
   csv: string;

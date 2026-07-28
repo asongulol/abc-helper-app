@@ -27,6 +27,16 @@ export type RateRow = {
  * (effective_start <= periodEnd AND (effective_end IS NULL OR
  * effective_end >= periodStart)); the most recent effective_start wins.
  * Returns null when the worker has no applicable rate.
+ *
+ * RP-35 — this back-prices the WHOLE period at the new rate when a raise lands
+ * mid-period, and that is intended, not a bug: money-core spec §5 defines
+ * exactly this (latest overlapping effective_start, no proration) and the parity
+ * fixtures encode it. Per-unit workers got a date-aware split later (F4:
+ * `dateAwarePerUnitGross` in src/lib/payroll/mappers.ts →
+ * `perUnitGrossOverride`) precisely because salaried deliberately did not — it
+ * calls resolveRate PER DATE instead of changing this. Do not "fix" it here; the
+ * open gap is only that the UI's Rate column shows the winning rate with no hint
+ * that a mid-period change occurred (src/components/payroll/PayrollShell.tsx:1234).
  */
 export const resolveRate = (
   rates: readonly RateRow[],

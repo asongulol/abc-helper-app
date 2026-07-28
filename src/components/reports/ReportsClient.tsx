@@ -20,6 +20,7 @@ import { StatTile } from '@/components/overview/StatTile';
 import { ContractorPicker } from '@/components/ui';
 import { money } from '@/lib/format';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
+import { csvEscape } from '@/lib/reports/csv';
 import {
   getContractorHistory,
   getUtilization,
@@ -53,10 +54,8 @@ const PAID = (st: string | null): boolean => st === 'sent' || st === 'reconciled
 const num = (n: number): string => n.toFixed(2);
 
 // --- CSV helpers (browser download; legacy downloadCSV) ---------------------
-const csvEscape = (v: string | number | null | undefined): string => {
-  const s = v == null ? '' : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// ponytail: rows-of-cells shape differs from lib/reports/csv's builders, so only
+// the escape is shared (RP-62) — not worth a second download helper.
 const downloadCSV = (filename: string, rows: Array<Array<string | number | null | undefined>>) => {
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

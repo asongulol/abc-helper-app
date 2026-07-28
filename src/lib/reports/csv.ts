@@ -5,15 +5,18 @@
 
 import type { ReportPaymentRow, ReportPeriodRow } from '@/db/queries/reports';
 import { centavosToPhp } from '@/lib/format';
+import { escapeCsvField } from '@/lib/payroll/bank-export';
 
-const esc = (v: string | number | null | undefined): string => {
-  const s = v == null ? '' : String(v);
-  // Wrap in quotes if it contains a comma, double-quote, or newline
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-};
+/**
+ * Null/number-tolerant wrapper over the one shared escape (RP-62) — that one also
+ * neutralizes spreadsheet formula injection and leaves plain numbers alone.
+ * Exported because the Reports and Invoicing screens build CSVs inline.
+ */
+export const csvEscape = (v: string | number | null | undefined): string =>
+  escapeCsvField(v == null ? '' : String(v));
 
-const row = (cells: (string | number | null | undefined)[]): string => cells.map(esc).join(',');
+const row = (cells: (string | number | null | undefined)[]): string =>
+  cells.map(csvEscape).join(',');
 
 const phpFmt = (centavos: number): string => centavosToPhp(centavos).toFixed(2);
 

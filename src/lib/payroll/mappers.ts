@@ -82,7 +82,16 @@ export const attributeTimeEntries = (
   entries: readonly TimeEntryRow[],
   roster: readonly RosterRow[],
   /** (worker → work_dates) already paid via a per_hour off-cycle item — those
-   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum. */
+   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum.
+   *  ponytail: whole-DAY granularity. A date Set carries no units, so a 2-hour
+   *  off-cycle item drops all 8 tracked hours of that day (RP-27) — it underpays,
+   *  it never double-pays. Unreachable today: the off-cycle modal is per_session
+   *  only, though the action and schema both accept per_hour. To pay the
+   *  remainder instead, `fetchOffCycleItemsForPeriod` (src/db/queries/payroll.ts)
+   *  must bucket the items' `units` as hours-per-date rather than a date Set, and
+   *  this param widen to ReadonlyMap<string, ReadonlyMap<string, number>>. Note
+   *  an amount-only item stores `units: null`, so that case must keep the
+   *  whole-day drop regardless. */
   excludeDatesByWorker?: ReadonlyMap<string, ReadonlySet<string>>,
 ): AttributionResult => {
   const idx = buildMatchIndex(
@@ -117,6 +126,8 @@ export const attributeTimeEntries = (
       continue;
     }
     // Drop a day already paid via a per_hour off-cycle item (no double-pay).
+    // RP-27: this drops the day's FULL tracked hours, not the hours the item
+    // actually paid — see excludeDatesByWorker above for why and what it takes.
     if (excludeDatesByWorker?.get(wid)?.has(t.workDate)) continue;
     const secs = (Number(t.trackedSeconds) || 0) + (Number(t.ptoSeconds) || 0);
     secondsByWorker.set(wid, (secondsByWorker.get(wid) ?? 0) + secs);
