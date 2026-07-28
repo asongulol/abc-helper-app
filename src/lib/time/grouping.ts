@@ -3,7 +3,9 @@
  * No I/O; takes already-fetched DB rows as input.
  */
 
-import { periodDates, weekdayCount } from '@/lib/dates/periods';
+import { periodDates } from '@/lib/dates/periods';
+import { workingDayCount } from '@/lib/pay/expected-hours';
+import type { Holiday } from '@/lib/pay/holidays';
 
 export interface TimeEntryRaw {
   id: string;
@@ -68,14 +70,16 @@ export const groupByContractor = (entries: readonly TimeEntryRaw[]): ContractorP
   return rows.sort((a, b) => a.sourceName.localeCompare(b.sourceName));
 };
 
-/** Derive period stats used in the header. */
+/**
+ * Derive period stats used in the header. `workingDays` excludes observed
+ * holidays, so it matches the expected hours payroll actually pays; pass the
+ * company's resolved holidays or the code defaults apply.
+ */
 export const periodStats = (
   start: string,
   end: string,
-): { periodDays: number; workingDays: number } => {
-  const dates = periodDates(start, end);
-  return {
-    periodDays: dates.length,
-    workingDays: weekdayCount(start, end),
-  };
-};
+  holidays?: readonly Holiday[],
+): { periodDays: number; workingDays: number } => ({
+  periodDays: periodDates(start, end).length,
+  workingDays: workingDayCount(start, end, holidays),
+});
