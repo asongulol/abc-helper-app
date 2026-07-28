@@ -32,6 +32,7 @@ import {
   fetchOffCycleItemsForWorkerPeriod,
   fetchOffCycleTotalForWorker,
   fetchPaymentForWorker,
+  fetchPeriodById,
   fetchPeriodIdsForPayments,
   fetchPeriodState,
   fetchPeriodStatesForPayments,
@@ -76,6 +77,7 @@ import {
   type RecentSessionRow,
   type UnpaidSessionRow,
 } from '@/db/queries/sessions';
+import { unapproveWindow } from '@/db/queries/time';
 import { periodFor } from '@/lib/dates/periods';
 import { humanizeError } from '@/lib/errors';
 import { centavos, mulRatioMinor, sumMinor } from '@/lib/money';
@@ -726,7 +728,33 @@ async function releaseSessionsForDeletedStatements(
   return sessionIds.length;
 }
 
-export async function deleteStatement(args: unknown): Promise<ActionResult<{ deleted: number }>> {
+/**
+ * Removing a statement is a RETRACTION, so its hours go back to Time & Approval.
+ *
+ * Without this the removal doesn't stick: approved time belongs on the Calculate
+ * batch, so `reconcilePeriod` rebuilds the row on the very next visit (#72) and
+ * the delete looks like it did nothing. Un-approving is also what the admin
+ * actually wants — the reason to pull someone off a batch is to fix their hours,
+ * and hours are edited on Approval, not here.
+ *
+ * Only on an OPEN regular period: a locked/paid run's hours must stay approved
+ * (that's the salaried catch-up card's input), and off-cycle statements are paid
+ * from their own ledger, not from tracked time.
+ */
+async function returnTimeToApproval(
+  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  payPeriodId: string,
+  workerId?: string,
+): Promise<number> {
+  const period = await fetchPeriodById(db, payPeriodId);
+  if (period?.state !== 'open' || period.kind === 'off_cycle') return 0;
+  return unapproveWindow(db, companyId, period.periodStart, period.periodEnd, workerId);
+}
+
+export async function deleteStatement(
+  args: unknown,
+): Promise<ActionResult<{ deleted: number; unapproved: number }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -748,13 +776,16 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
     const released = stmt
       ? await releaseSessionsForDeletedStatements(db, stmt.payPeriodId, stmt.workerId)
       : 0;
+    const unapproved = stmt
+      ? await returnTimeToApproval(db, input.companyId, stmt.payPeriodId, stmt.workerId)
+      : 0;
     await logEvent({
       companyId: input.companyId,
       action: 'delete_statement',
       entity: input.paymentId,
-      detail: { scope: 'contractor', released_sessions: released },
+      detail: { scope: 'contractor', released_sessions: released, unapproved_entries: unapproved },
     });
-    return { ok: true, data: { deleted: 1 } };
+    return { ok: true, data: { deleted: 1, unapproved } };
   } catch (err) {
     return {
       ok: false,
@@ -765,7 +796,7 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
 
 export async function deleteAllStatements(
   args: unknown,
-): Promise<ActionResult<{ deleted: number }>> {
+): Promise<ActionResult<{ deleted: number; unapproved: number }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -790,13 +821,19 @@ export async function deleteAllStatements(
 
     const deleted = await dbDeleteAllStatements(db, period.id);
     const released = await releaseSessionsForDeletedStatements(db, period.id);
+    const unapproved = await returnTimeToApproval(db, input.companyId, period.id);
     await logEvent({
       companyId: input.companyId,
       action: 'delete_statement',
       entity: `${input.periodStart} → ${input.periodEnd}`,
-      detail: { scope: 'whole_period', count: deleted, released_sessions: released },
+      detail: {
+        scope: 'whole_period',
+        count: deleted,
+        released_sessions: released,
+        unapproved_entries: unapproved,
+      },
     });
-    return { ok: true, data: { deleted } };
+    return { ok: true, data: { deleted, unapproved } };
   } catch (err) {
     return {
       ok: false,

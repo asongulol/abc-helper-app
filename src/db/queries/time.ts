@@ -431,6 +431,40 @@ export const updateApproval = async (
   }
 };
 
+/**
+ * Send a window's APPROVED time back to the approval queue (pending), scoped to
+ * one worker when given. Returns how many entries moved.
+ *
+ * This is what makes removing a statement stick. Approved hours belong on the
+ * Calculate batch (see reconcilePeriod), so deleting the row while the hours
+ * stay approved just means the next visit to Calculate rebuilds it — the
+ * removal silently reverts. Un-approving is the retraction: the hours land back
+ * on Time & Approval to be edited or re-approved, and reconcile has nothing to
+ * pull.
+ *
+ * Rejected entries are left alone — they were already decided against, and
+ * re-opening them would resurrect work someone deliberately threw out.
+ */
+export const unapproveWindow = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  end: string,
+  workerId?: string,
+): Promise<number> => {
+  let q = db
+    .from('time_entries')
+    .update({ approval: 'pending', approved_at: null, approved_by: null })
+    .eq('company_id', companyId)
+    .eq('approval', 'approved')
+    .gte('work_date', start)
+    .lte('work_date', end);
+  if (workerId) q = q.eq('worker_id', workerId);
+  const { data, error } = await q.select('id');
+  if (error) throw new Error(`unapprove window: ${error.message}`);
+  return (data ?? []).length;
+};
+
 /** Restore approval values for a set of id+status pairs (used by undo). */
 export const restoreApprovals = async (
   db: Db,

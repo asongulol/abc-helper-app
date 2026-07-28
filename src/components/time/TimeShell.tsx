@@ -79,6 +79,10 @@ export const TimeShell = ({
   const entries = rows.flatMap((r) => r.entries);
   const pendingCount = entries.filter((e) => e.approval === 'pending').length;
   const status = reviewStatus(entries.length, pendingCount);
+  // The grid is only worth showing when there's a decision left to make: entries
+  // awaiting approval, or source names that matched no contractor — those are
+  // hours nobody will ever be paid for, and the fixer lives inside the table.
+  const needsReview = status === 'pending' || unmatchedNames.length > 0;
 
   // Contractors whose hours can't be cleanly invoiced: no client, or more than
   // one (multi-client needs per-project attribution — see the hours plan).
@@ -180,75 +184,84 @@ export const TimeShell = ({
       )}
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h3 style={{ margin: 0 }}>
-          <button
-            type="button"
-            onClick={() => setReviewOpen((o) => !o)}
-            aria-expanded={reviewOpen}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 12,
-              flexWrap: 'wrap',
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              font: 'inherit',
-              color: 'inherit',
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-          >
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <span aria-hidden style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
-                {reviewOpen ? '▾' : '▸'}
-              </span>
-              Review &amp; Approve —{' '}
-              {unpaidMode ? 'all unpaid periods' : `${period.start} – ${period.end}`}
-            </span>
-            <span className="sub" style={{ margin: 0, fontWeight: 400, fontSize: 13 }}>
-              {status === 'empty'
-                ? 'no entries yet'
-                : status === 'pending'
-                  ? `${pendingCount} pending`
-                  : 'all approved'}
-              {reviewOpen ? '' : ' · click to review'}
-            </span>
-          </button>
-        </h3>
-        {/* The onward step once nothing is pending. Outside the <button> — a
-            link nested in a button is invalid HTML. */}
-        {status === 'clear' && !unpaidMode && (
-          <p className="sub" style={{ margin: '8px 0 0' }}>
-            All {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} approved —{' '}
-            <Link href={`/payroll?period=${period.start}`}>
-              review the pay batch on Calculate →
-            </Link>
-          </p>
-        )}
-        {status === 'empty' && (
-          <p className="sub" style={{ margin: '8px 0 0' }}>
-            Nothing imported for this period yet — upload a CSV or sync from Hubstaff above.
-          </p>
-        )}
-        {reviewOpen && (
-          <div style={{ marginTop: 12 }}>
-            <TimeApprovalTable
-              companyId={companyId}
-              periodStart={period.start}
-              periodEnd={period.end}
-              periodDays={periodDays}
-              workingDays={workingDays}
-              coverageHidden={unpaidMode}
-              rows={rows}
-              unmatchedNames={unmatchedNames}
-              contractorOptions={contractorOptions}
-              assignedClients={assignedClients}
-              onRefresh={handleRefresh}
-            />
-          </div>
+        {needsReview ? (
+          <>
+            <h3 style={{ margin: 0 }}>
+              <button
+                type="button"
+                onClick={() => setReviewOpen((o) => !o)}
+                aria-expanded={reviewOpen}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  flexWrap: 'wrap',
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  font: 'inherit',
+                  color: 'inherit',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span aria-hidden style={{ color: 'var(--muted)', fontSize: '0.85em' }}>
+                    {reviewOpen ? '▾' : '▸'}
+                  </span>
+                  Review &amp; Approve —{' '}
+                  {unpaidMode ? 'all unpaid periods' : `${period.start} – ${period.end}`}
+                </span>
+                <span className="sub" style={{ margin: 0, fontWeight: 400, fontSize: 13 }}>
+                  {pendingCount > 0 ? `${pendingCount} pending` : 'names to match'}
+                  {reviewOpen ? '' : ' · click to review'}
+                </span>
+              </button>
+            </h3>
+            {reviewOpen && (
+              <div style={{ marginTop: 12 }}>
+                <TimeApprovalTable
+                  companyId={companyId}
+                  periodStart={period.start}
+                  periodEnd={period.end}
+                  periodDays={periodDays}
+                  workingDays={workingDays}
+                  coverageHidden={unpaidMode}
+                  rows={rows}
+                  unmatchedNames={unmatchedNames}
+                  contractorOptions={contractorOptions}
+                  assignedClients={assignedClients}
+                  onRefresh={handleRefresh}
+                />
+              </div>
+            )}
+          </>
+        ) : (
+          /* Nothing pending is a finished state, so the grid goes away entirely
+             rather than sitting here as an open task. Editing an approved entry
+             is a retraction, and retraction lives on Calculate now: removing a
+             contractor (or clearing the batch) un-approves their hours, which
+             puts them back in this card as pending. */
+          <>
+            <h3 style={{ margin: 0 }}>Nothing to approve</h3>
+            <p className="sub" style={{ margin: '8px 0 0' }}>
+              {status === 'empty' ? (
+                'Nothing imported for this period yet — upload a CSV or sync from Hubstaff above.'
+              ) : unpaidMode ? (
+                `All ${entries.length} unpaid entr${entries.length === 1 ? 'y is' : 'ies are'} approved.`
+              ) : (
+                <>
+                  All {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} for {period.start} –{' '}
+                  {period.end} approved.{' '}
+                  <Link href={`/payroll?period=${period.start}`}>Pay them on Calculate →</Link> To
+                  change someone&rsquo;s hours, remove them from the batch there — that sends their
+                  time back here.
+                </>
+              )}
+            </p>
+          </>
         )}
       </div>
     </>
