@@ -66,3 +66,23 @@ describe('buildWiseBatch', () => {
     expect(line).toContain(',12000,'); // no .00
   });
 });
+
+describe('buildWiseBatch — target currency must be PHP (RP-02)', () => {
+  it('throws on a non-PHP target instead of denominating peso amounts as dollars', () => {
+    // amountCurrency is 'target' and amount is netPhp, so a USD target would
+    // send ₱50,000 as $50,000 — roughly 58x, on every row in the file.
+    expect(() =>
+      buildWiseBatch([row({ netPhp: 50000 })], {
+        periodStart: '2026-06-01',
+        periodEnd: '2026-06-15',
+        targetCurrency: 'USD',
+      }),
+    ).toThrow(/must be PHP/);
+  });
+
+  it('still builds with an explicit PHP target and with the default', () => {
+    const opts = { periodStart: '2026-06-01', periodEnd: '2026-06-15' };
+    expect(buildWiseBatch([row({})], { ...opts, targetCurrency: 'PHP' }).included).toHaveLength(1);
+    expect(buildWiseBatch([row({})], opts).included).toHaveLength(1);
+  });
+});

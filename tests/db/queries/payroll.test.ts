@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { type OpenDraft, resolveOpenDraftForDate, sessionIdsToRelease } from '@/db/queries/payroll';
+import {
+  type OpenDraft,
+  resolveOpenDraftForDate,
+  sessionIdsToRelease,
+  sessionPaidWorkers,
+} from '@/db/queries/payroll';
 
 describe('resolveOpenDraftForDate — date-containment draft resolution (audit #001/#009)', () => {
   const juneDraft: OpenDraft = { id: 'june', periodStart: '2026-06-01', periodEnd: '2026-06-15' };
@@ -49,5 +54,30 @@ describe('sessionIdsToRelease — free the sessions behind deleted statements', 
 
   it('releases nothing when the deleted statements carried no ledger-paid sessions', () => {
     expect(sessionIdsToRelease([])).toEqual([]);
+  });
+});
+
+describe('sessionPaidWorkers — whose sessions a lock stamps paid (RP-01)', () => {
+  const row = (workerId: string, units: number | null) => ({
+    workerId,
+    paymentId: `pay-${workerId}`,
+    units,
+  });
+
+  it('picks per_session rows (units set) and skips salaried / per_hour rows (units null)', () => {
+    expect(sessionPaidWorkers([row('ps', 8), row('salaried', null), row('hourly', null)])).toEqual([
+      { workerId: 'ps', paymentId: 'pay-ps' },
+    ]);
+  });
+
+  it('keeps a per_session row that summed to zero units — units 0 is still a session row', () => {
+    // All of their in-window sessions were already paid off-cycle; the UPDATE
+    // then matches nothing, but excluding them here would be wrong the moment a
+    // session lands in-window between the recalc and the lock.
+    expect(sessionPaidWorkers([row('ps', 0)])).toEqual([{ workerId: 'ps', paymentId: 'pay-ps' }]);
+  });
+
+  it('stamps nothing for a period with no session-paid workers', () => {
+    expect(sessionPaidWorkers([row('salaried', null)])).toEqual([]);
   });
 });

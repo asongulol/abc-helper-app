@@ -434,6 +434,64 @@ export const markSessionsPaid = async (
   if (error) throw new Error(`mark sessions paid: ${error.message}`);
 };
 
+/**
+ * Stamp the paid marker on the sessions a REGULAR period's calc just paid — the
+ * same set `fetchSessionUnitsByWorkerByDate` summed (approved, in-window,
+ * `paid_at IS NULL`), for the per-session workers on the period. Without this a
+ * paid session stays unmarked and can be paid a second time off-cycle.
+ *
+ * One UPDATE per worker so each session records the payment that paid it, and
+ * because that stamp is what {@link clearPeriodSessionsPaid} releases on unlock:
+ * ledger-held sessions carry a NULL `paid_payment_id` and must survive it.
+ * Service client — sessions are CLIENT-company scoped (ADR-0004).
+ */
+export const markPeriodSessionsPaid = async (
+  db: Db,
+  workers: readonly { workerId: string; paymentId: string }[],
+  periodId: string,
+  from: string,
+  to: string,
+  paidAt: string,
+): Promise<void> => {
+  for (const w of workers) {
+    const { error } = await db
+      .from('service_sessions')
+      .update({ paid_at: paidAt, paid_pay_period_id: periodId, paid_payment_id: w.paymentId })
+      .eq('worker_id', w.workerId)
+      .eq('approval', 'approved')
+      .is('paid_at', null)
+      .gte('session_date', from)
+      .lte('session_date', to);
+    if (error) throw new Error(`mark period sessions paid: ${error.message}`);
+  }
+};
+
+/**
+ * Release the sessions a lock stamped (period unlocked → payable again).
+ * Off-cycle ledger sessions are stamped with a null `paid_payment_id` and are
+ * left alone — their pay line still exists and survives the unlock.
+ */
+export const clearPeriodSessionsPaid = async (db: Db, periodId: string): Promise<void> => {
+  const { error } = await db
+    .from('service_sessions')
+    .update({ paid_at: null, paid_pay_period_id: null, paid_payment_id: null })
+    .eq('paid_pay_period_id', periodId)
+    .not('paid_payment_id', 'is', null);
+  if (error) throw new Error(`clear period sessions paid: ${error.message}`);
+};
+
+/**
+ * The workers a period pays from SESSIONS: `payments.units` is non-null only on
+ * a per_session row (see toPaymentDraft), so it is the marker for "this row's
+ * gross is Σ session units × rate" and thus for whose sessions a lock stamps.
+ */
+export const sessionPaidWorkers = (
+  payments: readonly { workerId: string; paymentId: string; units: number | null }[],
+): { workerId: string; paymentId: string }[] =>
+  payments
+    .filter((p) => p.units != null)
+    .map((p) => ({ workerId: p.workerId, paymentId: p.paymentId }));
+
 /** Clear the worker-pay paid marker (off-cycle item removed). */
 export const clearSessionsPaid = async (db: Db, sessionIds: readonly string[]): Promise<void> => {
   if (sessionIds.length === 0) return;
@@ -812,6 +870,8 @@ export type SavedPayment = {
   name: string;
   /** First + last only — table display (less clutter); never used for payout. */
   displayName: string;
+  /** Approved session count — non-null ONLY on a per_session row. */
+  units: number | null;
   expectedHours: number;
   workedHours: number;
   ratio: number;
@@ -1271,7 +1331,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -1283,6 +1343,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
       .join(' ')
       .trim(),
     displayName: [p.workers?.first_name, p.workers?.last_name].filter(Boolean).join(' ').trim(),
+    units: p.units == null ? null : Number(p.units),
     expectedHours: Number(p.expected_hours ?? 0),
     workedHours: Number(p.worked_hours ?? 0),
     ratio: Number(p.performance_ratio ?? 0),

@@ -17,6 +17,7 @@ import type {
   SavedPayment,
 } from '@/db/queries/payroll';
 import {
+  clearPeriodSessionsPaid,
   clearSessionsPaid,
   countPendingTime,
   deleteAllStatements as dbDeleteAllStatements,
@@ -41,9 +42,11 @@ import {
   insertOffCycleItems,
   markPaymentsPaid,
   markPaymentsUnpaid,
+  markPeriodSessionsPaid,
   markSessionsPaid,
   type PaymentSnapshotRow,
   restorePaymentRows,
+  sessionPaidWorkers,
   setWiseRowLock,
   stepPeriodToLocked,
   syncPeriodPaidState,
@@ -402,6 +405,24 @@ export async function lockPeriod(
     }
 
     await dbLockPeriod(db, period.id, input.periodEnd);
+
+    // The calc pays approved in-window sessions by the windowed sum, but nothing
+    // stamped them paid — so they stayed in the pickers and were re-payable
+    // off-cycle in one click. Stamp exactly the set the calc summed. Off-cycle
+    // batches are ledger-only and stamp at add time, so they're skipped here.
+    // ponytail: no transaction across PostgREST calls — the lock is what matters;
+    // a failed stamp surfaces as an error and re-locking is idempotent.
+    if (period.kind !== 'off_cycle') {
+      await markPeriodSessionsPaid(
+        createServiceClient(),
+        sessionPaidWorkers(payments),
+        period.id,
+        input.periodStart,
+        input.periodEnd,
+        new Date().toISOString(),
+      );
+    }
+
     const validCount = payments.filter((p) => p.netPhp != null).length;
 
     await logEvent({
@@ -453,6 +474,9 @@ export async function unlockPeriod(
       };
 
     await dbUnlockPeriod(db, period.id);
+    // Release the sessions the lock stamped so the reopened draft can pay them
+    // again (off-cycle ledger sessions are left held — see the query).
+    await clearPeriodSessionsPaid(createServiceClient(), period.id);
 
     await logEvent({
       companyId: input.companyId,

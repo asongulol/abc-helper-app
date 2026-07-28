@@ -62,6 +62,11 @@ export const buildWiseBatch = (
 ): WiseBatchResult => {
   const src = opts.sourceCurrency ?? 'USD';
   const tgt = opts.targetCurrency ?? 'PHP';
+  // `amount` below is netPhp with amountCurrency='target' — a PESO figure. Any
+  // other target would have Wise read ₱50,000 as $50,000 (~58× overpay) on every
+  // row. Payouts are PHP-only (docs/money-core-spec.md), so refuse rather than
+  // emit a file that pays the wrong currency.
+  if (tgt !== 'PHP') throw new Error(`Wise batch target currency must be PHP (got ${tgt}).`);
 
   // Only Wise rows are eligible for the batch upload (never BPI / others).
   const wiseRows = rows.filter((r) => r.payoutMethod === 'wise');

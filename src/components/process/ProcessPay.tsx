@@ -56,9 +56,10 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
   const [tab, setTab] = useState<Channel | 'all'>('all');
   const [busy, startBusy] = useTransition();
   const [confirm, setConfirm] = useState<null | 'paid' | 'unpaid'>(null);
-  // Manual Wise batch file currencies (default USD source → PHP target).
+  // Manual Wise batch file source currency (the funding balance). The TARGET is
+  // always PHP — the file's amounts are pesos, so any other target overpays by
+  // the FX rate; buildWiseBatch throws on one.
   const [srcCcy, setSrcCcy] = useState('USD');
-  const [tgtCcy, setTgtCcy] = useState('PHP');
   // Bumped after each export so the "already downloaded" stamp re-renders.
   const [, setDownloadTick] = useState(0);
 
@@ -159,7 +160,6 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
         periodStart: period.periodStart,
         periodEnd: period.periodEnd,
         sourceCurrency: srcCcy,
-        targetCurrency: tgtCcy,
       },
     );
     if (included.length === 0) {
@@ -465,21 +465,8 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
               <option value="PHP">PHP</option>
             </select>
           </div>
-          <div className="field" style={{ margin: 0 }}>
-            <label htmlFor={`${period.id}-tgt`} style={{ fontSize: 12 }}>
-              Target currency
-            </label>
-            <select
-              id={`${period.id}-tgt`}
-              value={tgtCcy}
-              onChange={(e) => setTgtCcy(e.target.value)}
-            >
-              <option value="PHP">PHP</option>
-              <option value="USD">USD</option>
-            </select>
-          </div>
           <span className="muted" style={{ fontSize: 11, paddingBottom: 6 }}>
-            Default USD → PHP.
+            Paid out in <b>PHP</b> — the file&apos;s amounts are pesos.
           </span>
         </div>
         <button
