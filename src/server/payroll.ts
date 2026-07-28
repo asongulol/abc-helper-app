@@ -44,6 +44,7 @@ import {
   type StatementRow,
   toPaymentDraft,
 } from '@/lib/payroll/mappers';
+import { groupWorkersByPeriod } from '@/lib/time/grouping';
 import { logEvent } from '@/server/audit';
 import type { CalculateDraftInput } from '@/types/schemas/payroll';
 
@@ -324,6 +325,87 @@ export const recomputeWorkerDraft = async (args: {
   const drafts = engineDrafts.map((d) => mergeManualColumns(d, existing));
   await upsertDraftPayments(db, args.companyId, args.periodId, drafts);
   return { netPhp: drafts[0]?.net_php ?? null };
+};
+
+/**
+ * Move approved time onto Calculate: build (or update) the pay batch for the
+ * period each approved day falls in.
+ *
+ * Approval used to be a flag and nothing more — the hours stayed invisible on
+ * /payroll until someone pressed Calculate, and since a period with no statements
+ * isn't listed there at all, 200 approved entries looked like they went nowhere.
+ *
+ * Same-pay-date merge: a batch is keyed on (company, period start, period end)
+ * and its pay date is derived from that window, so approving the same days twice
+ * lands in the batch that already exists rather than opening a second one.
+ *   - empty batch  → one `calculateDraft` pass builds every row at once.
+ *   - has rows     → `recomputeWorkerDraft` per touched worker, which MERGES
+ *                    (RP-20): Misc items, bonus, PDD lunch and gross overrides a
+ *                    human typed on the other rows survive untouched.
+ *
+ * Both paths rebuild from *all* currently-approved time in the window, so this is
+ * idempotent and doubles as the un-approve path: retract an entry and the row is
+ * rebuilt smaller, or dropped when nothing payable is left.
+ *
+ * Never touches a locked/paid batch (the payments trigger refuses it anyway —
+ * hours approved after a run closes are the salaried catch-up card's job) or an
+ * off-cycle batch (paid from its own ledger, not from tracked hours).
+ */
+export const syncApprovedTimeToDrafts = async (args: {
+  companyId: string;
+  entries: readonly { workerId: string | null; workDate: string }[];
+}): Promise<{ workers: number; closedPeriods: string[] }> => {
+  const db = await createServerSupabase();
+  let workers = 0;
+  const closedPeriods: string[] = [];
+
+  for (const { start, end, workerIds } of groupWorkersByPeriod(args.entries)) {
+    const existing = await findPeriod(db, args.companyId, start, end);
+    if (existing && existing.state !== 'open') {
+      closedPeriods.push(`${start} – ${end}`);
+      continue;
+    }
+    if (existing?.kind === 'off_cycle') continue;
+    // Create with the same defaults the Calculate card ticks; an existing period
+    // keeps whatever toggles its last run stored (upsert would overwrite them).
+    const period =
+      existing ??
+      (await upsertOpenPeriod(db, args.companyId, start, end, periodFor(start).payDate, {
+        includeHa: true,
+        includeThirteenth: false,
+      }));
+    const flags = await fetchPeriodCalcFlags(db, period.id);
+
+    const saved = await fetchSavedPayments(db, period.id);
+    if (saved.length === 0) {
+      const result = await calculateDraft({
+        companyId: args.companyId,
+        periodStart: start,
+        periodEnd: end,
+        payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
+        includeHealthAllowance: flags.includeHa,
+        includeThirteenth: flags.includeThirteenth,
+      });
+      workers += result.rows.length - result.skippedNoRate.length;
+    } else {
+      // ponytail: sequential, and each call re-reads roster/rates/holidays. Fine
+      // for the incremental approvals that reach this branch (a handful of
+      // workers); hoist the shared reads into a batch variant if a bulk approve
+      // onto an already-built batch ever feels slow.
+      for (const workerId of workerIds) {
+        await recomputeWorkerDraft({
+          companyId: args.companyId,
+          periodId: period.id,
+          periodStart: start,
+          periodEnd: end,
+          workerId,
+        });
+        workers += 1;
+      }
+    }
+  }
+
+  return { workers, closedPeriods };
 };
 
 export type CatchUpCandidate = {

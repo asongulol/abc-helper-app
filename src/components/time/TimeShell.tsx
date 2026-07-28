@@ -222,10 +222,9 @@ export const TimeShell = ({
             link nested in a button is invalid HTML. */}
         {status === 'clear' && !unpaidMode && (
           <p className="sub" style={{ margin: '8px 0 0' }}>
-            All {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} approved —{' '}
-            <Link href={`/payroll?period=${period.start}`}>
-              calculate payroll for this period →
-            </Link>
+            All {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} approved and moved to the
+            pay batch —{' '}
+            <Link href={`/payroll?period=${period.start}`}>review it on Calculate →</Link>
           </p>
         )}
         {status === 'empty' && (

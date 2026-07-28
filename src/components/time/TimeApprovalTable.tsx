@@ -130,6 +130,7 @@ export const TimeApprovalTable = ({
                 return;
               }
               notify('Approval undone.', { type: 'info' });
+              if (res.data.calcNote) notify(res.data.calcNote, { type: 'warn' });
               onRefresh();
             });
           }}
@@ -151,8 +152,13 @@ export const TimeApprovalTable = ({
           return;
         }
         const verb = status === 'approved' ? 'Approved' : 'Rejected';
-        const label = `${verb} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`;
+        const moved =
+          res.data.moved > 0
+            ? ` ${res.data.moved} contractor${res.data.moved === 1 ? '' : 's'} now on Calculate.`
+            : '';
+        const label = `${verb} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.${moved}`;
         showUndoToast(res.data.undoEntries, label);
+        if (res.data.calcNote) notify(res.data.calcNote, { type: 'warn' });
         onRefresh();
       } finally {
         setBusyKey(null);

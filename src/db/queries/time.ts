@@ -369,21 +369,35 @@ export const upsertTimeEntries = async (
  * B's ids, and then the action logs the change against the wrong company. The
  * count the caller gets back is what makes that visible.
  */
+/**
+ * Prior approval values for a set of ids, plus the worker + day each row belongs
+ * to — the approve → Calculate transfer needs those to know which batch to build
+ * (see groupWorkersByPeriod). They come free: it's the same row read.
+ */
 export const fetchApprovalSnapshot = async (
   db: Db,
   companyId: string,
   ids: string[],
-): Promise<Array<{ id: string; approval: 'pending' | 'approved' | 'rejected' }>> => {
+): Promise<
+  Array<{
+    id: string;
+    approval: 'pending' | 'approved' | 'rejected';
+    workerId: string | null;
+    workDate: string;
+  }>
+> => {
   if (ids.length === 0) return [];
   const { data, error } = await db
     .from('time_entries')
-    .select('id, approval')
+    .select('id, approval, worker_id, work_date')
     .eq('company_id', companyId)
     .in('id', ids);
   if (error) throw new Error(`approval snapshot: ${error.message}`);
   return (data ?? []).map((r) => ({
     id: r.id,
     approval: r.approval as 'pending' | 'approved' | 'rejected',
+    workerId: r.worker_id,
+    workDate: r.work_date,
   }));
 };
 

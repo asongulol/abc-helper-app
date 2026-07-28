@@ -14,6 +14,11 @@ export interface ApprovalUndoEntry {
  * that actually changed and can be reverted.
  */
 export const buildUndoPayload = (
-  snapshot: ApprovalUndoEntry[],
+  snapshot: readonly ApprovalUndoEntry[],
   newStatus: 'approved' | 'rejected',
-): ApprovalUndoEntry[] => snapshot.filter((e) => e.approval !== newStatus);
+): ApprovalUndoEntry[] =>
+  snapshot
+    .filter((e) => e.approval !== newStatus)
+    // Projected, not passed through: the snapshot also carries worker/day for the
+    // Calculate transfer, and this payload is posted straight back by the client.
+    .map(({ id, approval }) => ({ id, approval }));
