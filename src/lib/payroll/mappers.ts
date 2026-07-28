@@ -190,6 +190,18 @@ export type StatementRow = {
   result: ContractorRowResult;
 };
 
+/**
+ * Is this row a "no longer active" warning? Either side going non-active counts
+ * — a worker archived globally, or their link to THIS company ended. A null
+ * status is unknown, not inactive (legacy rows), so it never warns.
+ *
+ * Shared with fetchSavedPayments (RP-18): the saved snapshot renders the flag
+ * long after buildStatements computed it, and both must agree on the rule.
+ */
+export const isInactiveWorker = (workerStatus: string | null, linkStatus: string | null): boolean =>
+  (linkStatus !== null && linkStatus !== 'active') ||
+  (workerStatus !== null && workerStatus !== 'active');
+
 export type BuildStatementsArgs = {
   periodStart: string;
   periodEnd: string;
@@ -258,9 +270,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       ...(args.holidays !== undefined ? { holidays: args.holidays } : {}),
       ...(offCycleEarnings !== undefined ? { offCycleEarnings } : {}),
     });
-    const inactive =
-      (link.linkStatus !== null && link.linkStatus !== 'active') ||
-      (w.status !== null && w.status !== 'active');
+    const inactive = isInactiveWorker(w.status, link.linkStatus);
     out.push({
       workerId,
       name: fullName(w) || workerId,

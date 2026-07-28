@@ -99,7 +99,11 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   units: p.units,
   ratePhp: p.ratePhp,
   grossPhp: p.grossPhp,
-  computedGrossPhp: p.grossPhp,
+  // RP-07: the computed gross lives in its own column while an override is in
+  // place. Falling back to the stored gross is only for a NON-overridden row
+  // (where they are the same) — and for pre-RP-07 rows whose capture the old
+  // note-rewriting bug already destroyed.
+  computedGrossPhp: p.computedGrossPhp ?? p.grossPhp,
   overridden: p.overridden,
   haPhp: p.haPhp,
   t13Php: p.t13Php,
@@ -110,7 +114,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   offCyclePhp: p.offCyclePhp,
   netPhp: p.netPhp,
   payoutMethod: p.payoutMethod,
-  inactive: false,
+  inactive: p.inactive,
 });
 
 const recomputeRow = (r: EditableRow): EditableRow => {
@@ -562,11 +566,31 @@ export const PayrollShell = ({
       notify('Calculate first.', { type: 'warn' });
       return;
     }
+    // RP-18: the server refuses an unconfirmed lock that pays inactive rows or
+    // rows with no payout method; acknowledging here is what `confirmed` means.
+    const flagged = rows.filter((r) => r.inactive || !r.payoutMethod);
+    if (flagged.length > 0) {
+      const names = flagged.map((r) => r.displayName || r.name).join(', ');
+      if (
+        !window.confirm(
+          `${flagged.length} contractor(s) are inactive or have no payout method (${names}). Lock and pay them anyway?`,
+        )
+      )
+        return;
+    }
     setBusy(true);
     try {
-      const res = await lockPeriod({ companyId, periodStart, periodEnd });
+      const res = await lockPeriod({
+        companyId,
+        periodStart,
+        periodEnd,
+        confirmed: flagged.length > 0,
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error', persistent: true });
+        // The refusal may name rows this screen loaded before they went
+        // inactive — reload so the next click can actually confirm them.
+        await loadSaved();
         return;
       }
       notify(`Locked ${res.data.lockedCount} statement(s).`, {

@@ -17,6 +17,7 @@ import type {
   SavedPayment,
 } from '@/db/queries/payroll';
 import {
+  applyGrossOverride,
   clearPeriodSessionsPaid,
   clearSessionsPaid,
   composeNetCentavos,
@@ -49,6 +50,7 @@ import {
   hasInAppRecalc,
   insertOffCycleItems,
   lockBlockedReason,
+  lockWarningReason,
   markPaymentsPaid,
   markPaymentsUnpaid,
   markPeriodSessionsPaid,
@@ -441,6 +443,11 @@ export async function lockPeriod(
       };
     }
 
+    // RP-18: inactive contractors and rows with no payout method are legitimate
+    // to pay, but not silently — `confirmed` records that the admin saw them.
+    const warning = lockWarningReason(payments, input.confirmed === true);
+    if (warning) return { ok: false, error: warning };
+
     // RP-03: no pay date passed — the period already holds the correct arrears
     // date from its creation; the lock must not overwrite it with period_end.
     await dbLockPeriod(db, period.id);
@@ -580,7 +587,7 @@ export async function updatePaymentRowAction(
     const { data: cur, error: fe } = await db
       .from('payments')
       .select(
-        'gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, off_cycle_php, net_php, note, pay_period_id',
+        'gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, off_cycle_php, net_php, note, pay_period_id',
       )
       .eq('id', input.paymentId)
       .maybeSingle();
@@ -598,10 +605,22 @@ export async function updatePaymentRowAction(
 
     // Determine new field values
     const grossCur = phpToCentavos(cur.gross_php) ?? centavos(0);
-    const grossNew =
-      'grossPhpOverride' in input && input.grossPhpOverride != null
-        ? (phpToCentavos(input.grossPhpOverride) ?? grossCur)
-        : grossCur;
+    // RP-07: clearing an override now RESTORES the engine's gross, so gross is
+    // no longer constant across an edit — net has to follow it.
+    const gross =
+      'grossPhpOverride' in input
+        ? applyGrossOverride(
+            {
+              grossPhp: centavosToPhp(grossCur),
+              computedGrossPhp:
+                cur.computed_gross_php == null ? null : Number(cur.computed_gross_php),
+            },
+            input.grossPhpOverride == null
+              ? null
+              : centavosToPhp(phpToCentavos(input.grossPhpOverride) ?? grossCur),
+          )
+        : null;
+    const grossNew = gross ? (phpToCentavos(gross.grossPhp) ?? grossCur) : grossCur;
 
     const haNew =
       phpToCentavos(
@@ -633,22 +652,12 @@ export async function updatePaymentRowAction(
     const netC = sumMinor([grossNew, haNew, t13New, pddNew, bonusNew, miscC, offCycleC]);
     const netPhp = centavosToPhp(netC);
 
-    // Build note for gross override
-    let note = cur.note ?? null;
-    if ('grossPhpOverride' in input) {
-      if (input.grossPhpOverride != null) {
-        const computedGross = centavosToPhp(grossCur);
-        note = `Gross manually overridden (computed ${computedGross})`;
-      } else {
-        note = null;
-      }
-    }
-
     await updatePaymentRow(db, input.paymentId, {
-      ...('grossPhpOverride' in input
+      ...(gross
         ? {
-            grossPhp:
-              input.grossPhpOverride != null ? centavosToPhp(grossNew) : centavosToPhp(grossCur),
+            grossPhp: gross.grossPhp,
+            computedGrossPhp: gross.computedGrossPhp,
+            note: gross.note,
           }
         : {}),
       haPhp: centavosToPhp(haNew),
@@ -659,7 +668,6 @@ export async function updatePaymentRowAction(
       netPhp,
       ...('payoutMethod' in input ? { payoutMethod: input.payoutMethod ?? null } : {}),
       ...('fxRate' in input && input.fxRate != null ? { fxRate: input.fxRate } : {}),
-      note,
     });
 
     return { ok: true, data: { netPhp } };

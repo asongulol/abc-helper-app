@@ -13,7 +13,12 @@ import type { Database, Json } from '@/db/types';
 import { type Centavos, centavos, majorToMinor, sumMinor } from '@/lib/money';
 import { type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
-import type { PaymentDraft, RosterRow, TimeEntryRow } from '@/lib/payroll/mappers';
+import {
+  isInactiveWorker,
+  type PaymentDraft,
+  type RosterRow,
+  type TimeEntryRow,
+} from '@/lib/payroll/mappers';
 import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
@@ -1002,6 +1007,8 @@ export type SavedPayment = {
   ratio: number;
   ratePhp: number | null;
   grossPhp: number | null;
+  /** The engine's gross, kept while gross_php holds an override; null = none (RP-07). */
+  computedGrossPhp: number | null;
   haPhp: number;
   t13Php: number;
   pddPhp: number;
@@ -1014,6 +1021,8 @@ export type SavedPayment = {
   miscItems: MiscItem[];
   payoutMethod: string | null;
   overridden: boolean;
+  /** Worker or company link is no longer active — lock-time warning (RP-18). */
+  inactive: boolean;
 };
 
 /* ---------- NEW: list periods with summary totals ---------- */
@@ -1160,6 +1169,53 @@ export const lockBlockedReason = (
 };
 
 /**
+ * Rows the admin should look at before locking, or null when there is nothing
+ * to warn about (RP-18). Unlike lockBlockedReason these are NOT hard blocks:
+ * paying a contractor whose link just ended is legitimate, it just must not
+ * happen silently — which is what it did, because `confirmed` was never read
+ * and the inactive flag never left the engine.
+ */
+export const lockWarningReason = (
+  payments: readonly { name: string; inactive: boolean; payoutMethod: string | null }[],
+  confirmed: boolean,
+): string | null => {
+  if (confirmed) return null;
+  const named = (rows: readonly { name: string }[]) =>
+    rows.map((p) => p.name || 'Unnamed worker').join(', ');
+  const parts: string[] = [];
+  const inactive = payments.filter((p) => p.inactive);
+  if (inactive.length > 0)
+    parts.push(`${inactive.length} inactive contractor(s) (${named(inactive)})`);
+  const noMethod = payments.filter((p) => !p.payoutMethod);
+  if (noMethod.length > 0)
+    parts.push(`${noMethod.length} with no payout method (${named(noMethod)})`);
+  if (parts.length === 0) return null;
+  return `This run pays ${parts.join(' and ')}. Lock again to confirm.`;
+};
+
+/**
+ * The gross-override state machine (RP-07). `computedGrossPhp` is captured on
+ * the FIRST override and left alone afterwards — re-deriving it from the stored
+ * gross (which by then IS the override) is what destroyed the engine's figure
+ * and made the ↺ button restore the override to itself.
+ *
+ * ponytail: `note` stays the override marker, since `overridden` is read from
+ * it everywhere. It is now prose only — the revertible value lives in a column.
+ */
+export const applyGrossOverride = (
+  cur: { grossPhp: number; computedGrossPhp: number | null },
+  overridePhp: number | null,
+): { grossPhp: number; computedGrossPhp: number | null; note: string | null } => {
+  const computed = cur.computedGrossPhp ?? cur.grossPhp;
+  if (overridePhp == null) return { grossPhp: computed, computedGrossPhp: null, note: null };
+  return {
+    grossPhp: overridePhp,
+    computedGrossPhp: computed,
+    note: `Gross manually overridden (computed ${computed})`,
+  };
+};
+
+/**
  * Why a locked period must NOT be unlocked yet, or null when it is safe.
  *
  * Unlocking is only "reopen the draft" on paper — once open, a recalc rewrites
@@ -1220,6 +1276,7 @@ export const unlockPeriod = async (db: Db, periodId: string): Promise<void> => {
 
 export type PaymentRowFields = {
   grossPhp?: number | null;
+  computedGrossPhp?: number | null;
   haPhp?: number;
   t13Php?: number | null;
   pddPhp?: number;
@@ -1238,6 +1295,8 @@ export const updatePaymentRow = async (
 ): Promise<void> => {
   const update: Database['public']['Tables']['payments']['Update'] = {};
   if ('grossPhp' in fields && fields.grossPhp != null) update.gross_php = fields.grossPhp;
+  // Explicit null clears the capture — must not be skipped like grossPhp above.
+  if ('computedGrossPhp' in fields) update.computed_gross_php = fields.computedGrossPhp;
   if ('haPhp' in fields) update.health_allowance_php = fields.haPhp;
   if ('t13Php' in fields && fields.t13Php != null) update.thirteenth_month_php = fields.t13Php;
   if ('pddPhp' in fields) update.pdd_lunch_php = fields.pddPhp;
@@ -1628,7 +1687,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name)',
+      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name, status, worker_companies(company_id, status))',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -1646,6 +1705,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     ratio: Number(p.performance_ratio ?? 0),
     ratePhp: p.rate_php,
     grossPhp: p.gross_php,
+    computedGrossPhp: p.computed_gross_php == null ? null : Number(p.computed_gross_php),
     haPhp: Number(p.health_allowance_php ?? 0),
     t13Php: Number(p.thirteenth_month_php ?? 0),
     pddPhp: Number(p.pdd_lunch_php ?? 0),
@@ -1656,5 +1716,13 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,
     overridden: !!p.note,
+    // RP-18: same rule as buildStatements — either side of the link going
+    // non-active makes the row a warning. The embed returns every company the
+    // worker is linked to, so pick this payment's own link.
+    inactive: isInactiveWorker(
+      p.workers?.status ?? null,
+      (p.workers?.worker_companies ?? []).find((l) => l.company_id === p.company_id)?.status ??
+        null,
+    ),
   }));
 };

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { selectAll } from '@/db/queries/paging';
 import {
+  applyGrossOverride,
   composeNetCentavos,
   lockBlockedReason,
+  lockWarningReason,
   MARKABLE_PAID_STATUSES,
   type OpenDraft,
   officeToday,
@@ -193,6 +195,88 @@ describe('lockBlockedReason — work in the window the draft does not pay (F2/RP
     // Today's unrelated pending time used to block the batch with a message
     // telling the admin to recalculate something the UI cannot recalculate.
     expect(lockBlockedReason('off_cycle', 7, [], new Map([['w1', 5]]))).toBeNull();
+  });
+});
+
+describe('lockWarningReason — rows the admin must acknowledge before locking (RP-18)', () => {
+  const row = (
+    name: string,
+    over: Partial<{ inactive: boolean; payoutMethod: string | null }>,
+  ) => ({
+    name,
+    inactive: false,
+    payoutMethod: 'wise',
+    ...over,
+  });
+
+  it('is silent when every row is active and has a payout method', () => {
+    expect(lockWarningReason([row('Ana', {}), row('Ben', {})], false)).toBeNull();
+  });
+
+  it('names an inactive contractor — the row that used to lock without a word', () => {
+    const reason = lockWarningReason([row('Ana', {}), row('Ben', { inactive: true })], false);
+    expect(reason).toContain('Ben');
+    expect(reason).not.toContain('Ana');
+    expect(reason).toMatch(/1 inactive contractor/i);
+  });
+
+  it('names a row with no payout method', () => {
+    expect(lockWarningReason([row('Ana', { payoutMethod: null })], false)).toMatch(
+      /no payout method.*Ana/i,
+    );
+  });
+
+  it('reports both kinds at once', () => {
+    const reason = lockWarningReason(
+      [row('Ana', { inactive: true }), row('Ben', { payoutMethod: null })],
+      false,
+    );
+    expect(reason).toMatch(/inactive/i);
+    expect(reason).toMatch(/no payout method/i);
+  });
+
+  it('stays silent once the caller has confirmed — this is a warning, not a block', () => {
+    expect(
+      lockWarningReason([row('Ana', { inactive: true, payoutMethod: null })], true),
+    ).toBeNull();
+  });
+});
+
+describe('applyGrossOverride — a gross override stays revertible (RP-07)', () => {
+  it('captures the engine gross on the first override', () => {
+    expect(applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null }, 15000)).toEqual({
+      grossPhp: 15000,
+      computedGrossPhp: 18182,
+      note: 'Gross manually overridden (computed 18182)',
+    });
+  });
+
+  it('does NOT recapture on a second save — the bug that erased the true figure', () => {
+    // Row already overridden to 15000; the debounced save fires again.
+    const again = applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, 15000);
+    expect(again.computedGrossPhp).toBe(18182);
+    expect(again.note).toBe('Gross manually overridden (computed 18182)');
+  });
+
+  it('restores the engine gross when the override is cleared, and drops the marker', () => {
+    expect(applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, null)).toEqual({
+      grossPhp: 18182,
+      computedGrossPhp: null,
+      note: null,
+    });
+  });
+
+  it('re-overriding after a revert captures the restored gross afresh', () => {
+    const cleared = applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, null);
+    expect(applyGrossOverride(cleared, 12000).computedGrossPhp).toBe(18182);
+  });
+
+  it('clearing a row that was never overridden leaves the gross alone', () => {
+    expect(applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null }, null)).toEqual({
+      grossPhp: 18182,
+      computedGrossPhp: null,
+      note: null,
+    });
   });
 });
 
