@@ -21,6 +21,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchPeriodStatesForPayments, unpayablePeriodReason } from '@/db/queries/payroll';
 import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
 import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
@@ -66,6 +67,23 @@ function fail<T>(error: unknown): WiseActionResult<T> {
   return { ok: false, error: msg };
 }
 
+/**
+ * RP-52: "you can only pay a locked run" was enforced only by `process/page.tsx`
+ * refusing to render. These are HTTP endpoints — a call carrying open-period
+ * payment ids drafts REAL transfers for amounts the next recalculate changes,
+ * and RP-10 then refuses to unlock the period because the draft exists. Same
+ * gate the mark-paid actions use.
+ */
+async function unpayableDraftReason(
+  db: ReturnType<typeof createServiceClient>,
+  paymentIds: string[],
+): Promise<string | null> {
+  return unpayablePeriodReason(
+    await fetchPeriodStatesForPayments(db, paymentIds),
+    'drafted into Wise',
+  );
+}
+
 // ─── OWNER-only staging actions ───────────────────────────────────────────────
 
 /**
@@ -80,6 +98,9 @@ export async function wiseDraft(paymentIds: string[]): Promise<WiseActionResult<
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const db = createServiceClient();
+    const unpayable = await unpayableDraftReason(db, parsed.data.paymentIds);
+    if (unpayable) return fail(unpayable);
+
     const { results } = await serviceDraft(db, parsed.data.paymentIds);
 
     void logEvent({
@@ -120,6 +141,12 @@ export async function wiseBatch(
 
     const db = createServiceClient();
     const batchItems = parsed.data.items;
+
+    const unpayable = await unpayableDraftReason(
+      db,
+      batchItems.map((i) => i.paymentId),
+    );
+    if (unpayable) return fail(unpayable);
 
     // RP-54: the per-row overrides are client input. Load each payment's worker
     // identity BEFORE drafting so (a) a recipient the worker doesn't own is

@@ -64,12 +64,16 @@ describe('RP-62 — text fields beginning with a formula character are neutraliz
 });
 
 describe('RP-62 — numbers are never prefixed (tools read these columns back)', () => {
-  it('writes a negative amount as a plain number in all three builders', () => {
+  it('writes a negative amount as a plain number — a leading "-" must not be prefixed', () => {
     expect(bankLine('Maria Dela Cruz', -500)).toBe('Maria Dela Cruz,bpi,,-500.00');
     expect(individualLine('Maria Dela Cruz', -500)).toContain(',-500.00,');
-    // Wise: amount column stays numeric, recipient UUID unquoted — template parity.
-    expect(wiseLine('Maria Dela Cruz', -500)).toBe(
-      '11111111-2222-3333-4444-555555555555,Maria Dela Cruz,maria@example.com,,USD,PHP,target,-500,Payroll 2026-06-15,PERSON',
+  });
+
+  it('keeps the Wise amount column numeric and the recipient UUID unquoted', () => {
+    // Template parity: Wise re-reads these columns, so neither may be prefixed.
+    // (A non-positive net never reaches this file at all — see RP-60 below.)
+    expect(wiseLine('Maria Dela Cruz')).toBe(
+      '11111111-2222-3333-4444-555555555555,Maria Dela Cruz,maria@example.com,,USD,PHP,target,12000,Payroll 2026-06-15,PERSON',
     );
   });
 });

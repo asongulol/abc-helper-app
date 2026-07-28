@@ -102,7 +102,6 @@ export function ProcessPay({
 
   const inChannel = (c: Channel) => payments.filter((p) => channelOf(p.payoutMethod) === c);
   const wiseRows = inChannel('wise');
-  const wiseReady = wiseRows.filter((p) => !!p.wiseRecipientUuid).length;
   const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
   // Build the batch file up front, not just on click: its `included` rows are
   // the only ones written, so its sum — NOT the sum of all Wise rows — is what
@@ -125,6 +124,9 @@ export function ProcessPay({
       ),
     [payments, period.periodStart, period.periodEnd, srcCcy],
   );
+  // The button's count must be the file's own count — the builder also drops
+  // zero-net rows (RP-60), so a UUID tally would promise more than it writes.
+  const wiseReady = wiseFile.included.length;
   const wiseFileTotal = sumPhp(wiseFile.included);
   const wiseDroppedTotal = sumPhp(wiseFile.dropped);
   const shown = tab === 'all' ? payments : inChannel(tab);
@@ -248,7 +250,9 @@ export function ProcessPay({
     if (included.length === 0) {
       notify(
         dropped.length > 0
-          ? `All ${dropped.length} Wise contractor(s) are missing a Wise recipient UUID — nothing to export. Add it on each contractor's profile.`
+          ? `Nothing to export — all ${dropped.length} Wise contractor(s) would be rejected: ${[
+              ...new Set(dropped.map((d) => d.reason)),
+            ].join(', ')}.`
           : 'No Wise contractors in this batch to export.',
         { type: 'warn' },
       );
@@ -269,16 +273,17 @@ export function ProcessPay({
     ) {
       return;
     }
-    // Surface Wise rows that will be dropped (no recipient UUID → Wise rejects them).
+    // Surface Wise rows that will be dropped — Wise rejects them, and a zero
+    // amount can take the whole upload down with it (RP-60).
     if (
       dropped.length > 0 &&
       !window.confirm(
-        `${dropped.length} Wise contractor(s) have no Wise recipient UUID and will be DROPPED from the file:\n\n${dropped
+        `${dropped.length} Wise contractor(s) will be DROPPED from the file — Wise would reject them:\n\n${dropped
           .slice(0, 15)
-          .map((d) => `• ${d.name}`)
+          .map((d) => `• ${d.name} — ${d.reason}`)
           .join(
             '\n',
-          )}${dropped.length > 15 ? `\n…and ${dropped.length - 15} more` : ''}\n\nExport the ${included.length} contractor(s) with a UUID anyway?`,
+          )}${dropped.length > 15 ? `\n…and ${dropped.length - 15} more` : ''}\n\nExport the other ${included.length} contractor(s) anyway?`,
       )
     ) {
       return;
@@ -553,7 +558,9 @@ export function ProcessPay({
             <>
               {' '}
               A further <b>{peso(wiseDroppedTotal)}</b> for {wiseFile.dropped.length} contractor(s)
-              is <b>not</b> in the file (no Wise recipient UUID) and still has to be paid.
+              is <b>not</b> in the file (
+              {[...new Set(wiseFile.dropped.map((d) => d.reason))].join(', ')}) and still has to be
+              paid.
             </>
           )}
         </p>

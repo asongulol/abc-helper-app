@@ -1474,10 +1474,12 @@ export const PAYABLE_PERIOD_STATES: readonly Database['public']['Enums']['pay_pe
 /** Why this set of periods may not have its payments marked, or null. */
 export const unpayablePeriodReason = (
   states: readonly Database['public']['Enums']['pay_period_state'][],
+  /** What the caller is about to do, for the message ("marked", "drafted into Wise"). */
+  verb = 'marked',
 ): string | null => {
   const bad = [...new Set(states.filter((s) => !PAYABLE_PERIOD_STATES.includes(s)))];
   if (bad.length === 0) return null;
-  return `Payments can only be marked once their period is locked — this selection includes ${bad.join(' / ')} period(s). Lock the period first.`;
+  return `Payments can only be ${verb} once their period is locked — this selection includes ${bad.join(' / ')} period(s). Lock the period first.`;
 };
 
 /** Distinct period states behind the given payment ids (RP-52 gate). */
