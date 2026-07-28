@@ -166,6 +166,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
+    offCycleSessionUnitsByWorker: offCycle.perSessionUnitsByWorker,
     holidays,
   });
 
@@ -307,6 +308,7 @@ export const recomputeWorkerDraft = async (args: {
     sessionsByWorker,
     sessionUnitsByWorkerByDate,
     offCycleByWorker: offCycle.byWorkerCentavos,
+    offCycleSessionUnitsByWorker: offCycle.perSessionUnitsByWorker,
     holidays,
   });
   const engineDrafts = rows

@@ -222,6 +222,9 @@ export type BuildStatementsArgs = {
   /** Off-cycle per-session/per-hour earnings per worker (centavos), re-applied
    *  from the durable off_cycle_pay_items ledger so the line survives recalc. */
   offCycleByWorker?: ReadonlyMap<string, Centavos>;
+  /** Σ per_session ledger units per worker — display-only count of the sessions
+   *  `offCycleByWorker` already pays (see calcContractorRow.offCycleSessionUnits). */
+  offCycleSessionUnitsByWorker?: ReadonlyMap<string, number>;
 };
 
 /** One engine pass per attributed worker — the heart of legacy `calculate()`. */
@@ -256,6 +259,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     const result = calcContractorRow({
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
+      offCycleSessionUnits: args.offCycleSessionUnitsByWorker?.get(workerId) ?? 0,
       contract: link.contract,
       payBasis: link.payBasis,
       periodStart: args.periodStart,

@@ -29,6 +29,7 @@ import {
   deleteOffCycleItem,
   deleteOffCycleItemsForStatements,
   fetchOffCycleItem,
+  fetchOffCycleItemsForPeriod,
   fetchOffCycleItemsForWorkerPeriod,
   fetchOffCycleTotalForWorker,
   fetchPaymentForWorker,
@@ -429,6 +430,7 @@ export async function lockPeriod(
     const isOffCycle = period.kind === 'off_cycle';
     let pendingCount = 0;
     let sessionUnits = new Map<string, number>();
+    let ledgerSessionUnits = new Map<string, number>();
     if (!isOffCycle) {
       pendingCount = await countPendingTime(
         db,
@@ -448,12 +450,21 @@ export async function lockPeriod(
         input.periodStart,
         input.periodEnd,
       );
+      // The ledger part of each row's session count — netted off below so the
+      // RP-22 comparison stays about the WINDOWED sessions the calc summed.
+      ({ perSessionUnitsByWorker: ledgerSessionUnits } = await fetchOffCycleItemsForPeriod(
+        db,
+        input.companyId,
+        period.id,
+        perSessionWorkerIds,
+      ));
     }
     const blockedByWork = lockBlockedReason(
       period.kind ?? 'regular',
       pendingCount,
       payments,
       sessionUnits,
+      ledgerSessionUnits,
     );
     if (blockedByWork) return { ok: false, error: blockedByWork };
 

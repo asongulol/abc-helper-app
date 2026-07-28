@@ -53,6 +53,15 @@ export type ContractorRowInput = {
   workedSeconds: number;
   /** Σ approved session units in the period — used for per-session pay. */
   sessionUnits?: number;
+  /**
+   * Σ session units already paid through the off-cycle ledger on this period.
+   * DISPLAY ONLY — never priced here (their money arrives via
+   * `offCycleEarnings`, which is folded into gross below). They exist because
+   * `sessionUnits` counts only sessions with `paid_at IS NULL`, so a session
+   * this row pays off-cycle leaves the count the moment it is stamped paid —
+   * and the row then showed "2 sessions" against a gross covering 5.
+   */
+  offCycleSessionUnits?: number;
   contract: Contract;
   /**
    * worker_companies.pay_basis — the per-unit discriminator for a `PHS`
@@ -247,7 +256,12 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     payBasisUnset,
     // Parity with the originals' payments.units: the approved session COUNT for a
     // per_session row, null otherwise (per_hour keeps its quantity in workedHours).
-    units: model === 'per_session' ? (input.sessionUnits ?? 0) : null,
+    // Includes the off-cycle-paid sessions whose money `perUnit` folded into
+    // gross above, so units × rate still checks out against the gross shown.
+    units:
+      model === 'per_session'
+        ? (input.sessionUnits ?? 0) + (input.offCycleSessionUnits ?? 0)
+        : null,
   };
 };
 
