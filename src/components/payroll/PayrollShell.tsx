@@ -1201,7 +1201,9 @@ export const PayrollShell = ({
                         <th scope="col">Net ₱</th>
                         <th scope="col">≈ USD</th>
                         <th scope="col">Via</th>
-                        <th scope="col" />
+                        {/* Pinned right: 15 columns put this past the fold, so
+                            Remove was reachable only by side-scrolling. */}
+                        <th scope="col" className="col-actions" />
                       </tr>
                     </thead>
                     <tbody>
@@ -1423,7 +1425,10 @@ export const PayrollShell = ({
                                 payoutMethodLabel(r.payoutMethod)
                               )}
                             </td>
-                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            <td
+                              className="col-actions"
+                              style={{ textAlign: 'right', whiteSpace: 'nowrap' }}
+                            >
                               <Link
                                 href={`/payroll/${r.paymentId}/print`}
                                 target="_blank"

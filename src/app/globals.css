@@ -557,6 +557,31 @@ tr.clickable:hover {
   overflow-y: auto;
 }
 
+/* Row actions pinned to the right edge of a side-scrolling table. On a wide
+   table (the pay statements run to 15 columns) the last cell sits past the
+   fold, so a destructive action was reachable only if you thought to scroll —
+   while a harmless Print button held the visible edge. Desktop only: under
+   768px the table is already stacked into cards, where there is no fold. */
+@media (min-width: 768px) {
+  .table-scroll th.col-actions,
+  .table-scroll td.col-actions {
+    position: sticky;
+    right: 0;
+    background: var(--card);
+    box-shadow: -8px 0 8px -8px rgb(0 0 0 / 18%);
+    z-index: 1;
+  }
+  /* Must outrank the sticky header's own z-index where they cross. */
+  .table-scroll thead th.col-actions {
+    z-index: 2;
+  }
+  /* The pinned cell paints over the row, so it has to carry the hover tint
+     itself or it reads as a gap moving down the table. */
+  .table-scroll tbody tr:hover td.col-actions {
+    background: var(--accent-soft);
+  }
+}
+
 /* Tables -> stacked cards on phones (<768px). Each <tr> becomes a card, each
    <td> a [label][value] row driven by data-label attributes. Opt out with
    .keep-table (stays tabular + side-scrolls). */
