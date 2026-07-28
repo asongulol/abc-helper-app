@@ -4,16 +4,12 @@
  */
 
 import type { ReportPaymentRow, ReportPeriodRow } from '@/db/queries/reports';
+import { csvEscape } from '@/lib/csv';
 import { centavosToPhp } from '@/lib/format';
-import { escapeCsvField } from '@/lib/payroll/bank-export';
 
-/**
- * Null/number-tolerant wrapper over the one shared escape (RP-62) — that one also
- * neutralizes spreadsheet formula injection and leaves plain numbers alone.
- * Exported because the Reports and Invoicing screens build CSVs inline.
- */
-export const csvEscape = (v: string | number | null | undefined): string =>
-  escapeCsvField(v == null ? '' : String(v));
+// Re-exported for the Reports and Invoicing screens, which build CSVs inline
+// and already import from here.
+export { csvEscape };
 
 const row = (cells: (string | number | null | undefined)[]): string =>
   cells.map(csvEscape).join(',');

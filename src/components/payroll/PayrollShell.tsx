@@ -23,6 +23,7 @@ import { centavosToPhp, fmtDate, money } from '@/lib/format';
 import { centavos } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { usdReference } from '@/lib/pay/calc';
+import { hasManualAdjustments, type MiscEdit, miscPatch } from '@/lib/payroll/row-edit';
 import { recomputeNetCentavos } from '@/lib/payroll/row-net';
 import { payoutMethodLabel, periodStateLabel, periodStateTone } from '@/lib/payroll/status-pills';
 import {
@@ -38,7 +39,6 @@ import {
   unlockPeriod,
   updatePaymentRowAction,
 } from '@/server/actions/payroll';
-import type { MiscModalPayload } from './MiscModal';
 
 // Misc-items editor (496 lines) loads on first open, gated behind miscRowId.
 const MiscModal = dynamic(() => import('./MiscModal').then((m) => m.MiscModal), { ssr: false });
@@ -129,43 +129,6 @@ const recomputeRow = (r: EditableRow): EditableRow => {
   });
   return { ...r, netPhp: netC != null ? centavosToPhp(netC) : null };
 };
-
-/**
- * Does this row carry manual work that a Recalculate would destroy?
- * A manually set 13th month counts (RP-24): it lives in its own column rather
- * than in `miscItems`, so the old check let a recalc wipe it with no confirm.
- */
-export const hasManualAdjustments = (r: {
-  overridden: boolean;
-  haPhp: number;
-  pddPhp: number;
-  bonusPhp: number;
-  t13Php: number;
-  computedT13Php: number;
-  miscItems: readonly MiscItem[];
-}): boolean =>
-  r.overridden ||
-  r.haPhp > 0 ||
-  r.pddPhp > 0 ||
-  r.bonusPhp > 0 ||
-  r.miscItems.length > 0 ||
-  r.t13Php !== r.computedT13Php;
-
-/**
- * Row patch for a Misc modal save. `t13Php: null` is the modal's "cleared
- * field" signal and means revert to the COMPUTED 13th month — the field's own
- * label previews that value — not ₱0 (RP-21).
- */
-export const miscPatch = (
-  row: { computedT13Php: number },
-  payload: MiscModalPayload,
-): Pick<EditableRow, 'haPhp' | 't13Php' | 'pddPhp' | 'bonusPhp' | 'miscItems'> => ({
-  haPhp: payload.haPhp,
-  t13Php: payload.t13Php ?? row.computedT13Php,
-  pddPhp: payload.pddPhp,
-  bonusPhp: payload.bonusPhp,
-  miscItems: payload.miscItems,
-});
 
 export const PayrollShell = ({
   companyId,
@@ -696,7 +659,7 @@ export const PayrollShell = ({
   };
 
   // Misc modal save
-  const handleMiscSave = (row: EditableRow, payload: MiscModalPayload) => {
+  const handleMiscSave = (row: EditableRow, payload: MiscEdit) => {
     patchRow(row.workerId, miscPatch(row, payload));
     setMiscRowId(null);
   };

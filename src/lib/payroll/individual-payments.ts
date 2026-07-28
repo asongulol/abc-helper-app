@@ -7,7 +7,7 @@
  */
 
 // Shared with the other two CSV builders — quoting + formula-injection guard.
-import { escapeCsvField } from '@/lib/payroll/bank-export';
+import { escapeCsvField } from '@/lib/csv';
 
 export type IndividualPaymentRow = {
   name: string;

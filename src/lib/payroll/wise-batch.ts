@@ -14,7 +14,7 @@
 // Shared with the other two CSV builders — quoting + formula-injection guard.
 // Wise's importer is unaffected by injection, but the escape is numeric-safe so
 // the amount / UUID columns come out byte-identical to the template.
-import { escapeCsvField } from '@/lib/payroll/bank-export';
+import { escapeCsvField } from '@/lib/csv';
 
 export type WiseBatchRow = {
   name: string;

@@ -1497,6 +1497,22 @@ export const fetchPeriodStatesForPayments = async (
 };
 
 /** One period's state (RP-52 gate for the whole-period actions). */
+/** Does this period belong to this company? Guards actions the client scopes. */
+export const periodBelongsToCompany = async (
+  db: Db,
+  periodId: string,
+  companyId: string,
+): Promise<boolean> => {
+  if (!uuid().safeParse(periodId).success) return false;
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('company_id')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`period company: ${error.message}`);
+  return data?.company_id === companyId;
+};
+
 export const fetchPeriodState = async (
   db: Db,
   periodId: string,

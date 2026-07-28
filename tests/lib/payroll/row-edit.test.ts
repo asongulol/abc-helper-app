@@ -1,13 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-
-// PayrollShell imports the payroll server actions, which pull in the Supabase
-// client and its env validation at module load. The helpers under test are pure,
-// so placeholder credentials are enough to get the module imported.
-vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://localhost:54321');
-vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'test-anon-key-0000000000000000');
-vi.stubEnv('SUPABASE_SERVICE_KEY', 'test-service-key-0000000000000000');
-
-const { hasManualAdjustments, miscPatch } = await import('@/components/payroll/PayrollShell');
+import { describe, expect, it } from 'vitest';
+import { hasManualAdjustments, miscPatch } from '@/lib/payroll/row-edit';
 
 const base = {
   overridden: false,

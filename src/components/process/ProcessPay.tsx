@@ -31,6 +31,7 @@ import {
   paymentStatusTone,
 } from '@/lib/payroll/status-pills';
 import { buildWiseBatch } from '@/lib/payroll/wise-batch';
+import { logPayfileDownload } from '@/server/actions/audit';
 import { getProcessPayments, markAllUnpaid, markPaid } from '@/server/actions/payroll';
 import { wiseBatch, wiseStatus } from '@/server/actions/wise';
 import { WisePayoutsPanel } from './WisePayoutsPanel';
@@ -52,8 +53,6 @@ interface Props {
   isOwner: boolean;
   /** Newest payment-file download per kind, from audit_log; null = read failed. */
   downloads: PayfileDownload[] | null;
-  /** Records this download in audit_log so other admins see it (RP-59). */
-  logDownload: (kind: 'wise' | 'individual', rows: number, totalPhp: number) => Promise<void>;
 }
 
 const channelOf = (m: string | null): Channel =>
@@ -63,14 +62,7 @@ const sumPhp = (rows: readonly { netPhp: number | null }[]): number =>
 /** Local calendar day (not UTC) — the default for "when did you send it". */
 const todayLocal = (): string => new Date().toLocaleDateString('en-CA');
 
-export function ProcessPay({
-  period,
-  companyId,
-  initialPayments,
-  isOwner,
-  downloads,
-  logDownload,
-}: Props) {
+export function ProcessPay({ period, companyId, initialPayments, isOwner, downloads }: Props) {
   const { notify } = useToast();
   const [payments, setPayments] = useState(initialPayments);
   const [tab, setTab] = useState<Channel | 'all'>('all');
@@ -173,7 +165,7 @@ export function ProcessPay({
       ...(prev ?? []).filter((d) => d.kind !== kind),
     ]);
     // Best-effort, like every other logEvent call — never block the download.
-    void logDownload(kind, rows, totalPhp);
+    void logPayfileDownload({ periodId: period.id, companyId, kind, rows, totalPhp });
   };
 
   const downloadNote = (kind: 'wise' | 'individual') => {
