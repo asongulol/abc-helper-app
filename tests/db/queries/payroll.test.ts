@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { type OpenDraft, resolveOpenDraftForDate } from '@/db/queries/payroll';
+import { type OpenDraft, resolveOpenDraftForDate, sessionIdsToRelease } from '@/db/queries/payroll';
 
 describe('resolveOpenDraftForDate — date-containment draft resolution (audit #001/#009)', () => {
   const juneDraft: OpenDraft = { id: 'june', periodStart: '2026-06-01', periodEnd: '2026-06-15' };
@@ -32,5 +32,22 @@ describe('resolveOpenDraftForDate — date-containment draft resolution (audit #
 
   it('returns null with no open periods at all', () => {
     expect(resolveOpenDraftForDate([], '2026-07-08')).toBeNull();
+  });
+});
+
+describe('sessionIdsToRelease — free the sessions behind deleted statements', () => {
+  it('releases every session-backed ledger row and skips manual/catch-up rows (null session_id)', () => {
+    expect(
+      sessionIdsToRelease([
+        { session_id: 's1' },
+        { session_id: null }, // manual per-hour date entry
+        { session_id: 's2' },
+        { session_id: null }, // salaried catch-up
+      ]),
+    ).toEqual(['s1', 's2']);
+  });
+
+  it('releases nothing when the deleted statements carried no ledger-paid sessions', () => {
+    expect(sessionIdsToRelease([])).toEqual([]);
   });
 });

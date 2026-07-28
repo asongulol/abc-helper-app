@@ -960,9 +960,20 @@ export const updatePaymentRow = async (
 
 /* ---------- NEW: delete statement(s) ---------- */
 
-export const deleteStatement = async (db: Db, paymentId: string): Promise<void> => {
-  const { error } = await db.from('payments').delete().eq('id', paymentId);
+/** Delete one payment row, returning its scope (null if already gone) so the
+ *  caller can release the off-cycle ledger + sessions that fed it. */
+export const deleteStatement = async (
+  db: Db,
+  paymentId: string,
+): Promise<{ payPeriodId: string; workerId: string } | null> => {
+  const { data, error } = await db
+    .from('payments')
+    .delete()
+    .eq('id', paymentId)
+    .select('pay_period_id, worker_id')
+    .maybeSingle();
   if (error) throw new Error(`delete statement: ${error.message}`);
+  return data ? { payPeriodId: data.pay_period_id, workerId: data.worker_id } : null;
 };
 
 /** Delete one worker's payment row for a period (no-op if absent). Used by the
@@ -989,6 +1000,30 @@ export const deleteAllStatements = async (db: Db, payPeriodId: string): Promise<
     .select('id');
   if (error) throw new Error(`delete statements: ${error.message}`);
   return (data ?? []).length;
+};
+
+/** Session ids a ledger discard must un-mark. Manual / per-hour / catch-up
+ *  rows carry no session_id and must not leak nulls into the clear. */
+export const sessionIdsToRelease = (rows: readonly { session_id: string | null }[]): string[] =>
+  rows.flatMap((r) => (r.session_id ? [r.session_id] : []));
+
+/**
+ * Discard the off-cycle ledger rows behind deleted statement(s) — the whole
+ * period, or one worker's row — returning the session ids they held paid so
+ * the caller can clear the sessions' paid markers. The ledger must go WITH the
+ * statements: left behind it re-applies on the next recalculate, and its
+ * unique session index blocks ever re-paying the sessions.
+ */
+export const deleteOffCycleItemsForStatements = async (
+  db: Db,
+  payPeriodId: string,
+  workerId?: string,
+): Promise<string[]> => {
+  let q = db.from('off_cycle_pay_items').delete().eq('pay_period_id', payPeriodId);
+  if (workerId) q = q.eq('worker_id', workerId);
+  const { data, error } = await q.select('session_id');
+  if (error) throw new Error(`discard off-cycle items: ${error.message}`);
+  return sessionIdsToRelease(data ?? []);
 };
 
 /* ---------- NEW: payments for the process screen ---------- */

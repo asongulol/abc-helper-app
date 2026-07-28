@@ -24,6 +24,7 @@ import {
   lockPeriod as dbLockPeriod,
   unlockPeriod as dbUnlockPeriod,
   deleteOffCycleItem,
+  deleteOffCycleItemsForStatements,
   fetchOffCycleItem,
   fetchOffCycleItemsForWorkerPeriod,
   fetchPeriodIdsForPayments,
@@ -596,6 +597,27 @@ export async function updatePaymentRowAction(
 
 /* ---------- Delete statement(s) ---------- */
 
+/**
+ * A deleted statement takes its off-cycle ledger rows with it and frees the
+ * sessions they held paid — otherwise the sessions stay marked paid against a
+ * statement that no longer exists (never re-payable), while the surviving
+ * ledger rows would silently re-apply the discarded pay on the next
+ * recalculate. Lives here, not in the db delete helpers, because recalc's own
+ * row deletes (pruneDraftPaymentsExcept / restorePaymentRows /
+ * deleteWorkerPayment) must NOT release — the ledger is designed to survive
+ * recalc — and the marker clear needs the service client (sessions are
+ * client-company RLS-scoped, invisible to the employer admin; ADR-0004).
+ */
+async function releaseSessionsForDeletedStatements(
+  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  payPeriodId: string,
+  workerId?: string,
+): Promise<number> {
+  const sessionIds = await deleteOffCycleItemsForStatements(db, payPeriodId, workerId);
+  await clearSessionsPaid(createServiceClient(), sessionIds);
+  return sessionIds.length;
+}
+
 export async function deleteStatement(args: unknown): Promise<ActionResult<{ deleted: number }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -614,12 +636,15 @@ export async function deleteStatement(args: unknown): Promise<ActionResult<{ del
 
   try {
     const db = await createServerSupabase();
-    await dbDeleteStatement(db, input.paymentId);
+    const stmt = await dbDeleteStatement(db, input.paymentId);
+    const released = stmt
+      ? await releaseSessionsForDeletedStatements(db, stmt.payPeriodId, stmt.workerId)
+      : 0;
     await logEvent({
       companyId: input.companyId,
       action: 'delete_statement',
       entity: input.paymentId,
-      detail: { scope: 'contractor' },
+      detail: { scope: 'contractor', released_sessions: released },
     });
     return { ok: true, data: { deleted: 1 } };
   } catch (err) {
@@ -656,11 +681,12 @@ export async function deleteAllStatements(
       return { ok: false, error: `Period is ${period.state} — unlock first.` };
 
     const deleted = await dbDeleteAllStatements(db, period.id);
+    const released = await releaseSessionsForDeletedStatements(db, period.id);
     await logEvent({
       companyId: input.companyId,
       action: 'delete_statement',
       entity: `${input.periodStart} → ${input.periodEnd}`,
-      detail: { scope: 'whole_period', count: deleted },
+      detail: { scope: 'whole_period', count: deleted, released_sessions: released },
     });
     return { ok: true, data: { deleted } };
   } catch (err) {
