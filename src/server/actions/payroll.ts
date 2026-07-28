@@ -614,6 +614,7 @@ export async function updatePaymentRowAction(
               grossPhp: centavosToPhp(grossCur),
               computedGrossPhp:
                 cur.computed_gross_php == null ? null : Number(cur.computed_gross_php),
+              note: cur.note ?? null,
             },
             input.grossPhpOverride == null
               ? null

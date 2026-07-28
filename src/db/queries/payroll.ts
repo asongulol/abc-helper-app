@@ -1193,25 +1193,36 @@ export const lockWarningReason = (
   return `This run pays ${parts.join(' and ')}. Lock again to confirm.`;
 };
 
+const OVERRIDE_NOTE = 'Gross manually overridden';
+
 /**
  * The gross-override state machine (RP-07). `computedGrossPhp` is captured on
  * the FIRST override and left alone afterwards — re-deriving it from the stored
  * gross (which by then IS the override) is what destroyed the engine's figure
  * and made the ↺ button restore the override to itself.
  *
- * ponytail: `note` stays the override marker, since `overridden` is read from
- * it everywhere. It is now prose only — the revertible value lives in a column.
+ * `note` is now prose only — the revertible value lives in the column, and
+ * `overridden` is read from the column too. It is still written for the audit
+ * trail, but a note this function did NOT write survives a clear: 287 prod rows
+ * carry "Historical import (Hubstaff daily report)" and every routine save used
+ * to blank it (and, while `overridden` came from the note, showed them as
+ * manually overridden).
  */
 export const applyGrossOverride = (
-  cur: { grossPhp: number; computedGrossPhp: number | null },
+  cur: { grossPhp: number; computedGrossPhp: number | null; note: string | null },
   overridePhp: number | null,
 ): { grossPhp: number; computedGrossPhp: number | null; note: string | null } => {
   const computed = cur.computedGrossPhp ?? cur.grossPhp;
-  if (overridePhp == null) return { grossPhp: computed, computedGrossPhp: null, note: null };
+  if (overridePhp == null)
+    return {
+      grossPhp: computed,
+      computedGrossPhp: null,
+      note: cur.note?.startsWith(OVERRIDE_NOTE) ? null : (cur.note ?? null),
+    };
   return {
     grossPhp: overridePhp,
     computedGrossPhp: computed,
-    note: `Gross manually overridden (computed ${computed})`,
+    note: `${OVERRIDE_NOTE} (computed ${computed})`,
   };
 };
 
@@ -1715,7 +1726,10 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
     netPhp: p.net_php,
     miscItems: Array.isArray(p.misc_items) ? (p.misc_items as MiscItem[]) : [],
     payoutMethod: p.payout_method,
-    overridden: !!p.note,
+    // The capture IS the override marker. Sniffing `note` instead flagged 287
+    // prod rows whose note is "Historical import (Hubstaff daily report)" as
+    // manually overridden — blue cell, ↺ button, and a recalculate warning.
+    overridden: p.computed_gross_php != null,
     // RP-18: same rule as buildStatements — either side of the link going
     // non-active makes the row a warning. The embed returns every company the
     // worker is linked to, so pick this payment's own link.

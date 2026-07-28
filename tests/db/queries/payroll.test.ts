@@ -244,7 +244,9 @@ describe('lockWarningReason — rows the admin must acknowledge before locking (
 
 describe('applyGrossOverride — a gross override stays revertible (RP-07)', () => {
   it('captures the engine gross on the first override', () => {
-    expect(applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null }, 15000)).toEqual({
+    expect(
+      applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null, note: null }, 15000),
+    ).toEqual({
       grossPhp: 15000,
       computedGrossPhp: 18182,
       note: 'Gross manually overridden (computed 18182)',
@@ -253,13 +255,29 @@ describe('applyGrossOverride — a gross override stays revertible (RP-07)', () 
 
   it('does NOT recapture on a second save — the bug that erased the true figure', () => {
     // Row already overridden to 15000; the debounced save fires again.
-    const again = applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, 15000);
+    const again = applyGrossOverride(
+      {
+        grossPhp: 15000,
+        computedGrossPhp: 18182,
+        note: 'Gross manually overridden (computed 18182)',
+      },
+      15000,
+    );
     expect(again.computedGrossPhp).toBe(18182);
     expect(again.note).toBe('Gross manually overridden (computed 18182)');
   });
 
   it('restores the engine gross when the override is cleared, and drops the marker', () => {
-    expect(applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, null)).toEqual({
+    expect(
+      applyGrossOverride(
+        {
+          grossPhp: 15000,
+          computedGrossPhp: 18182,
+          note: 'Gross manually overridden (computed 18182)',
+        },
+        null,
+      ),
+    ).toEqual({
       grossPhp: 18182,
       computedGrossPhp: null,
       note: null,
@@ -267,16 +285,34 @@ describe('applyGrossOverride — a gross override stays revertible (RP-07)', () 
   });
 
   it('re-overriding after a revert captures the restored gross afresh', () => {
-    const cleared = applyGrossOverride({ grossPhp: 15000, computedGrossPhp: 18182 }, null);
+    const cleared = applyGrossOverride(
+      {
+        grossPhp: 15000,
+        computedGrossPhp: 18182,
+        note: 'Gross manually overridden (computed 18182)',
+      },
+      null,
+    );
     expect(applyGrossOverride(cleared, 12000).computedGrossPhp).toBe(18182);
   });
 
   it('clearing a row that was never overridden leaves the gross alone', () => {
-    expect(applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null }, null)).toEqual({
+    expect(
+      applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null, note: null }, null),
+    ).toEqual({
       grossPhp: 18182,
       computedGrossPhp: null,
       note: null,
     });
+  });
+
+  it('keeps a note it did not write — 287 prod rows are a Hubstaff import, not an override', () => {
+    // Every debounced save sends grossPhpOverride:null for a non-overridden row,
+    // so a blanket `note: null` here wiped the row's provenance on any edit.
+    const historical = 'Historical import (Hubstaff daily report)';
+    expect(
+      applyGrossOverride({ grossPhp: 18182, computedGrossPhp: null, note: historical }, null).note,
+    ).toBe(historical);
   });
 });
 
