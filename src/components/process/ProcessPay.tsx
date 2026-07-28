@@ -15,14 +15,21 @@
  */
 
 import Link from 'next/link';
-import { Fragment, useState, useTransition } from 'react';
+import { Fragment, useMemo, useState, useTransition } from 'react';
 import { Badge, EmptyState } from '@/components/ui';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { useToast } from '@/components/ui/Toast';
+import type { PayfileDownload } from '@/db/queries/audit';
 import type { ProcessPayment } from '@/db/queries/payroll';
 import { peso } from '@/lib/format';
 import { downloadCsv } from '@/lib/payroll/bank-export';
 import { buildIndividualPayments } from '@/lib/payroll/individual-payments';
+import {
+  isUnfundedWiseDraft,
+  isUnpaidStatus,
+  paymentStatusLabel,
+  paymentStatusTone,
+} from '@/lib/payroll/status-pills';
 import { buildWiseBatch } from '@/lib/payroll/wise-batch';
 import { getProcessPayments, markAllUnpaid, markPaid } from '@/server/actions/payroll';
 import { wiseBatch, wiseStatus } from '@/server/actions/wise';
@@ -43,14 +50,27 @@ interface Props {
   initialPayments: ProcessPayment[];
   /** wiseBatch is OWNER-gated; hide the API control for non-owners. */
   isOwner: boolean;
+  /** Newest payment-file download per kind, from audit_log; null = read failed. */
+  downloads: PayfileDownload[] | null;
+  /** Records this download in audit_log so other admins see it (RP-59). */
+  logDownload: (kind: 'wise' | 'individual', rows: number, totalPhp: number) => Promise<void>;
 }
 
 const channelOf = (m: string | null): Channel =>
   m === 'wise' ? 'wise' : m === 'bpi' ? 'bpi' : 'other';
-const sumPhp = (rows: ProcessPayment[]): number =>
+const sumPhp = (rows: readonly { netPhp: number | null }[]): number =>
   rows.reduce((s, p) => s + (p.netPhp != null ? Math.round(p.netPhp * 100) : 0), 0) / 100;
+/** Local calendar day (not UTC) — the default for "when did you send it". */
+const todayLocal = (): string => new Date().toLocaleDateString('en-CA');
 
-export function ProcessPay({ period, companyId, initialPayments, isOwner }: Props) {
+export function ProcessPay({
+  period,
+  companyId,
+  initialPayments,
+  isOwner,
+  downloads,
+  logDownload,
+}: Props) {
   const { notify } = useToast();
   const [payments, setPayments] = useState(initialPayments);
   const [tab, setTab] = useState<Channel | 'all'>('all');
@@ -60,41 +80,117 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
   // always PHP — the file's amounts are pesos, so any other target overpays by
   // the FX rate; buildWiseBatch throws on one.
   const [srcCcy, setSrcCcy] = useState('USD');
-  // Bumped after each export so the "already downloaded" stamp re-renders.
-  const [, setDownloadTick] = useState(0);
+  // Download records from audit_log (every admin, every machine). Prepended to
+  // optimistically after each export so the stamp re-renders immediately.
+  const [downloadLog, setDownloadLog] = useState(downloads);
+  // Per-row mark-paid date entry: {paymentId, YYYY-MM-DD} while the row is open.
+  const [dateFor, setDateFor] = useState<{ id: string; date: string } | null>(null);
 
   const refresh = async () => {
     const r = await getProcessPayments({ periodId: period.id, companyId });
-    if (r.ok) setPayments(r.data.payments);
+    if (r.ok) {
+      setPayments(r.data.payments);
+      return;
+    }
+    // A silently failed refresh leaves the table showing pre-action state — say
+    // so, otherwise a paid row still reads "unpaid" and gets paid again (RP-19).
+    notify(`${r.error} The list below is out of date — reload the page.`, {
+      type: 'error',
+      persistent: true,
+    });
   };
 
   const inChannel = (c: Channel) => payments.filter((p) => channelOf(p.payoutMethod) === c);
   const wiseRows = inChannel('wise');
   const wiseReady = wiseRows.filter((p) => !!p.wiseRecipientUuid).length;
   const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
+  // Build the batch file up front, not just on click: its `included` rows are
+  // the only ones written, so its sum — NOT the sum of all Wise rows — is what
+  // Wise shows after upload and what the owner funds against (RP-65).
+  const wiseFile = useMemo(
+    () =>
+      buildWiseBatch(
+        payments.map((p) => ({
+          name: p.name,
+          email: p.workerEmail,
+          netPhp: p.netPhp ?? 0,
+          payoutMethod: p.payoutMethod,
+          wiseRecipientUuid: p.wiseRecipientUuid,
+        })),
+        {
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+          sourceCurrency: srcCcy,
+        },
+      ),
+    [payments, period.periodStart, period.periodEnd, srcCcy],
+  );
+  const wiseFileTotal = sumPhp(wiseFile.included);
+  const wiseDroppedTotal = sumPhp(wiseFile.dropped);
   const shown = tab === 'all' ? payments : inChannel(tab);
   // Default table order: contractor name A→Z.
   const shownSorted = [...shown].sort((a, b) => a.name.localeCompare(b.name));
-  const unpaidIds = payments.filter((p) => p.status !== 'sent').map((p) => p.paymentId);
+  // Only draft/queued/failed rows are payable. `sent` and `reconciled` already
+  // moved money — re-marking them overwrites their true send date (RP-08).
+  const unpaid = payments.filter((p) => isUnpaidStatus(p.status));
+  const unpaidIds = unpaid.map((p) => p.paymentId);
+  // Of those, the ones whose Wise draft is still sitting unfunded (RP-58).
+  const unfundedDrafts = unpaid.filter(isUnfundedWiseDraft).length;
 
-  // Per-browser export stamp (legacy `lastExported`): warns before a re-download
-  // and shows "already downloaded {date}". Keyed by kind so the two files track
-  // independently.
+  // Export stamp, two sources: the legacy per-browser localStorage key (survives
+  // a failed audit write) and the audit_log record (survives a different admin,
+  // machine or cleared profile — RP-59). Newest of the two wins.
   const stampKey = (kind: 'wise' | 'individual') => `payfile:${kind}:${period.id}`;
-  const lastDownloaded = (kind: 'wise' | 'individual'): string | null => {
+  const localStamp = (kind: 'wise' | 'individual'): string | null => {
     try {
       return window.localStorage.getItem(stampKey(kind));
     } catch {
       return null;
     }
   };
-  const stampDownloaded = (kind: 'wise' | 'individual') => {
+  const lastDownload = (kind: 'wise' | 'individual'): PayfileDownload | null => {
+    const logged = downloadLog?.find((d) => d.kind === kind) ?? null;
+    const local = localStamp(kind);
+    if (local && (!logged || local > logged.at)) {
+      return { kind, at: local, actor: null, byOther: false };
+    }
+    return logged;
+  };
+  /** "You downloaded" / "alice@x downloaded" — the guard must name who and when. */
+  const who = (d: PayfileDownload) =>
+    d.byOther ? (d.actor ?? 'Another admin') : d.actor ? 'You' : 'You (this browser)';
+
+  const noteDownload = (kind: 'wise' | 'individual', rows: number, totalPhp: number) => {
     try {
       window.localStorage.setItem(stampKey(kind), new Date().toISOString());
     } catch {
       /* storage unavailable */
     }
-    setDownloadTick((t) => t + 1);
+    setDownloadLog((prev) => [
+      { kind, at: new Date().toISOString(), actor: null, byOther: false },
+      ...(prev ?? []).filter((d) => d.kind !== kind),
+    ]);
+    // Best-effort, like every other logEvent call — never block the download.
+    void logDownload(kind, rows, totalPhp);
+  };
+
+  const downloadNote = (kind: 'wise' | 'individual') => {
+    const d = lastDownload(kind);
+    return (
+      <>
+        {d && (
+          <span className="pill warn" style={{ marginLeft: 8 }}>
+            {who(d)} downloaded this {new Date(d.at).toLocaleDateString()}
+          </span>
+        )}
+        {/* Say when the guard is blind rather than implying "never downloaded". */}
+        {downloadLog === null && (
+          <span className="muted" style={{ marginLeft: 8, fontSize: 12 }}>
+            Couldn&apos;t check whether another admin already downloaded this.
+          </span>
+        )}
+      </>
+    );
   };
 
   const title =
@@ -148,20 +244,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
 
   // ── 1 · Manual Wise batch file (Wise recipients only; double-pay guard) ──
   const downloadFile = () => {
-    const { csv, filename, included, dropped } = buildWiseBatch(
-      payments.map((p) => ({
-        name: p.name,
-        email: p.workerEmail,
-        netPhp: p.netPhp ?? 0,
-        payoutMethod: p.payoutMethod,
-        wiseRecipientUuid: p.wiseRecipientUuid,
-      })),
-      {
-        periodStart: period.periodStart,
-        periodEnd: period.periodEnd,
-        sourceCurrency: srcCcy,
-      },
-    );
+    const { csv, filename, included, dropped } = wiseFile;
     if (included.length === 0) {
       notify(
         dropped.length > 0
@@ -171,13 +254,17 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       );
       return;
     }
-    // ponytail: per-browser double-download guard via localStorage; upgrade to a
-    // DB download-record if more than one admin ever pays the same batch.
-    const last = lastDownloaded('wise');
+    // Double-download guard. The record comes from audit_log, so it fires for a
+    // second admin / another machine too — the multi-actor case this guard is
+    // for (RP-59).
+    // ponytail: the DB record is read once at page load; two admins downloading
+    // within the same page view can still both pass. Re-read (or subscribe) here
+    // if that ever actually happens.
+    const last = lastDownload('wise');
     if (
       last &&
       !window.confirm(
-        `You already downloaded this Wise file for this period on ${new Date(last).toLocaleString()}. Downloading again risks paying the batch twice. Download anyway?`,
+        `${who(last)} already downloaded this Wise file for this period on ${new Date(last.at).toLocaleString()}. Downloading again risks paying the batch twice. Download anyway?`,
       )
     ) {
       return;
@@ -197,7 +284,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       return;
     }
     downloadCsv(csv, filename);
-    stampDownloaded('wise');
+    noteDownload('wise', included.length, sumPhp(included));
   };
 
   // ── 2 · Individual payment files (per-contractor breakdown, every method) ──
@@ -212,17 +299,17 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       })),
       { payDate: period.payDate, periodStart: period.periodStart, periodEnd: period.periodEnd },
     );
-    const last = lastDownloaded('individual');
+    const last = lastDownload('individual');
     if (
       last &&
       !window.confirm(
-        `You already downloaded this payments file for this period on ${new Date(last).toLocaleString()}. Download again?`,
+        `${who(last)} already downloaded this payments file for this period on ${new Date(last.at).toLocaleString()}. Download again?`,
       )
     ) {
       return;
     }
     downloadCsv(csv, filename);
-    stampDownloaded('individual');
+    noteDownload('individual', payments.length, sumPhp(payments));
   };
 
   // ── Mark all paid / unpaid ──
@@ -251,29 +338,18 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
     });
 
   // ── Per-row mark paid. Wise uses now (its sent date is approximate anyway);
-  //    BPI / other prompt for the date the transfer actually happened. ──
-  const markRowPaid = (p: ProcessPayment) => {
-    let paidAt: string | undefined;
-    if (p.payoutMethod !== 'wise') {
-      const def = period.payDate ?? new Date().toISOString().slice(0, 10);
-      const entered = window.prompt(
-        `Date you sent ${p.name}'s ${(p.payoutMethod ?? 'manual').toUpperCase()} payment (YYYY-MM-DD):`,
-        def,
-      );
-      if (entered == null) return; // cancelled
-      const d = entered.trim();
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-        notify('Enter the date as YYYY-MM-DD.', { type: 'warn' });
-        return;
-      }
-      paidAt = `${d}T00:00:00.000Z`;
-    }
+  //    BPI / other pick the date the transfer actually happened, in an inline
+  //    <input type="date"> (RP-64 — the old window.prompt made a fat-fingered
+  //    month easy). Deliberately unbounded: payment may legally land on ANY day
+  //    of the arrears window, so no min/max. ──
+  const submitRowPaid = (p: ProcessPayment, day?: string) =>
     startBusy(async () => {
       const r = await markPaid({
         companyId,
         paymentIds: [p.paymentId],
-        ...(paidAt ? { paidAt } : {}),
+        ...(day ? { paidAt: `${day}T00:00:00.000Z` } : {}),
       });
+      setDateFor(null);
       if (!r.ok) {
         notify(r.error, { type: 'error', persistent: true });
         return;
@@ -281,6 +357,15 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       notify(`Marked ${p.name} paid.`, { type: 'success' });
       await refresh();
     });
+
+  const markRowPaid = (p: ProcessPayment) => {
+    if (p.payoutMethod === 'wise') {
+      submitRowPaid(p);
+      return;
+    }
+    // Today, not period.payDate: we're asking when the transfer actually
+    // happened, and pay_date is the deadline — always today or later (RP-05).
+    setDateFor({ id: p.paymentId, date: todayLocal() });
   };
 
   const pill = (c: Channel | 'all', label: string) => {
@@ -391,17 +476,45 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
                     <td data-label="Net ₱">{peso(p.netPhp)}</td>
                     <td data-label="Via">{p.payoutMethod ?? '—'}</td>
                     <td data-label="Status">
-                      {p.status === 'sent' ? (
-                        <Badge tone="good">paid</Badge>
-                      ) : (
-                        <Badge tone="neutral">pending</Badge>
-                      )}
+                      {/* All five enum states, not just sent/not-sent: a reconciled
+                          row must not read "pending", nor a failed one (RP-57). */}
+                      <Badge tone={paymentStatusTone(p.status)}>
+                        {paymentStatusLabel(p.status)}
+                      </Badge>
                     </td>
                     <td data-label="Wise transfer">{p.wiseTransferId ?? '—'}</td>
                     <td className="card-action no-print" style={{ textAlign: 'right' }}>
-                      {p.status === 'sent' ? (
+                      {!isUnpaidStatus(p.status) ? (
                         <span className="muted" style={{ fontSize: 12 }}>
-                          ✓ paid
+                          ✓ {paymentStatusLabel(p.status)}
+                        </span>
+                      ) : dateFor?.id === p.paymentId ? (
+                        <span
+                          className="row"
+                          style={{ gap: 4, justifyContent: 'flex-end', flexWrap: 'nowrap' }}
+                        >
+                          <input
+                            type="date"
+                            aria-label={`Date you sent ${p.name}'s payment`}
+                            value={dateFor.date}
+                            onChange={(e) => setDateFor({ id: p.paymentId, date: e.target.value })}
+                          />
+                          <button
+                            type="button"
+                            className="btn sm"
+                            disabled={busy || !dateFor.date}
+                            onClick={() => submitRowPaid(p, dateFor.date)}
+                          >
+                            Mark paid
+                          </button>
+                          <button
+                            type="button"
+                            className="btn ghost sm"
+                            disabled={busy}
+                            onClick={() => setDateFor(null)}
+                          >
+                            Cancel
+                          </button>
                         </span>
                       ) : (
                         <button
@@ -429,6 +542,20 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
           Downloads a CSV in Wise&apos;s exact batch-upload template, keyed by each recipient&apos;s
           Wise ID ({wiseReady} of {wiseRows.length} Wise contractor(s) ready). Upload it on your
           Wise account → Batch payments. You fund it in Wise.
+        </p>
+        {/* The file's own total, not the Wise-channel total above: rows without a
+            recipient UUID are dropped, so the two differ exactly when some are
+            missing. This is the figure Wise should show after upload (RP-65). */}
+        <p className="sub" style={{ marginTop: -4 }}>
+          File total <b>{peso(wiseFileTotal)}</b> across {wiseFile.included.length} recipient(s) —
+          check this against Wise&apos;s preview before you fund.
+          {wiseFile.dropped.length > 0 && (
+            <>
+              {' '}
+              A further <b>{peso(wiseDroppedTotal)}</b> for {wiseFile.dropped.length} contractor(s)
+              is <b>not</b> in the file (no Wise recipient UUID) and still has to be paid.
+            </>
+          )}
         </p>
         {wiseMissingUuid.length > 0 && (
           <div className="banner error" style={{ marginBottom: 12 }}>
@@ -482,11 +609,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
             No Wise-method contractors in this period.
           </span>
         )}
-        {lastDownloaded('wise') && (
-          <span className="pill warn" style={{ marginLeft: 8 }}>
-            already downloaded {new Date(lastDownloaded('wise') as string).toLocaleDateString()}
-          </span>
-        )}
+        {downloadNote('wise')}
       </div>
 
       {/* 2 · Individual payment files — all methods, incl. BPI (record-keeping). */}
@@ -499,12 +622,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
         <button type="button" className="btn ghost" disabled={busy} onClick={downloadIndividual}>
           Download payments CSV ({payments.length})
         </button>
-        {lastDownloaded('individual') && (
-          <span className="pill warn" style={{ marginLeft: 8 }}>
-            already downloaded{' '}
-            {new Date(lastDownloaded('individual') as string).toLocaleDateString()}
-          </span>
-        )}
+        {downloadNote('individual')}
       </div>
 
       {/* 3 · Automatic Wise API draft — editable draft panel (drafts only). */}
@@ -525,7 +643,11 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       {confirm === 'paid' && (
         <ConfirmDangerModal
           title="Mark all paid"
-          message={`Mark ${unpaidIds.length} contractor(s) paid for ${title}? Do this only after you've actually sent the money.`}
+          message={`Mark ${unpaidIds.length} contractor(s) paid for ${title}? Do this only after you've actually sent the money.${
+            unfundedDrafts > 0
+              ? ` ${unfundedDrafts} of them only have a Wise DRAFT transfer — no money moves until you fund the batch in Wise, so marking them paid now records a payment that hasn't happened.`
+              : ''
+          }`}
           confirmLabel="Mark paid"
           busy={busy}
           onConfirm={doMarkPaid}
@@ -535,7 +657,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner }: Prop
       {confirm === 'unpaid' && (
         <ConfirmDangerModal
           title="Mark all unpaid"
-          message={`Reverse paid status for this batch and return it to "ready to pay"? Rows already sent via Wise are left as-is and must be reversed individually.`}
+          message={`Reverse paid status for this batch and return it to "ready to pay"? Only rows marked paid outside Wise are reversed — rows with a Wise transfer are left as-is, and there is no per-row reversal in this app: cancel the transfer in Wise instead.`}
           confirmLabel="Mark unpaid"
           busy={busy}
           onConfirm={doMarkUnpaid}

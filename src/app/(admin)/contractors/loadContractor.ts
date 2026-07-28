@@ -10,6 +10,8 @@ export interface ContractorPageData {
   companyId: string;
   companyName: string;
   companies: { id: string; name: string }[];
+  /** Owner-only gate for Wise payout identifiers — they decide where pay is sent. */
+  isOwner: boolean;
 }
 
 /**
@@ -37,5 +39,6 @@ export async function loadContractor(workerId: string): Promise<ContractorPageDa
     companyId,
     companyName: companies.find((c) => c.id === companyId)?.name ?? '',
     companies,
+    isOwner: admin.isOwner,
   };
 }

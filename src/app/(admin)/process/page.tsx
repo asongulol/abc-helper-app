@@ -1,10 +1,13 @@
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { ProcessPay } from '@/components/process/ProcessPay';
 import { ProcessShell } from '@/components/process/ProcessShell';
 import { createServerSupabase } from '@/db/clients/server';
+import { getPayfileDownloads, PAYFILE_DOWNLOAD_ACTION } from '@/db/queries/audit';
 import { countPendingTimeApprovals } from '@/db/queries/overview';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getProcessPayments } from '@/server/actions/payroll';
+import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
 
@@ -41,8 +44,56 @@ export default async function ProcessPage({
     const period = allPeriods.find((p) => p.id === periodId);
     if (period && (period.state === 'locked' || period.state === 'paid')) {
       const res = await getProcessPayments({ periodId: period.id, companyId });
+      // Never fall through to an empty pay list on failure — it renders as "no
+      // contractors in this view" for a batch that really has rows (RP-19).
+      if (!res.ok) {
+        return (
+          <div className="card">
+            <h2>Process payroll</h2>
+            <div className="banner error" style={{ marginBottom: 12 }}>
+              <span>
+                <b>Could not load this batch&apos;s payments.</b> {res.error} Nothing has changed —
+                reload to try again.
+              </span>
+            </div>
+            <Link className="btn ghost sm" href="/process">
+              ← Back to batches
+            </Link>
+          </div>
+        );
+      }
+      // Cross-admin double-export guard (RP-59): the download record lives in
+      // audit_log, so a second admin / another machine sees it. `null` = the
+      // lookup itself failed — the panel says so rather than implying "never
+      // downloaded", which would silently disarm the guard.
+      const downloads = await getPayfileDownloads(db, period.id, admin.email).catch(() => null);
+
+      // Records one audit row per payment-file download. Inline (not in
+      // server/actions/) because it only closes over ids already resolved here
+      // and has no other caller. No admin re-check needed: the insert runs
+      // under RLS (`audit_log` insert = is_company_admin) and logEvent is
+      // best-effort, so a non-admin call writes nothing and returns nothing.
+      // (ids captured as strings — the action closes over these, not the row.)
+      const logPeriodId = period.id;
+      const logCompanyId = companyId;
+      async function logPayfileDownload(
+        kind: 'wise' | 'individual',
+        rows: number,
+        totalPhp: number,
+      ): Promise<void> {
+        'use server';
+        await logEvent({
+          companyId: logCompanyId,
+          action: PAYFILE_DOWNLOAD_ACTION,
+          entity: logPeriodId,
+          detail: { kind, rows, totalPhp },
+        });
+      }
+
       return (
         <ProcessPay
+          downloads={downloads}
+          logDownload={logPayfileDownload}
           period={{
             id: period.id,
             periodStart: period.periodStart,
@@ -52,7 +103,7 @@ export default async function ProcessPage({
             kind: period.kind,
           }}
           companyId={companyId}
-          initialPayments={res.ok ? res.data.payments : []}
+          initialPayments={res.data.payments}
           isOwner={admin.isOwner}
         />
       );

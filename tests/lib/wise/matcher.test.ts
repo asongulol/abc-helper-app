@@ -6,7 +6,8 @@
  *  exact match                    → 'exact amount match — single candidate'
  *  ±1 peso boundary (inside)      → '₱1.00 tolerance — exactly at boundary (inside)'
  *  ±1 peso boundary (outside)     → '₱1.01 over tolerance — treated as variance'
- *  outside-window rejection       → 'transfer outside ±windowDays is rejected'
+ *  outside-window rejection       → 'no period_end: transfer outside ±windowDays is rejected'
+ *  legal arrears window (RP-04)   → describe 'decideMatch — legal payment window'
  *  multi-candidate closest-date   → 'multiple exact-amount candidates — closest pay_date wins'
  *  ghost cancelled excluded       → 'cancelled transfers are excluded before indexing'
  *  recipient-history union        → 'historical recipient id in wise_recipients matched'
@@ -67,6 +68,7 @@ function makePayment(
     status?: string;
     wiseTransferId?: string | null;
     payDate?: string;
+    periodEnd?: string;
     paidAt?: string;
   } = {},
 ): MatcherPayment {
@@ -85,8 +87,30 @@ function makePayment(
     },
     pay_periods: {
       pay_date: opts.payDate ?? PAY_DATE,
-      period_end: null,
+      period_end: opts.periodEnd ?? null,
     },
+  };
+}
+
+/** A real semi-monthly row: work Mar 1–15, deadline Mar 31 → legal send Mar 16–31. */
+function makeArrearsPayment(
+  id: string,
+  netPhp: number,
+  recipientId: number,
+  opts: { paidAt?: string } = {},
+): MatcherPayment {
+  return makePayment(id, netPhp, recipientId, {
+    periodEnd: '2026-03-15',
+    payDate: '2026-03-31',
+    ...opts,
+  });
+}
+
+/** Transfer created on a given calendar date (mid-morning UTC). */
+function makeTransferOn(id: number, recipientId: number, targetValue: number, date: string) {
+  return {
+    ...makeTransfer(id, recipientId, targetValue, 0),
+    created: `${date}T10:00:00.000Z`,
   };
 }
 
@@ -177,7 +201,9 @@ describe('decideMatch — no transfers for recipient', () => {
     expect(d.result.outcome).toBe('no_wise_transfer');
   });
 
-  it('transfer outside ±windowDays is rejected → no_wise_transfer_in_window', () => {
+  // These two rows carry NO period_end, so there is no legal window to derive and
+  // windowDays is the whole story — the legacy ±windowDays fallback path.
+  it('no period_end: transfer outside ±windowDays is rejected → no_wise_transfer_in_window', () => {
     const t = makeTransfer(1, 999, 10000, 10); // 10 days after pay_date, window=7
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', 10000, 999);
@@ -185,13 +211,92 @@ describe('decideMatch — no transfers for recipient', () => {
     expect(d.result.outcome).toBe('no_wise_transfer_in_window');
   });
 
-  it('transfer exactly at ±windowDays boundary is included', () => {
+  it('no period_end: transfer exactly at ±windowDays boundary is included', () => {
     const t = makeTransfer(1, 999, 10000, 7); // exactly 7 days after — borderline
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', 10000, 999);
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
     // 7 * DAY_MS = exactly windowDays * DAY_MS → included (<=)
     expect(d.result.outcome).toBe('matched_exact');
+  });
+});
+
+// ─── decideMatch — the legal payment window (RP-04) ───────────────────────────
+//
+// THE OLD ASSERTION HERE WAS WRONG. These tests used to say "±7 days of pay_date
+// is the window" and treated a transfer 10 days off pay_date as correctly rejected.
+// That contradicts the pay schedule: semi-monthly, half-month arrears, with
+// pay_date a DEADLINE rather than an appointment — work on Mar 1–15 may legally be
+// sent on ANY day from Mar 16 to Mar 31. A ±7d window around Mar 31 covers
+// Mar 24–Apr 7 and rejects the perfectly legal Mar 17 transfer as
+// no_wise_transfer_in_window.
+//
+// The window is now derived from the row's own [period_end, pay_date] span
+// (midpoint anchor, half the span + 1d slack), with windowDays as a floor. Please
+// don't "restore" the ±7d boundary: it only ever looked right because these
+// fixtures had no period_end. See matchWindow() in src/lib/wise/matcher.ts.
+
+describe('decideMatch — legal payment window (semi-monthly arrears)', () => {
+  /** Outcome for a ₱10,000 arrears row whose only transfer was created on `created`. */
+  const outcomeFor = (created: string, windowDays = 7): string => {
+    const idx = buildRecipientIndex([makeTransferOn(1, 999, 10000, created)]);
+    return decideMatch(makeArrearsPayment('p1', 10000, 999), idx, noopDates, windowDays, NOW_ISO)
+      .result.outcome;
+  };
+
+  it('transfer on the FIRST legal day (period_end + 1) matches', () => {
+    expect(outcomeFor('2026-03-16')).toBe('matched_exact');
+  });
+
+  it('transfer on the LAST legal day (the pay_date deadline itself) matches', () => {
+    expect(outcomeFor('2026-03-31')).toBe('matched_exact');
+  });
+
+  it('RP-04 scenario: Mar 1–15 period, deadline Mar 31, sent Mar 17, never marked paid', () => {
+    expect(outcomeFor('2026-03-17')).toBe('matched_exact');
+  });
+
+  it('does NOT swallow the NEXT period transfer of the same amount', () => {
+    // Apr 5 is inside the Mar 16–31 period's legal window, not this row's.
+    expect(outcomeFor('2026-04-05')).toBe('no_wise_transfer_in_window');
+  });
+
+  it('does NOT swallow the PREVIOUS period transfer of the same amount', () => {
+    // Mar 5 belongs to the Feb 16–28 period (paid Mar 1–15).
+    expect(outcomeFor('2026-03-05')).toBe('no_wise_transfer_in_window');
+  });
+
+  it('paid_at still wins over the legal window — a late send anchors on the real date', () => {
+    const t = makeTransferOn(1, 999, 10000, '2026-04-20'); // well past the deadline
+    const p = makeArrearsPayment('p1', 10000, 999, { paidAt: '2026-04-20T10:00:00.000Z' });
+    const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_exact');
+  });
+
+  it('paid_at narrows as well as widens: legal-window transfer is out once paid_at says otherwise', () => {
+    const t = makeTransferOn(1, 999, 10000, '2026-03-20'); // inside the legal window…
+    const p = makeArrearsPayment('p1', 10000, 999, { paidAt: '2026-04-20T10:00:00.000Z' }); // …but the row records Apr 20
+    const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('no_wise_transfer_in_window');
+  });
+
+  it('pre-RP-03 rows (pay_date overwritten with period_end) degrade to the legacy ±windowDays', () => {
+    // lockPeriod used to write period_end into pay_date, so the span is zero and
+    // the real deadline is unrecoverable — behave exactly as before the fix.
+    const p = makePayment('p1', 10000, 999, { periodEnd: '2026-03-15', payDate: '2026-03-15' });
+    const inside = makeTransferOn(1, 999, 10000, '2026-03-20'); // within ±7d of Mar 15
+    const outside = makeTransferOn(2, 999, 10000, '2026-03-30'); // 15d out — still missed
+    expect(
+      decideMatch(p, buildRecipientIndex([inside]), noopDates, 7, NOW_ISO).result.outcome,
+    ).toBe('matched_exact');
+    expect(
+      decideMatch(p, buildRecipientIndex([outside]), noopDates, 7, NOW_ISO).result.outcome,
+    ).toBe('no_wise_transfer_in_window');
+  });
+
+  it('windowDays stays a floor — a caller-widened window still applies', () => {
+    // Apr 5 is outside the legal window but inside ±30d of its midpoint.
+    expect(outcomeFor('2026-04-05', 30)).toBe('matched_exact');
   });
 });
 

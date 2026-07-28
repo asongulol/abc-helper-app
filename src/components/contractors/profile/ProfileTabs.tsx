@@ -15,6 +15,7 @@ interface Props {
   companyName?: string | undefined;
   /** All companies (employer + clients) for the engagements assign-to select. */
   companies?: { id: string; name: string }[] | undefined;
+  isOwner: boolean;
 }
 
 /**
@@ -22,7 +23,7 @@ interface Props {
  * full-page route (`ContractorProfilePage`). All state/handlers come from
  * `useContractorProfile` via `p`.
  */
-export function ProfileTabs({ p, worker, companyId, companyName, companies = [] }: Props) {
+export function ProfileTabs({ p, worker, companyId, companyName, companies = [], isOwner }: Props) {
   const { activeTab, tablist, tabs } = p;
   return (
     <>
@@ -77,6 +78,7 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [] 
           companyId={companyId}
           companyName={companyName}
           companies={companies}
+          isOwner={isOwner}
           engagements={p.engagements}
           updateEng={p.updateEng}
           saveEng={p.saveEng}

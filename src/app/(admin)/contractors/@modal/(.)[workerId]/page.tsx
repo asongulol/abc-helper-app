@@ -22,6 +22,7 @@ export default async function ContractorModalIntercept({
       companyId={data.companyId}
       companyName={data.companyName}
       companies={data.companies}
+      isOwner={data.isOwner}
     />
   );
 }

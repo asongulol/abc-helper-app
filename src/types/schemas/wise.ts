@@ -20,6 +20,10 @@ export type WiseDraftInput = z.infer<typeof WiseDraftSchema>;
  * One row of a Wise batch draft. `recipientId` / `amountPhp` are optional
  * per-row OVERRIDES — when omitted the draft uses the worker's saved default
  * recipient and the locked net. Drafts only: no money ever moves here.
+ *
+ * Shape only. `recipientId` must also BELONG to that payment's worker — Zod
+ * can't see the DB, so wiseBatch enforces ownership (RP-54, foreignRecipientRows)
+ * and logs the resolved per-row amount, which net_php never records.
  */
 export const WiseBatchItemSchema = z.object({
   paymentId: uuid('paymentId must be a UUID'),

@@ -10,7 +10,7 @@ import {
 import type { Database } from '@/db/types';
 import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
 import { classifyDraftError } from '@/lib/wise/draft-error';
-import { resolveDraftRow } from '@/lib/wise/draft-row';
+import { type DraftOverride, resolveDraftRow } from '@/lib/wise/draft-row';
 import {
   annotateOrphans,
   buildRecipientIndex,
@@ -158,6 +158,33 @@ export interface ServiceDraftResult {
   results: DraftOneResult[];
 }
 
+export interface DraftableRow {
+  wise_transfer_id?: string | null;
+  net_php: number | null;
+  workers?: { wise_recipient_id?: number | null } | null;
+}
+
+/**
+ * Triage one row before drafting: either the reason to skip it, or the
+ * recipient + amount to draft. Shared by BOTH draft paths so the guards can't
+ * drift apart — the UI filters are advisory only (two admins, or two tabs, both
+ * see the same row as undrafted).
+ *
+ * A row that already carries a `wise_transfer_id` is NEVER re-drafted: the
+ * write-back overwrites the stored id, orphaning the first (still live)
+ * transfer, and funding the batch then pays the contractor twice (RP-09).
+ */
+export const triageDraftRow = (
+  row: DraftableRow,
+  override?: DraftOverride,
+): { skip: string } | { recipientId: number; amountPhp: number } => {
+  if (row.wise_transfer_id) return { skip: 'already drafted' };
+  const { recipientId, amountPhp } = resolveDraftRow(row, override);
+  if (!recipientId) return { skip: 'no Wise recipient' };
+  if (amountPhp <= 0) return { skip: 'no amount' };
+  return { recipientId, amountPhp };
+};
+
 /** Draft a Wise transfer for each of the given payment IDs. OWNER-only. */
 export async function serviceDraft(db: Db, paymentIds: string[]): Promise<ServiceDraftResult> {
   const profileId = await getBusinessProfileId();
@@ -165,27 +192,13 @@ export async function serviceDraft(db: Db, paymentIds: string[]): Promise<Servic
   const results: DraftOneResult[] = [];
 
   for (const row of rows) {
-    const recipientId = row.workers?.wise_recipient_id ?? null;
-    const amountPhp = Number(row.net_php ?? 0);
-
-    if (!recipientId) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: 'no Wise recipient',
-      });
-      continue;
-    }
-    if (amountPhp <= 0) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: 'no amount',
-      });
+    const triage = triageDraftRow(row);
+    if ('skip' in triage) {
+      results.push({ paymentId: row.id, status: 'skipped', error: triage.skip });
       continue;
     }
 
-    const res = await draftOne(profileId, row.id, recipientId, amountPhp);
+    const res = await draftOne(profileId, row.id, triage.recipientId, triage.amountPhp);
     if (res.status === 'drafted' && res.transferId !== undefined) {
       await setWiseTransferIdSafe(db, row.id, String(res.transferId), res.fxRate);
     }
@@ -228,12 +241,10 @@ export async function serviceBatch(
     db,
     items.map((i) => i.paymentId),
   );
-  const eligible = rows.filter((r) => {
-    const { recipientId, amountPhp } = resolveDraftRow(r, overrides.get(r.id));
-    return recipientId !== null && amountPhp > 0;
-  });
+  const eligible = rows.filter((r) => !('skip' in triageDraftRow(r, overrides.get(r.id))));
 
-  if (eligible.length === 0) throw new Error('No eligible payments (missing recipient or amount)');
+  if (eligible.length === 0)
+    throw new Error('No eligible payments (already drafted, or missing recipient or amount)');
 
   // 1. Create the batch group.
   const group = await wiseRequest<{ id: string }>(`/v3/profiles/${profileId}/batch-groups`, {
@@ -247,16 +258,13 @@ export async function serviceBatch(
   const results: DraftOneResult[] = [];
 
   for (const row of rows) {
-    const { recipientId, amountPhp } = resolveDraftRow(row, overrides.get(row.id));
+    const triage = triageDraftRow(row, overrides.get(row.id));
 
-    if (!recipientId || amountPhp <= 0) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: !recipientId ? 'no Wise recipient' : 'no amount',
-      });
+    if ('skip' in triage) {
+      results.push({ paymentId: row.id, status: 'skipped', error: triage.skip });
       continue;
     }
+    const { recipientId, amountPhp } = triage;
 
     try {
       // Quote.
@@ -563,6 +571,10 @@ export async function serviceMatch(
       original_net_php: p.original_net_php,
       status: p.status,
       wise_transfer_id: p.wise_transfer_id,
+      // RP-04: the matcher anchors its date window on paid_at when we have it —
+      // a real send date beats a derived one. It was selected but never passed,
+      // so every row fell through to the date-derived window.
+      paid_at: p.paid_at,
       workers: p.workers
         ? {
             wise_recipient_id: p.workers.wise_recipient_id,
@@ -684,6 +696,7 @@ export async function serviceMatch(
     original_net_php: p.original_net_php,
     status: p.status,
     wise_transfer_id: p.wise_transfer_id,
+    paid_at: p.paid_at, // same anchor as above, for orphan suggestions
     workers: p.workers,
     pay_periods: p.pay_periods
       ? {

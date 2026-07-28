@@ -12,6 +12,7 @@ interface Props {
   companyId: string;
   companyName?: string | undefined;
   companies?: { id: string; name: string }[] | undefined;
+  isOwner: boolean;
 }
 
 /**
@@ -21,7 +22,13 @@ interface Props {
  * revalidate the list via `router.refresh()`. The unsaved-guard (inside the
  * hook) protects navigation away from this page.
  */
-export function ContractorProfilePage({ worker, companyId, companyName, companies = [] }: Props) {
+export function ContractorProfilePage({
+  worker,
+  companyId,
+  companyName,
+  companies = [],
+  isOwner,
+}: Props) {
   const router = useRouter();
   const { notify } = useToast();
   const p = useContractorProfile(worker, companyId, {
@@ -52,6 +59,7 @@ export function ContractorProfilePage({ worker, companyId, companyName, companie
         companyId={companyId}
         companyName={companyName}
         companies={companies}
+        isOwner={isOwner}
       />
     </div>
   );

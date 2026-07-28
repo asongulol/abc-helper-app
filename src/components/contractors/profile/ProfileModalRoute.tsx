@@ -10,6 +10,7 @@ interface Props {
   companyId: string;
   companyName?: string | undefined;
   companies?: { id: string; name: string }[] | undefined;
+  isOwner: boolean;
 }
 
 /**
@@ -17,7 +18,7 @@ interface Props {
  * ProfilePanel owns close (it unwinds its own Back-guard history entry back to
  * `/contractors`); saving refreshes so the underlying list reflects edits.
  */
-export function ProfileModalRoute({ worker, companyId, companyName, companies }: Props) {
+export function ProfileModalRoute({ worker, companyId, companyName, companies, isOwner }: Props) {
   const router = useRouter();
   const { notify } = useToast();
 
@@ -27,6 +28,7 @@ export function ProfileModalRoute({ worker, companyId, companyName, companies }:
       companyId={companyId}
       companyName={companyName}
       companies={companies}
+      isOwner={isOwner}
       onSaved={(_updated: RosterWorker) => {
         notify('Saved.', { type: 'success' });
         router.refresh();
