@@ -258,12 +258,15 @@ export const fetchOffCycleItemsForPeriod = async (
 ): Promise<{
   byWorkerCentavos: Map<string, Centavos>;
   perHourDatesByWorker: Map<string, Set<string>>;
+  perSessionUnitsByWorker: Map<string, number>;
   rows: OffCycleItemRow[];
 }> => {
   const byWorkerCentavos = new Map<string, Centavos>();
   const perHourDatesByWorker = new Map<string, Set<string>>();
+  const perSessionUnitsByWorker = new Map<string, number>();
   const rows: OffCycleItemRow[] = [];
-  if (workerIds.length === 0) return { byWorkerCentavos, perHourDatesByWorker, rows };
+  if (workerIds.length === 0)
+    return { byWorkerCentavos, perHourDatesByWorker, perSessionUnitsByWorker, rows };
   const { data, error } = await db
     .from('off_cycle_pay_items')
     .select(OFF_CYCLE_COLS)
@@ -281,8 +284,12 @@ export const fetchOffCycleItemsForPeriod = async (
       set.add(row.workDate);
       perHourDatesByWorker.set(row.workerId, set);
     }
+    if (row.basis === 'per_session') {
+      const prevUnits = perSessionUnitsByWorker.get(row.workerId) ?? 0;
+      perSessionUnitsByWorker.set(row.workerId, prevUnits + (row.units ?? 0));
+    }
   }
-  return { byWorkerCentavos, perHourDatesByWorker, rows };
+  return { byWorkerCentavos, perHourDatesByWorker, perSessionUnitsByWorker, rows };
 };
 
 /** Off-cycle items for one worker in a period (newest first) — for the UI list. */
@@ -1224,13 +1231,20 @@ export const lockBlockedReason = (
   pendingTimeCount: number,
   payments: readonly { workerId: string; name: string; units: number | null }[],
   sessionUnitsByWorker: ReadonlyMap<string, number>,
+  offCycleSessionUnitsByWorker: ReadonlyMap<string, number> = new Map(),
 ): string | null => {
   if (kind === 'off_cycle') return null;
   if (pendingTimeCount > 0)
     return `${pendingTimeCount} time entr${pendingTimeCount === 1 ? 'y is' : 'ies are'} still pending approval in this period. Approve or reject them before locking, then recalculate.`;
   const byWorker = new Map(payments.map((p) => [p.workerId, p]));
+  // `payments.units` counts every session the row pays, INCLUDING the ones paid
+  // off the ledger. Those are already stamped paid, so they're absent from
+  // `sessionUnitsByWorker` — leaving them in the comparison would let a ledger
+  // payment silently cover for the same number of brand-new unpaid sessions.
+  const captured = (workerId: string) =>
+    (byWorker.get(workerId)?.units ?? 0) - (offCycleSessionUnitsByWorker.get(workerId) ?? 0);
   const missed = [...sessionUnitsByWorker]
-    .filter(([workerId, units]) => units > (byWorker.get(workerId)?.units ?? 0))
+    .filter(([workerId, units]) => units > captured(workerId))
     .map(([workerId]) => byWorker.get(workerId)?.name || 'Unnamed worker');
   if (missed.length > 0)
     return `${missed.length} contractor(s) have approved sessions in this period that this draft does not pay (${missed.join(', ')}). Recalculate before locking.`;

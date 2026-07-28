@@ -192,6 +192,24 @@ describe('lockBlockedReason — work in the window the draft does not pay (F2/RP
     expect(lockBlockedReason('regular', 0, [ps('w1', 'Ana', 8)], new Map([['w1', 3]]))).toBeNull();
   });
 
+  it('nets the ledger out of the captured count, so off-cycle pay cannot cover for new sessions', () => {
+    // Row pays 3 sessions, ALL off the ledger (units 3, ledger 3 ⇒ windowed 0).
+    // The 3 approved unpaid sessions now in-window are a different three.
+    const ledger = new Map([['w1', 3]]);
+    const reason = lockBlockedReason(
+      'regular',
+      0,
+      [ps('w1', 'Ana', 3)],
+      new Map([['w1', 3]]),
+      ledger,
+    );
+    expect(reason).toContain('Ana');
+    // Windowed 5 of 8 captured still covers the 5 unpaid in-window sessions.
+    expect(
+      lockBlockedReason('regular', 0, [ps('w1', 'Ana', 8)], new Map([['w1', 5]]), ledger),
+    ).toBeNull();
+  });
+
   it('never blocks an off-cycle batch — its window is a label, not its work (RP-34)', () => {
     // Today's unrelated pending time used to block the batch with a message
     // telling the admin to recalculate something the UI cannot recalculate.
