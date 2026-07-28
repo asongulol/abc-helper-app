@@ -655,7 +655,7 @@ export const PayrollShell = ({
       const sums = await getPeriodSummaries({ companyId });
       if (sums.ok) setPeriods(sums.data.periods);
       notify(
-        `Deleted ${res.data.deleted} statement(s). Recalculate to rebuild from approved hours.`,
+        `Cleared ${res.data.deleted} statement(s) — the work is back in the unpaid queue. Recalculate to rebuild.`,
         {
           type: 'success',
         },
@@ -1010,14 +1010,16 @@ export const PayrollShell = ({
                 onClick={() =>
                   setConfirmModal({
                     kind: 'deleteAll',
-                    message: `Delete the WHOLE batch — all ${rows.length} pay statement(s) for ${periodStart} → ${periodEnd}?`,
+                    message: `Clear all ${rows.length} pay statement(s) from the ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} batch?`,
                     consequence:
-                      'The period stays open so you can recalculate. No money is affected.',
-                    confirmWord: 'DELETE',
+                      'Sessions and tracked time are NOT deleted — they stay approved and go back to the unpaid queue. The batch itself stays open, empty, ready to recalculate. No money moves.',
+                    confirmWord: 'CLEAR',
                   })
                 }
               >
-                Delete batch
+                {/* Not "Delete batch": the pay period survives, and no session
+                    or time entry is ever deleted — the statements are. */}
+                Clear batch
               </button>
             )}
           </div>
@@ -1560,11 +1562,11 @@ export const PayrollShell = ({
 
       {confirmModal?.kind === 'deleteAll' && (
         <ConfirmDangerModal
-          title="Delete this batch?"
+          title="Clear this batch's statements?"
           message={confirmModal.message}
           consequence={confirmModal.consequence}
           confirmWord={confirmModal.confirmWord}
-          confirmLabel="Delete all statements"
+          confirmLabel="Clear batch"
           busy={busy}
           onConfirm={handleDeleteAll}
           onCancel={() => setConfirmModal(null)}
