@@ -1510,8 +1510,9 @@ export async function addSalariedCatchUp(
 
     // RP-20: a catch-up's hours belong to ANOTHER (locked/paid) period, so it
     // cannot change what this period's window captures — only the ledger total.
-    // Update off_cycle_php + net_php in place instead of rebuilding the row,
-    // which would reset this worker's manual misc/bonus/PDD/gross-override.
+    // Update off_cycle_php + net_php in place rather than re-running the engine
+    // for a gross that cannot have moved (the rebuild preserves manual columns
+    // now, but it would still recompute gross from current time/sessions).
     // No row yet (the worker has no other activity here) → build one.
     const existing = await fetchPaymentForWorker(db, period.id, input.workerId);
     let netPhp: number | null;

@@ -86,9 +86,10 @@ export type ContractorRowInput = {
    * added to. Turning it on for a SECOND period accrues a second time, and this
    * function cannot detect that: a once-per-year guard needs to know what other
    * periods already accrued, which is cross-period state a pure function does not
-   * have. The guard belongs where the toggle is applied per period
-   * (`src/server/payroll.ts:150`, from `PayrollShell.tsx:201/394`) — check for a
-   * prior period in the same year with `thirteenth_month_php > 0` for the worker.
+   * have. The guard therefore lives where the toggle is applied per period:
+   * `calculateDraft` reads `fetchThirteenthAccrualPeriods` and returns
+   * `thirteenthAlsoOn`, which the shell renders as a warning banner. It warns
+   * rather than blocks — a 13th month paid in two installments is normal.
    * `includeHealthAllowance` does NOT have this shape: `healthAllowance` is
    * anniversary-period-gated, so extra runs pay 0.
    */

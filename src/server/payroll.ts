@@ -15,6 +15,7 @@ import {
   fetchApprovedTime,
   fetchLastPayoutMethods,
   fetchOffCycleItemsForPeriod,
+  fetchPaymentForWorker,
   fetchPaymentRowsForRestore,
   fetchPeriodCalcFlags,
   fetchRates,
@@ -22,7 +23,9 @@ import {
   fetchSalariedCatchUpUnits,
   fetchSavedPayments,
   fetchSessionUnitsByWorkerByDate,
+  fetchThirteenthAccrualPeriods,
   findPeriod,
+  mergeManualColumns,
   type PaymentSnapshotRow,
   pruneDraftPaymentsExcept,
   savePriorPayments,
@@ -59,6 +62,12 @@ export type CalculateDraftResult = {
    * recalc discarded. Empty on a first calculate.
    */
   priorSnapshot: PaymentSnapshotRow[];
+  /**
+   * RP-29: other periods THIS YEAR that also ran the 13th-month accrual, as
+   * `start → end` labels. Non-empty means this run accrues a second thirteenth
+   * on top of theirs — legitimate for a split payout, a double-pay otherwise.
+   */
+  thirteenthAlsoOn: string[];
 };
 
 /**
@@ -185,6 +194,17 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
 
   await upsertDraftPayments(db, input.companyId, period.id, drafts);
 
+  // RP-29: the 13th-month accrual is stateless, so ticking it on a second period
+  // in the same year pays it twice. Only this layer can see the other periods.
+  const thirteenthAlsoOn = input.includeThirteenth
+    ? await fetchThirteenthAccrualPeriods(
+        db,
+        input.companyId,
+        Number(input.periodStart.slice(0, 4)),
+        period.id,
+      )
+    : [];
+
   await logEvent({
     companyId: input.companyId,
     action: 'recalculate',
@@ -199,6 +219,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
     unlinkedWorkerIds: attribution.unlinkedWorkerIds,
     skippedNoRate: rows.filter((r) => r.result.net === null).map((r) => r.name),
     priorSnapshot,
+    thirteenthAlsoOn,
   };
 };
 
@@ -207,22 +228,19 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
  * off-cycle pay item is added/removed. Rebuilds gross from current approved
  * time/sessions (already-paid sessions are excluded by the query's paid_at
  * filter, so a freshly-paid session is never double-counted) and re-applies the
- * off-cycle ledger total. Only the target worker's row is upserted; other rows
- * (and their manual adjustments) are left untouched. Like the full recalc, this
- * resets the TARGET worker's own manual misc/bonus/pdd to the engine values.
+ * off-cycle ledger total. Only the target worker's row is written; other rows
+ * (and their manual adjustments) are left untouched.
  *
  * Caller must have verified the admin + company scope and that the period is
  * open (the payments period-open trigger also enforces it). Returns the new net
  * (PHP major units), or null when the worker has no rate / no row was produced.
  *
- * ponytail (RP-20): the rebuild still discards the target worker's manual
- * misc/bonus/PDD/gross-override. Only addSalariedCatchUp avoids it (via
- * setPaymentOffCycle), because a catch-up's hours belong to another period and
- * so cannot move this window's gross. Every other caller marks sessions paid or
- * frees them, which legitimately DOES move gross, so a surgical
- * off_cycle_php-only write there would double-pay. Upgrade path: have the
- * engine return gross separately from the manual columns, then merge instead
- * of upsert.
+ * RP-20: the rebuild MERGES rather than upserts (`mergeManualColumns`), so the
+ * target worker's Misc items, bonus, PDD lunch and gross override survive it.
+ * The engine still owns gross/HA/13th/off-cycle: every caller but the salaried
+ * catch-up marks sessions paid or frees them, which legitimately moves gross, so
+ * the surgical off_cycle_php-only write addSalariedCatchUp uses would double-pay
+ * here.
  */
 export const recomputeWorkerDraft = async (args: {
   companyId: string;
@@ -290,15 +308,20 @@ export const recomputeWorkerDraft = async (args: {
     offCycleByWorker: offCycle.byWorkerCentavos,
     holidays,
   });
-  const drafts = rows
+  const engineDrafts = rows
     .map((r) => toPaymentDraft(r, {}))
     .filter((d): d is NonNullable<typeof d> => d !== null);
-  if (drafts.length === 0) {
+  if (engineDrafts.length === 0) {
     // No payable activity left (e.g. the last off-cycle item was removed and the
     // worker had no in-period time/sessions) — drop any stale row.
     await deleteWorkerPayment(db, args.periodId, args.workerId);
     return { netPhp: null };
   }
+  // RP-20: the engine owns what it computes; the row owns what a human typed.
+  // Without this merge the rebuild upserted the raw draft and deleted the
+  // worker's Misc items, bonus, PDD lunch and gross override.
+  const existing = await fetchPaymentForWorker(db, args.periodId, args.workerId);
+  const drafts = engineDrafts.map((d) => mergeManualColumns(d, existing));
   await upsertDraftPayments(db, args.companyId, args.periodId, drafts);
   return { netPhp: drafts[0]?.net_php ?? null };
 };

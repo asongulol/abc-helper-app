@@ -6,6 +6,7 @@ import {
   lockBlockedReason,
   lockWarningReason,
   MARKABLE_PAID_STATUSES,
+  mergeManualColumns,
   type OpenDraft,
   officeToday,
   PAYABLE_PERIOD_STATES,
@@ -450,5 +451,83 @@ describe('selectAll — the paging fetchApprovedTime now uses instead of truncat
     await expect(
       selectAll(() => Promise.resolve({ data: null, error: { message: 'boom' } }), 'time_entries'),
     ).rejects.toThrow('time_entries: boom');
+  });
+});
+
+describe('mergeManualColumns — a single-row rebuild keeps what a human typed (RP-20)', () => {
+  /** What the engine just produced for one worker: gross 20,000, nothing manual. */
+  const draft = {
+    worker_id: 'w1',
+    contract: 'FT',
+    pay_basis: null,
+    units: null,
+    expected_hours: 88,
+    worked_hours: 88,
+    performance_ratio: 1,
+    rate_php: 20000,
+    gross_php: 20000,
+    health_allowance_php: 0,
+    thirteenth_month_php: 0,
+    pdd_lunch_php: 0,
+    bonus_php: 0,
+    deduction_php: 0,
+    off_cycle_php: 1500,
+    net_php: 21500,
+    misc_items: [],
+    computed_gross_php: null,
+    fx_rate: null,
+    payout_currency: 'PHP' as const,
+    payout_amount: 21500,
+    payout_method: 'wise',
+    status: 'draft' as const,
+  };
+
+  /** The stored row the rebuild is about to overwrite. */
+  const stored = {
+    paymentId: 'p1',
+    grossPhp: 20000,
+    haPhp: 0,
+    t13Php: 0,
+    pddPhp: 250,
+    bonusPhp: 3000,
+    miscItems: [{ kind: 'other_earns', amount: 500 }],
+    computedGrossPhp: null,
+    note: null,
+  };
+
+  it('keeps the engine draft untouched when there is no stored row yet', () => {
+    expect(mergeManualColumns(draft, null)).toEqual(draft);
+  });
+
+  it('carries bonus, PDD and Misc across the rebuild and re-sums net', () => {
+    const merged = mergeManualColumns(draft, stored);
+    expect(merged.bonus_php).toBe(3000);
+    expect(merged.pdd_lunch_php).toBe(250);
+    expect(merged.misc_items).toEqual([{ kind: 'other_earns', amount: 500 }]);
+    // 20000 gross + 250 pdd + 3000 bonus + 500 misc + 1500 off-cycle
+    expect(merged.net_php).toBe(25250);
+    expect(merged.payout_amount).toBe(25250);
+  });
+
+  it('lets the engine own gross when the row was never overridden', () => {
+    // The rebuild exists BECAUSE gross moved (a session was just paid/freed).
+    const merged = mergeManualColumns({ ...draft, gross_php: 18000 }, stored);
+    expect(merged.gross_php).toBe(18000);
+    expect(merged.computed_gross_php).toBeNull();
+  });
+
+  it('preserves a gross override and re-arms ↺ against the NEW engine gross', () => {
+    const overridden = { ...stored, grossPhp: 15000, computedGrossPhp: 20000 };
+    const merged = mergeManualColumns({ ...draft, gross_php: 19000 }, overridden);
+    expect(merged.gross_php).toBe(15000); // the human's figure still pays
+    expect(merged.computed_gross_php).toBe(19000); // revert target follows the engine
+    expect(merged.note).toBe('Gross manually overridden (computed 19000)');
+    // net is built from the OVERRIDE: 15000 + 250 + 3000 + 500 + 1500
+    expect(merged.net_php).toBe(20250);
+  });
+
+  it('leaves a non-override note alone (287 prod rows carry import prose)', () => {
+    const imported = { ...stored, note: 'Historical import (Hubstaff daily report)' };
+    expect(mergeManualColumns(draft, imported).note).toBeUndefined();
   });
 });

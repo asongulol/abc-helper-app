@@ -186,6 +186,8 @@ export const PayrollShell = ({
   const [unattributed, setUnattributed] = useState<string[]>([]);
   const [unlinked, setUnlinked] = useState<string[]>([]);
   const [skippedNoRate, setSkippedNoRate] = useState<string[]>([]);
+  /** RP-29: other periods this year that already accrued a 13th month. */
+  const [t13AlsoOn, setT13AlsoOn] = useState<string[]>([]);
 
   // Modals
   const [miscRowId, setMiscRowId] = useState<string | null>(null);
@@ -350,6 +352,7 @@ export const PayrollShell = ({
     setUnattributed([]);
     setUnlinked([]);
     setSkippedNoRate([]);
+    setT13AlsoOn([]);
     setRows(null);
     try {
       const res = await calculatePeriodDraft({
@@ -365,10 +368,16 @@ export const PayrollShell = ({
         notify(res.error, { type: 'error', persistent: true });
         return;
       }
-      const { unattributed: ua, unlinkedWorkerIds: ul, skippedNoRate: snr } = res.data;
+      const {
+        unattributed: ua,
+        unlinkedWorkerIds: ul,
+        skippedNoRate: snr,
+        thirteenthAlsoOn: t13 = [],
+      } = res.data;
       setUnattributed(ua);
       setUnlinked(ul);
       setSkippedNoRate(snr);
+      setT13AlsoOn(t13);
       // F6: keep the pre-recalc snapshot so the user can undo if this recalc
       // overwrote manual overrides. Only offer it when there was something to lose.
       setUndoSnapshot(
@@ -381,7 +390,7 @@ export const PayrollShell = ({
           "These amounts were carried over from the previous period — recalculated from this period's tracked hours.",
           { type: 'info' },
         );
-      } else if (ua.length > 0 || ul.length > 0 || snr.length > 0) {
+      } else if (ua.length > 0 || ul.length > 0 || snr.length > 0 || t13.length > 0) {
         notify('Calculation complete with warnings — see banners above.', {
           type: 'warn',
         });
@@ -839,7 +848,10 @@ export const PayrollShell = ({
       </div>
 
       {/* ---- Warning banners ---- */}
-      {(unattributed.length > 0 || unlinked.length > 0 || skippedNoRate.length > 0) && (
+      {(unattributed.length > 0 ||
+        unlinked.length > 0 ||
+        skippedNoRate.length > 0 ||
+        t13AlsoOn.length > 0) && (
         <div className="card">
           {unattributed.length > 0 && (
             <div
@@ -880,11 +892,28 @@ export const PayrollShell = ({
                 background: 'var(--warn-soft)',
                 borderColor: 'var(--warn)',
                 color: 'var(--warn)',
+                marginBottom: t13AlsoOn.length > 0 ? 8 : 0,
               }}
             >
               <b>⚠ {skippedNoRate.length} contractor(s) skipped (no rate):</b>{' '}
               {skippedNoRate.slice(0, 8).join(', ')}
               {skippedNoRate.length > 8 ? ` +${skippedNoRate.length - 8} more` : ''}
+            </div>
+          )}
+          {/* RP-29: the accrual is stateless — a second ticked period pays a
+              second 13th month. Legitimate for a split payout, so this warns. */}
+          {t13AlsoOn.length > 0 && (
+            <div
+              className="banner"
+              style={{
+                background: 'var(--warn-soft)',
+                borderColor: 'var(--warn)',
+                color: 'var(--warn)',
+              }}
+            >
+              <b>⚠ 13th month already accrued this year on {t13AlsoOn.join(', ')}.</b> This run adds
+              another full 13th month on top. Intended only if you are paying it in installments —
+              otherwise untick "Include 13th month" and recalculate.
             </div>
           )}
         </div>
