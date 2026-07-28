@@ -309,6 +309,55 @@ describe('matchWorker', () => {
     expect(matchWorker(999, 'Bob Jones', idx)).toBeNull();
   });
 
+  // ── RP-39: two people, one loose key — first-wins pays the wrong one ───────
+  it('refuses to guess when two workers share a name key', () => {
+    const links: WorkerLink[] = [
+      makeLink(WORKER_ID_A, COMPANY_ID, { firstName: 'Maria A.', lastName: 'Santos' }),
+      makeLink(WORKER_ID_B, COMPANY_ID, { firstName: 'Maria L.', lastName: 'Santos' }),
+    ];
+    const idx = buildWorkerMatchIndex(links);
+    // Both loose-key to "maria santos"; first-wins used to hand it to A.
+    expect(idx.ambiguousLoose.has('maria santos')).toBe(true);
+    expect(matchWorker(999, 'Maria Santos', idx)).toBeNull();
+  });
+
+  it('still resolves the unambiguous spellings around a collision', () => {
+    const links: WorkerLink[] = [
+      makeLink(WORKER_ID_A, COMPANY_ID, { firstName: 'Maria A.', lastName: 'Santos' }),
+      makeLink(WORKER_ID_B, COMPANY_ID, { firstName: 'Maria L.', lastName: 'Santos' }),
+    ];
+    const idx = buildWorkerMatchIndex(links);
+    expect(matchWorker(999, 'Maria A. Santos', idx)).toBe(WORKER_ID_A);
+    expect(matchWorker(999, 'Maria L. Santos', idx)).toBe(WORKER_ID_B);
+  });
+
+  it('never marks a worker ambiguous against their own second name source', () => {
+    // hubstaff_name and real name collapse to the same key — same worker.
+    const links: WorkerLink[] = [
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        hubstaffName: 'Alice Smith',
+        firstName: 'Alice',
+        lastName: 'Smith',
+      }),
+    ];
+    const idx = buildWorkerMatchIndex(links);
+    expect(idx.ambiguousStrict.size).toBe(0);
+    expect(matchWorker(999, 'Alice Smith', idx)).toBe(WORKER_ID_A);
+  });
+
+  it('the numeric hubstaff id still wins over an ambiguous name', () => {
+    const links: WorkerLink[] = [
+      makeLink(WORKER_ID_A, COMPANY_ID, {
+        hubstaffUserId: 77,
+        firstName: 'Maria A.',
+        lastName: 'Santos',
+      }),
+      makeLink(WORKER_ID_B, COMPANY_ID, { firstName: 'Maria L.', lastName: 'Santos' }),
+    ];
+    const idx = buildWorkerMatchIndex(links);
+    expect(matchWorker(77, 'Maria Santos', idx)).toBe(WORKER_ID_A);
+  });
+
   it('resolves "Ma Dela Cruz Jr" via nameKey normalisation', () => {
     // "Ma" → "Maria", "Jr" stripped → tokens ["dela","cruz","maria"] → sorted key
     const links: WorkerLink[] = [
@@ -423,7 +472,72 @@ describe('transformActivities', () => {
     const acts: HubstaffDailyActivity[] = [makeActivity(2, '2026-06-01', 7200, 7200)];
     const result = runTransform({ acts });
     expect(result.unmatched).toContain('Bob Jones');
+  });
+
+  // ── RP-37: unmatched members must still leave a row behind ──────────────────
+  it('persists an unmatched member with worker_id null instead of dropping them', () => {
+    // The new-hire case: tracked in Hubstaff before their profile exists. Before
+    // this, their hours lived only in a toast — dismiss it and they were gone.
+    const acts: HubstaffDailyActivity[] = [makeActivity(2, '2026-06-01', 7200, 7200)];
+    const result = runTransform({ acts });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]?.worker_id).toBeNull();
+    // Keyed on the Hubstaff display name, so the next sync upserts the same row.
+    expect(result.rows[0]?.source_name).toBe('Bob Jones');
+    expect(result.rows[0]?.tracked_seconds).toBe(7200);
+    expect(result.rows[0]?.approval).toBe('pending');
+    // Not counted as matched — nothing to persist a hubstaff_user_id against.
+    expect(result.matchedWorkerIds).toHaveLength(0);
+    expect(result.idsToPersist).toHaveLength(0);
+  });
+
+  it('still protects a decided day for an unmatched name (source-name guard)', () => {
+    const acts: HubstaffDailyActivity[] = [makeActivity(2, '2026-06-01', 7200, 7200)];
+    const result = runTransform({
+      acts,
+      decided: [
+        {
+          company_id: COMPANY_ID,
+          worker_id: null,
+          source_name: 'Bob Jones',
+          work_date: '2026-06-01',
+          approval: 'approved',
+          tracked_seconds: 3600,
+          pto_seconds: 0,
+        },
+      ],
+    });
     expect(result.rows).toHaveLength(0);
+    expect(result.skippedDecided).toBe(1);
+    expect(result.divergences).toHaveLength(1);
+    expect(result.divergences[0]?.workerId).toBeNull();
+  });
+
+  // ── RP-36: the admin has to be told the sync protected something ────────────
+  it('counts each protected day-row in skippedDecided, not the guard-set size', () => {
+    const acts: HubstaffDailyActivity[] = [
+      makeActivity(1, '2026-06-01', 7200, 7200),
+      makeActivity(1, '2026-06-02', 7200, 7200),
+    ];
+    const decided: ExistingDecidedEntry[] = ['2026-06-01', '2026-06-02'].map((work_date) => ({
+      company_id: COMPANY_ID,
+      worker_id: WORKER_ID_A,
+      source_name: 'Alice Smith',
+      work_date,
+      approval: 'approved',
+      tracked_seconds: 7200,
+      pto_seconds: 0,
+    }));
+    const result = runTransform({ acts, decided });
+    // Both days blocked; buildDecidedSets holds 4 keys (2 by src + 2 by worker),
+    // which is what the old proxy would have reported.
+    expect(result.rows).toHaveLength(0);
+    expect(result.skippedDecided).toBe(2);
+  });
+
+  it('reports skippedDecided 0 on a clean run', () => {
+    const acts: HubstaffDailyActivity[] = [makeActivity(1, '2026-06-01', 7200, 7200)];
+    expect(runTransform({ acts }).skippedDecided).toBe(0);
   });
 
   it('skips rows with approval=approved (decided guard)', () => {

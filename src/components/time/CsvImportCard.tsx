@@ -17,6 +17,12 @@ import type { HubstaffMember } from '@/lib/time/csv';
 import { isParseError, parseHubstaffCsv } from '@/lib/time/csv';
 import { addContractor } from '@/server/actions/contractors';
 import { importCsvBatch } from '@/server/actions/time';
+import {
+  CONTRACT_OPTIONS,
+  type ContractType,
+  PAY_BASIS_OPTIONS,
+  type PayBasis,
+} from '@/types/schemas/contractors';
 import { OptionBPanel } from './OptionBPanel';
 
 interface CsvImportCardProps {
@@ -26,7 +32,8 @@ interface CsvImportCardProps {
 }
 
 /**
- * Split a Hubstaff display name into first/last.
+ * Split a Hubstaff display name into first/last — a PREFILL only; the admin
+ * corrects it in the form before the contractor is created (RP-50).
  * Rule: last word is lastName, everything before is firstName.
  * Single-word names get a placeholder last name of '.'.
  */
@@ -39,6 +46,16 @@ const splitName = (name: string): { firstName: string; lastName: string } => {
   const firstName = parts.slice(0, parts.length - 1).join(' ');
   return { firstName, lastName };
 };
+
+/** The "add as contractor" draft — nothing is guessed except the name prefill. */
+interface ContractorDraft {
+  sourceName: string;
+  firstName: string;
+  lastName: string;
+  /** '' until the admin picks — FT is a pay model, not a default (RP-50). */
+  contract: ContractType | '';
+  payBasis: PayBasis | '';
+}
 
 interface ParsedState {
   dates: string[];
@@ -59,7 +76,7 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
   const [parsed, setParsed] = useState<ParsedState | null>(null);
   const [mode, setMode] = useState<'upsert' | 'skip'>('upsert');
   const [pending, startTransition] = useTransition();
-  const [addingNames, setAddingNames] = useState<Set<string>>(new Set());
+  const [draft, setDraft] = useState<ContractorDraft | null>(null);
 
   const idx = buildMatchIndex(roster);
 
@@ -69,6 +86,11 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
     setParseErr('');
     setParsed(null);
     const reader = new FileReader();
+    // Without this a read failure left the card looking like nothing happened (RP-48).
+    reader.onerror = () =>
+      setParseErr(
+        `Could not read "${f.name}" — ${reader.error?.message ?? 'the file is unreadable'}.`,
+      );
     reader.onload = () => {
       const text = typeof reader.result === 'string' ? reader.result : '';
       const result = parseHubstaffCsv(text);
@@ -94,27 +116,31 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
     reader.readAsText(f);
   };
 
-  const handleAddAsContractor = (sourceName: string) => {
-    setAddingNames((prev) => new Set([...prev, sourceName]));
+  // PHS is paid per unit and needs its basis; FT/PT are salaried and don't.
+  const draftReady =
+    draft !== null &&
+    draft.firstName.trim() !== '' &&
+    draft.lastName.trim() !== '' &&
+    draft.contract !== '' &&
+    (draft.contract !== 'PHS' || draft.payBasis !== '');
+
+  const handleAddAsContractor = () => {
+    if (!draft || !draftReady || draft.contract === '') return;
     startTransition(async () => {
-      const { firstName, lastName } = splitName(sourceName);
       const res = await addContractor({
         companyId,
-        firstName,
-        lastName,
-        contract: 'FT',
-        hubstaffName: sourceName,
-      });
-      setAddingNames((prev) => {
-        const next = new Set(prev);
-        next.delete(sourceName);
-        return next;
+        firstName: draft.firstName.trim(),
+        lastName: draft.lastName.trim(),
+        contract: draft.contract,
+        payBasis: draft.contract === 'PHS' ? draft.payBasis : null,
+        hubstaffName: draft.sourceName,
       });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(`Created contractor "${sourceName}" — re-import to include their hours.`, {
+      setDraft(null);
+      notify(`Created contractor "${draft.sourceName}" — re-import to include their hours.`, {
         type: 'success',
       });
       onImported();
@@ -131,14 +157,23 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
 
     startTransition(async () => {
       const rows = matchedMembers.flatMap((m) =>
-        parsed.dates.map((d) => ({
-          sourceName: m.name,
-          workerId: m.workerId,
-          workDate: d,
-          trackedSeconds: m.daySeconds[d] ?? 0,
-          activityPct: m.activityPct,
-        })),
+        parsed.dates
+          // Skip days the member didn't track. Emitting them made Overwrite
+          // mode blank every untracked day: PTO to 0 and approval back to
+          // pending, including days already approved.
+          .filter((d) => (m.daySeconds[d] ?? 0) > 0)
+          .map((d) => ({
+            sourceName: m.name,
+            workerId: m.workerId,
+            workDate: d,
+            trackedSeconds: m.daySeconds[d] ?? 0,
+            activityPct: m.activityPct,
+          })),
       );
+      if (rows.length === 0) {
+        notify('No tracked hours in this file for the matched contractors.', { type: 'warn' });
+        return;
+      }
 
       const res = await importCsvBatch({ companyId, rows, mode });
       if (!res.ok) {
@@ -153,7 +188,7 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
         });
       } else {
         notify(
-          `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already existed).` : '.'}`,
+          `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already imported or already decided).` : '.'}`,
           { type: 'success', persistent: true },
         );
       }
@@ -280,14 +315,110 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                         type="button"
                         className="btn ghost sm"
                         style={{ fontSize: 11, padding: '1px 6px' }}
-                        disabled={pending || addingNames.has(m.name)}
-                        onClick={() => handleAddAsContractor(m.name)}
+                        disabled={pending}
+                        aria-expanded={draft?.sourceName === m.name}
+                        onClick={() =>
+                          setDraft(
+                            draft?.sourceName === m.name
+                              ? null
+                              : {
+                                  sourceName: m.name,
+                                  ...splitName(m.name),
+                                  contract: '',
+                                  payBasis: '',
+                                },
+                          )
+                        }
                       >
-                        {addingNames.has(m.name) ? 'Adding…' : 'Add as contractor'}
+                        {draft?.sourceName === m.name ? 'Cancel' : 'Add as contractor'}
                       </button>
                     </span>
                   ))}
               </div>
+              {/* Name split and pay model are confirmed here — creating on a
+                  guessed name with a hardcoded FT contract priced per-session
+                  therapists on the salaried model (RP-50). */}
+              {draft && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    display: 'flex',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                    alignItems: 'flex-end',
+                    color: 'var(--text)',
+                  }}
+                >
+                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                    First name
+                    <input
+                      value={draft.firstName}
+                      onChange={(e) => setDraft({ ...draft, firstName: e.target.value })}
+                      style={{ width: 140, display: 'block' }}
+                      disabled={pending}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                    Last name
+                    <input
+                      value={draft.lastName}
+                      onChange={(e) => setDraft({ ...draft, lastName: e.target.value })}
+                      style={{ width: 140, display: 'block' }}
+                      disabled={pending}
+                    />
+                  </label>
+                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                    Contract
+                    <select
+                      value={draft.contract}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          contract: e.target.value as ContractType | '',
+                          payBasis: '',
+                        })
+                      }
+                      style={{ display: 'block' }}
+                      disabled={pending}
+                    >
+                      <option value="">Choose…</option>
+                      {CONTRACT_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {draft.contract === 'PHS' && (
+                    <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
+                      Paid per
+                      <select
+                        value={draft.payBasis}
+                        onChange={(e) =>
+                          setDraft({ ...draft, payBasis: e.target.value as PayBasis | '' })
+                        }
+                        style={{ display: 'block' }}
+                        disabled={pending}
+                      >
+                        <option value="">Choose…</option>
+                        {PAY_BASIS_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <button
+                    type="button"
+                    className="btn sm"
+                    disabled={pending || !draftReady}
+                    onClick={handleAddAsContractor}
+                  >
+                    {pending ? 'Adding…' : `Create ${draft.sourceName}`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -316,12 +447,14 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
                       <td className="card-title">
                         <b>{m.name}</b>
                       </td>
-                      <td>
+                      <td data-label="Attribution">
                         <Badge tone={tone}>{label}</Badge>
                       </td>
-                      <td>{totalH}h</td>
-                      <td>{m.activityPct != null ? `${m.activityPct}%` : '—'}</td>
-                      <td>{daysWorked}</td>
+                      <td data-label="Total tracked">{totalH}h</td>
+                      <td data-label="Activity">
+                        {m.activityPct != null ? `${m.activityPct}%` : '—'}
+                      </td>
+                      <td data-label="Days">{daysWorked}</td>
                     </tr>
                   );
                 })}

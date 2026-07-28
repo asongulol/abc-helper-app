@@ -75,7 +75,9 @@ export interface UserDayAccum {
 /** One output row ready to be upserted into time_entries. */
 export interface HubstaffTimeRow {
   company_id: string;
-  worker_id: string;
+  /** null when the Hubstaff name matched no worker — the row is still written
+   *  (unmatched, never silently dropped) and attributed by name at calc time. */
+  worker_id: string | null;
   /** source_name: canonical label for the upsert conflict key. */
   source_name: string;
   /** ISO date string 'YYYY-MM-DD' (Asia/Manila day bucket). */
@@ -112,6 +114,9 @@ export interface TransformResult {
    * case (no decided day changed).
    */
   divergences: TransformDivergence[];
+  /** Day-rows the decided guard refused to overwrite. Reported to the admin —
+   *  otherwise a protected re-sync reads as "Synced 0 entries" (RP-36). */
+  skippedDecided: number;
 }
 
 /** A decided day whose stored seconds no longer match Hubstaff (F3). */

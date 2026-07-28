@@ -14,8 +14,8 @@
  * Faithful to the legacy TimeImport approval section (~5300–5800).
  */
 
-import { Fragment, useState, useTransition } from 'react';
-import { Badge, EmptyState, useToast } from '@/components/ui';
+import { Fragment, useId, useState, useTransition } from 'react';
+import { Badge, ConfirmDangerModal, EmptyState, useToast } from '@/components/ui';
 import { clientAlias } from '@/lib/clients';
 import type { ApprovalUndoEntry } from '@/lib/time/approvalUndo';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
@@ -28,6 +28,23 @@ interface ContractorOption {
   displayName: string;
   sourceName: string;
 }
+
+type ReviewRow = Pick<ContractorPeriodRow, 'sourceName' | 'approvalStatus'>;
+
+/** A row still blocking payroll: nothing decided, or only some entries decided. */
+const isRowPending = (row: ReviewRow): boolean =>
+  row.approvalStatus === 'pending' || row.approvalStatus === 'mixed';
+
+/**
+ * What the grid shows: optionally only the rows that still block payroll, and
+ * always pending-first so a partial pass leaves the remaining work on top
+ * (RP-43). Ties break alphabetically, the previous — and only — order.
+ */
+export const reviewRows = <T extends ReviewRow>(rows: readonly T[], onlyPending: boolean): T[] =>
+  (onlyPending ? rows.filter(isRowPending) : [...rows]).sort(
+    (a, b) =>
+      Number(isRowPending(b)) - Number(isRowPending(a)) || a.sourceName.localeCompare(b.sourceName),
+  );
 
 interface TimeApprovalTableProps {
   companyId: string;
@@ -60,14 +77,30 @@ export const TimeApprovalTable = ({
   onRefresh,
 }: TimeApprovalTableProps) => {
   const { notify, dismiss } = useToast();
-  const [pendingTx, startTransition] = useTransition();
+  // busyKey (below), not the transition flag, drives disabling — a per-row scope.
+  const [, startTransition] = useTransition();
   const [editMap, setEditMap] = useState<Record<string, string>>({});
   const [addRowName, setAddRowName] = useState<string | null>(null);
+  const [onlyPending, setOnlyPending] = useState(false);
+  const onlyPendingId = useId();
+  // Which row (or '*' for the bulk buttons) is mid-write — so one row's action
+  // no longer disables every button in the table (RP-43).
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  // Pending edit-total awaiting confirmation (RP-44).
+  const [confirmEdit, setConfirmEdit] = useState<{
+    row: ContractorPeriodRow;
+    hours: number;
+  } | null>(null);
+  const bulkBusy = busyKey === '*';
 
   const pendingIds = rows
     .flatMap((r) => r.entries)
     .filter((e) => e.approval === 'pending')
     .map((e) => e.id);
+
+  const visibleRows = reviewRows(rows, onlyPending);
+  // The unpaid view drops the two coverage columns.
+  const bodyColSpan = coverageHidden ? 7 : 9;
 
   const showUndoToast = (undoEntries: ApprovalUndoEntry[], label: string) => {
     if (undoEntries.length === 0) return;
@@ -108,20 +141,27 @@ export const TimeApprovalTable = ({
     );
   };
 
-  const handleApproval = (ids: string[], status: 'approved' | 'rejected') => {
+  const handleApproval = (ids: string[], status: 'approved' | 'rejected', key = '*') => {
+    setBusyKey(key);
     startTransition(async () => {
-      const res = await setTimeApproval({ companyId, ids, status });
-      if (!res.ok) {
-        notify(res.error, { type: 'error' });
-        return;
+      try {
+        const res = await setTimeApproval({ companyId, ids, status });
+        if (!res.ok) {
+          notify(res.error, { type: 'error' });
+          return;
+        }
+        const verb = status === 'approved' ? 'Approved' : 'Rejected';
+        const label = `${verb} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`;
+        showUndoToast(res.data.undoEntries, label);
+        onRefresh();
+      } finally {
+        setBusyKey(null);
       }
-      const verb = status === 'approved' ? 'Approved' : 'Rejected';
-      const label = `${verb} ${ids.length} entr${ids.length === 1 ? 'y' : 'ies'}.`;
-      showUndoToast(res.data.undoEntries, label);
-      onRefresh();
     });
   };
 
+  // Step 1: validate and ask. The write flattens the per-day breakdown and no
+  // action can put it back, so it gets a confirm naming the damage (RP-44).
   const handleEditTotal = (row: ContractorPeriodRow) => {
     const val = editMap[row.sourceName];
     if (!val) return;
@@ -130,29 +170,40 @@ export const TimeApprovalTable = ({
       notify('Enter a valid number of hours.', { type: 'warn' });
       return;
     }
+    setConfirmEdit({ row, hours: h });
+  };
+
+  // Step 2: the confirmed write.
+  const runEditTotal = (row: ContractorPeriodRow, hours: number) => {
     const sortedIds = [...row.entries]
       .sort((a, b) => a.workDate.localeCompare(b.workDate))
       .map((e) => e.id);
+    setBusyKey(row.sourceName);
     startTransition(async () => {
-      const res = await editContractorTotal({
-        companyId,
-        sourceName: row.sourceName,
-        ids: sortedIds,
-        hours: h,
-        periodStart,
-        periodEnd,
-      });
-      if (!res.ok) {
-        notify(res.error, { type: 'error' });
-        return;
+      try {
+        const res = await editContractorTotal({
+          companyId,
+          sourceName: row.sourceName,
+          ids: sortedIds,
+          hours,
+          periodStart,
+          periodEnd,
+        });
+        if (!res.ok) {
+          notify(res.error, { type: 'error' });
+          return;
+        }
+        setConfirmEdit(null);
+        setEditMap((prev) => {
+          const next = { ...prev };
+          delete next[row.sourceName];
+          return next;
+        });
+        notify(`Updated total hours for ${row.sourceName}.`, { type: 'success' });
+        onRefresh();
+      } finally {
+        setBusyKey(null);
       }
-      setEditMap((prev) => {
-        const next = { ...prev };
-        delete next[row.sourceName];
-        return next;
-      });
-      notify(`Updated total hours for ${row.sourceName}.`, { type: 'success' });
-      onRefresh();
     });
   };
 
@@ -163,23 +214,36 @@ export const TimeApprovalTable = ({
         <p className="sub" style={{ margin: 0 }}>
           {pendingIds.length} pending entr{pendingIds.length === 1 ? 'y' : 'ies'}
           {coverageHidden
-            ? ' · spanning multiple periods (per-period coverage hidden)'
+            ? ' · spanning multiple periods (coverage and hour edits hidden — open a single period to edit)'
             : ` · ${periodDays} days in period · ${workingDays} working days`}
         </p>
         {rows.length > 0 && (
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <label
+              htmlFor={onlyPendingId}
+              className="sub"
+              style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <input
+                id={onlyPendingId}
+                type="checkbox"
+                checked={onlyPending}
+                onChange={(e) => setOnlyPending(e.target.checked)}
+              />
+              Only pending
+            </label>
             <button
               type="button"
               className="btn"
-              disabled={pendingTx || pendingIds.length === 0}
+              disabled={busyKey !== null || pendingIds.length === 0}
               onClick={() => handleApproval(pendingIds, 'approved')}
             >
-              {pendingTx ? 'Working…' : `Approve all pending (${pendingIds.length})`}
+              {bulkBusy ? 'Working…' : `Approve all pending (${pendingIds.length})`}
             </button>
             <button
               type="button"
               className="btn ghost"
-              disabled={pendingTx || pendingIds.length === 0}
+              disabled={busyKey !== null || pendingIds.length === 0}
               onClick={() => handleApproval(pendingIds, 'rejected')}
             >
               Reject all pending
@@ -239,9 +303,23 @@ export const TimeApprovalTable = ({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
-                const isEditing = editMap[row.sourceName] !== undefined;
-                const isAdding = addRowName === row.sourceName;
+              {visibleRows.length === 0 && (
+                <tr>
+                  <td colSpan={bodyColSpan} className="sub">
+                    Nothing pending — untick “Only pending” to see the {rows.length} decided row
+                    {rows.length === 1 ? '' : 's'}.
+                  </td>
+                </tr>
+              )}
+              {visibleRows.map((row) => {
+                // In the cross-period view a row aggregates entries from
+                // several periods, and both writes below are period-scoped —
+                // edit-total rewrites the whole total onto the earliest entry,
+                // Add hours targets the picked period. Approve/reject are
+                // per-entry and stay available.
+                const isEditing = !coverageHidden && editMap[row.sourceName] !== undefined;
+                const isAdding = !coverageHidden && addRowName === row.sourceName;
+                const rowBusy = bulkBusy || busyKey === row.sourceName;
                 const allIds = row.entries.map((e) => e.id);
                 const trackedH = (row.trackedSeconds / 3600).toFixed(2);
                 const ptoH = (row.ptoSeconds / 3600).toFixed(2);
@@ -296,6 +374,7 @@ export const TimeApprovalTable = ({
                               type="number"
                               step="0.01"
                               style={{ width: 80 }}
+                              aria-label={`Tracked hours for ${row.sourceName}`}
                               value={editMap[row.sourceName] ?? ''}
                               onChange={(e) =>
                                 setEditMap((prev) => ({
@@ -307,8 +386,8 @@ export const TimeApprovalTable = ({
                             <button
                               type="button"
                               className="btn sm"
-                              aria-label="Save tracked hours"
-                              disabled={pendingTx}
+                              aria-label={`Save tracked hours for ${row.sourceName}`}
+                              disabled={rowBusy}
                               onClick={() => handleEditTotal(row)}
                             >
                               <span aria-hidden="true">✓</span>
@@ -331,20 +410,23 @@ export const TimeApprovalTable = ({
                         ) : (
                           <span>
                             {trackedH}
-                            <button
-                              type="button"
-                              className="btn ghost sm"
-                              title="Edit tracked hours"
-                              style={{ padding: '1px 6px', marginLeft: 4 }}
-                              onClick={() =>
-                                setEditMap((prev) => ({
-                                  ...prev,
-                                  [row.sourceName]: trackedH,
-                                }))
-                              }
-                            >
-                              ✎
-                            </button>
+                            {!coverageHidden && (
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                title="Edit tracked hours"
+                                aria-label={`Edit tracked hours for ${row.sourceName}`}
+                                style={{ padding: '1px 6px', marginLeft: 4 }}
+                                onClick={() =>
+                                  setEditMap((prev) => ({
+                                    ...prev,
+                                    [row.sourceName]: trackedH,
+                                  }))
+                                }
+                              >
+                                ✎
+                              </button>
+                            )}
                           </span>
                         )}
                       </td>
@@ -376,25 +458,29 @@ export const TimeApprovalTable = ({
                         <button
                           type="button"
                           className="btn sm"
-                          disabled={pendingTx}
-                          onClick={() => handleApproval(allIds, 'approved')}
+                          disabled={rowBusy}
+                          onClick={() => handleApproval(allIds, 'approved', row.sourceName)}
                         >
-                          Approve
+                          {rowBusy ? 'Working…' : 'Approve'}
                         </button>{' '}
-                        <button
-                          type="button"
-                          className="btn ghost sm"
-                          disabled={pendingTx}
-                          onClick={() => {
-                            if (isAdding) {
-                              setAddRowName(null);
-                              return;
-                            }
-                            setAddRowName(row.sourceName);
-                          }}
-                        >
-                          {isAdding ? 'Close' : 'Add hours'}
-                        </button>{' '}
+                        {!coverageHidden && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={rowBusy}
+                              onClick={() => {
+                                if (isAdding) {
+                                  setAddRowName(null);
+                                  return;
+                                }
+                                setAddRowName(row.sourceName);
+                              }}
+                            >
+                              {isAdding ? 'Close' : 'Add hours'}
+                            </button>{' '}
+                          </>
+                        )}
                         <button
                           type="button"
                           className="btn ghost sm"
@@ -402,8 +488,8 @@ export const TimeApprovalTable = ({
                             borderColor: 'var(--bad)',
                             color: 'var(--bad)',
                           }}
-                          disabled={pendingTx}
-                          onClick={() => handleApproval(allIds, 'rejected')}
+                          disabled={rowBusy}
+                          onClick={() => handleApproval(allIds, 'rejected', row.sourceName)}
                           title="Reject this contractor's time for the period"
                         >
                           Reject
@@ -414,7 +500,7 @@ export const TimeApprovalTable = ({
                     {/* Expansion row for the per-contractor Add Hours panel. */}
                     {isAdding && (
                       <tr style={{ background: '#f8fafc' }}>
-                        <td colSpan={coverageHidden ? 7 : 9}>
+                        <td colSpan={bodyColSpan}>
                           <AddHoursPanel
                             companyId={companyId}
                             workerId={row.workerId}
@@ -439,11 +525,24 @@ export const TimeApprovalTable = ({
                 contractorOptions={contractorOptions}
                 defaultPeriodStart={periodStart}
                 defaultPeriodEnd={periodEnd}
+                colSpan={bodyColSpan}
                 onDone={onRefresh}
               />
             </tbody>
           </table>
         </div>
+      )}
+
+      {confirmEdit && (
+        <ConfirmDangerModal
+          title={`Replace ${confirmEdit.row.sourceName}'s hours?`}
+          message={`Sets the period total to ${confirmEdit.hours}h — it replaces the daily breakdown (${confirmEdit.row.entries.length} day${confirmEdit.row.entries.length === 1 ? '' : 's'}) with a single first-day entry and zeroes the other days.`}
+          consequence="The per-day split can't be restored afterwards — there is no undo for this edit."
+          confirmLabel="Replace breakdown"
+          busy={busyKey === confirmEdit.row.sourceName}
+          onConfirm={() => runEditTotal(confirmEdit.row, confirmEdit.hours)}
+          onCancel={() => setConfirmEdit(null)}
+        />
       )}
     </div>
   );

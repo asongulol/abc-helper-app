@@ -179,7 +179,6 @@ export async function syncHubstaffForCompany(
   // 10. Decided-entry guard (never overwrite a human decision).
   const existingDecided = await fetchExistingDecided(db, [companyId], start, stop);
   const decided = buildDecidedSets(existingDecided);
-  const decidedCount = decided.decidedBySrc.size + decided.decidedByWorker.size;
 
   // 11. Pure transform.
   const days = dateRange(start, stop);
@@ -194,12 +193,6 @@ export async function syncHubstaffForCompany(
     days,
     importBatchId,
   });
-
-  // Compute skipped-decided count (rows that had time but were blocked).
-  // We can derive this as: users with time * days - actual rows written - unmatched.
-  // A simpler proxy: decidedCount > 0 means some rows were skipped.
-  // For an accurate count we'd need to check inside transform — use guard size as a proxy.
-  const skippedDecided = decidedCount > 0 ? decidedCount : 0;
 
   // 12. Upsert time_entries (conflict: company_id,source_name,work_date).
   await upsertTimeEntries(db, result.rows);
@@ -237,7 +230,9 @@ export async function syncHubstaffForCompany(
     membersSeen,
     rowsWritten: result.rows.length,
     idsPersisted: result.idsToPersist.length,
-    skippedDecided,
+    // Real count of protected day-rows, not the guard-set size: a re-sync over
+    // an approved period must not report "0 entries" with nothing else to show.
+    skippedDecided: result.skippedDecided,
     divergences: result.divergences,
     unmatched: result.unmatched,
     importBatchId,

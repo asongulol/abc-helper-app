@@ -6,6 +6,7 @@
  * router.refresh(), and renders the approval table + CSV import card.
  */
 
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useState, useTransition } from 'react';
 import { AddSessionForm } from '@/components/sessions/AddSessionForm';
@@ -22,6 +23,20 @@ interface ContractorOption {
   displayName: string;
   sourceName: string;
 }
+
+/**
+ * Review-header state. "empty" (nothing imported yet) is NOT "all approved" —
+ * showing "all clear" before a sync has run is what RP-42 flagged.
+ */
+export const reviewStatus = (
+  entryCount: number,
+  pendingCount: number,
+): 'empty' | 'pending' | 'clear' =>
+  entryCount === 0 ? 'empty' : pendingCount > 0 ? 'pending' : 'clear';
+
+/** /time URL that keeps the picked period across the "all unpaid" toggle (RP-51). */
+export const timeHref = (pathname: string, period: PayPeriod, unpaid: boolean): string =>
+  `${pathname}?start=${period.start}&end=${period.end}${unpaid ? '&unpaid=1' : ''}`;
 
 interface TimeShellProps {
   companyId: string;
@@ -54,13 +69,16 @@ export const TimeShell = ({
   const pathname = usePathname();
   // Server resolves the period from the URL (?start=) — it's the source of truth.
   const period = initialPeriod;
-  const [, startRefresh] = useTransition();
+  const [navPending, startRefresh] = useTransition();
   // The Review & Approve grid is collapsed by default so it isn't distracting
   // and you can't accidentally act on the wrong period — expand to review.
   const [reviewOpen, setReviewOpen] = useState(false);
-  const pendingCount = rows
-    .flatMap((r) => r.entries)
-    .filter((e) => e.approval === 'pending').length;
+  // Bumped on every refresh so client-fetching children re-run their effect —
+  // router.refresh() only re-renders server components (RP-47).
+  const [refreshKey, setRefreshKey] = useState(0);
+  const entries = rows.flatMap((r) => r.entries);
+  const pendingCount = entries.filter((e) => e.approval === 'pending').length;
+  const status = reviewStatus(entries.length, pendingCount);
 
   // Contractors whose hours can't be cleanly invoiced: no client, or more than
   // one (multi-client needs per-project attribution — see the hours plan).
@@ -80,10 +98,11 @@ export const TimeShell = ({
   );
 
   const toggleUnpaid = useCallback(() => {
-    startRefresh(() => router.push(unpaidMode ? pathname : '?unpaid=1'));
-  }, [router, unpaidMode, pathname]);
+    startRefresh(() => router.push(timeHref(pathname, period, !unpaidMode)));
+  }, [router, unpaidMode, pathname, period]);
 
   const handleRefresh = useCallback(() => {
+    setRefreshKey((k) => k + 1);
     startRefresh(() => router.refresh());
   }, [router]);
 
@@ -98,11 +117,18 @@ export const TimeShell = ({
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-            {!unpaidMode && <PeriodPicker period={period} onChange={handlePeriodChange} />}
+            {/* Disabled while the navigation is in flight — a second click on
+                Prev would otherwise skip a period and you'd approve the wrong
+                one's hours (RP-41). */}
+            {!unpaidMode && (
+              <PeriodPicker period={period} onChange={handlePeriodChange} disabled={navPending} />
+            )}
             <button
               type="button"
               className={unpaidMode ? 'btn sm' : 'btn ghost sm'}
               onClick={toggleUnpaid}
+              disabled={navPending}
+              aria-busy={navPending}
             >
               {unpaidMode ? '← Back to period view' : 'Show all unpaid'}
             </button>
@@ -130,7 +156,11 @@ export const TimeShell = ({
 
       {/* Salaried leftovers on a locked/paid period → off-cycle batch. Renders
           nothing while the viewed period is open or has no FT/PT leftovers. */}
-      <OffCycleCatchUpCard companyId={companyId} periodStart={period.start} />
+      <OffCycleCatchUpCard
+        companyId={companyId}
+        periodStart={period.start}
+        refreshKey={refreshKey}
+      />
 
       {ambiguous.length > 0 && (
         <div
@@ -179,11 +209,30 @@ export const TimeShell = ({
               {unpaidMode ? 'all unpaid periods' : `${period.start} – ${period.end}`}
             </span>
             <span className="sub" style={{ margin: 0, fontWeight: 400, fontSize: 13 }}>
-              {pendingCount > 0 ? `${pendingCount} pending` : 'all clear'}
+              {status === 'empty'
+                ? 'no entries yet'
+                : status === 'pending'
+                  ? `${pendingCount} pending`
+                  : 'all approved'}
               {reviewOpen ? '' : ' · click to review'}
             </span>
           </button>
         </h3>
+        {/* The onward step once nothing is pending. Outside the <button> — a
+            link nested in a button is invalid HTML. */}
+        {status === 'clear' && !unpaidMode && (
+          <p className="sub" style={{ margin: '8px 0 0' }}>
+            All {entries.length} entr{entries.length === 1 ? 'y' : 'ies'} approved —{' '}
+            <Link href={`/payroll?period=${period.start}`}>
+              calculate payroll for this period →
+            </Link>
+          </p>
+        )}
+        {status === 'empty' && (
+          <p className="sub" style={{ margin: '8px 0 0' }}>
+            Nothing imported for this period yet — upload a CSV or sync from Hubstaff above.
+          </p>
+        )}
         {reviewOpen && (
           <div style={{ marginTop: 12 }}>
             <TimeApprovalTable
