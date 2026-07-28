@@ -385,7 +385,11 @@ export const AddSessionForm = ({
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(`${res.data.count} session(s) added to the next period's draft.`, { type: 'success' });
+      // Name the period — routing silently to the wrong cycle is exactly the
+      // bug this replaced, and the toast is where it would surface first.
+      notify(`${res.data.count} session(s) added to the ${res.data.periodStart} period's draft.`, {
+        type: 'success',
+      });
       setNoDraftSessions(null);
       await reloadAll();
       onCreated();
