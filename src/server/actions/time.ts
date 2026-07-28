@@ -36,6 +36,7 @@ import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
+import { syncApprovedTimeToDrafts } from '@/server/payroll';
 import {
   AddHoursDailySchema,
   AddHoursTotalSchema,
@@ -117,10 +118,42 @@ const addHoursMerged = async (
 
 // ─── Approval ────────────────────────────────────────────────────────────────
 
+/**
+ * Push the just-decided entries onto Calculate. The approval itself is already
+ * committed by the time this runs, so a failure here must NOT fail the action —
+ * it comes back as a note the UI shows, never a silent no-op.
+ */
+const transferToCalculate = async (
+  companyId: string,
+  entries: readonly { workerId: string | null; workDate: string }[],
+): Promise<{ moved: number; calcNote?: string }> => {
+  try {
+    const { workers, closedPeriods } = await syncApprovedTimeToDrafts({ companyId, entries });
+    if (closedPeriods.length > 0) {
+      return {
+        moved: workers,
+        calcNote: `${closedPeriods.join(', ')} is already locked or paid — those hours stayed off Calculate. Use the catch-up card or an off-cycle run.`,
+      };
+    }
+    return { moved: workers };
+  } catch (err) {
+    return {
+      moved: 0,
+      calcNote: humanizeError(err, 'Saved the approval, but updating Calculate failed.'),
+    };
+  }
+};
+
 /** Approve or reject a set of time entries; returns prior approval values for undo. */
-export async function setTimeApproval(
-  args: unknown,
-): Promise<ActionResult<{ count: number; undoEntries: ApprovalUndoEntry[] }>> {
+export async function setTimeApproval(args: unknown): Promise<
+  ActionResult<{
+    count: number;
+    undoEntries: ApprovalUndoEntry[];
+    /** Contractor rows built or merged onto the Calculate batch. */
+    moved: number;
+    calcNote?: string | undefined;
+  }>
+> {
   const parsed = SetApprovalSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -149,7 +182,10 @@ export async function setTimeApproval(
       detail: { ids_count: ids.length, status },
     });
     const undoEntries = buildUndoPayload(snapshot, status);
-    return { ok: true, data: { count: ids.length, undoEntries } };
+    // Both directions: approving builds the row, rejecting rebuilds it smaller
+    // (or drops it), so a retracted entry can't stay on a batch waiting to be paid.
+    const { moved, calcNote } = await transferToCalculate(companyId, snapshot);
+    return { ok: true, data: { count: ids.length, undoEntries, moved, calcNote } };
   } catch (err) {
     return {
       ok: false,
@@ -159,7 +195,9 @@ export async function setTimeApproval(
 }
 
 /** Undo a prior approve/reject by restoring the previous approval values. */
-export async function undoApproval(args: unknown): Promise<ActionResult<{ count: number }>> {
+export async function undoApproval(
+  args: unknown,
+): Promise<ActionResult<{ count: number; calcNote?: string | undefined }>> {
   const parsed = UndoApprovalSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -180,7 +218,15 @@ export async function undoApproval(args: unknown): Promise<ActionResult<{ count:
       entity: companyId,
       detail: { ids_count: entries.length, status: 'undo' },
     });
-    return { ok: true, data: { count: entries.length } };
+    // Read AFTER the restore: the batch has to be rebuilt from the approval state
+    // that now holds, or undoing an approval leaves its hours sitting on Calculate.
+    const touched = await fetchApprovalSnapshot(
+      db,
+      companyId,
+      entries.map((e) => e.id),
+    );
+    const { calcNote } = await transferToCalculate(companyId, touched);
+    return { ok: true, data: { count: entries.length, calcNote } };
   } catch (err) {
     return {
       ok: false,

@@ -3,7 +3,7 @@
  * No I/O; takes already-fetched DB rows as input.
  */
 
-import { periodDates } from '@/lib/dates/periods';
+import { periodDates, periodFor } from '@/lib/dates/periods';
 import { workingDayCount } from '@/lib/pay/expected-hours';
 import type { Holiday } from '@/lib/pay/holidays';
 
@@ -68,6 +68,37 @@ export const groupByContractor = (entries: readonly TimeEntryRaw[]): ContractorP
   }
 
   return rows.sort((a, b) => a.sourceName.localeCompare(b.sourceName));
+};
+
+export interface PeriodWorkers {
+  start: string;
+  end: string;
+  workerIds: string[];
+}
+
+/**
+ * Bucket entries into the pay period each day falls in, with the workers touched
+ * in each. Drives the approve → Calculate transfer: one batch per period, and a
+ * cross-period "all unpaid" approval legitimately spans several.
+ *
+ * Entries with no worker_id are dropped — an unmatched import name has nobody to
+ * pay until it's linked on the review table.
+ */
+export const groupWorkersByPeriod = (
+  entries: readonly { workerId: string | null; workDate: string }[],
+): PeriodWorkers[] => {
+  const byPeriod = new Map<string, { start: string; end: string; workerIds: Set<string> }>();
+  for (const e of entries) {
+    if (!e.workerId) continue;
+    const { start, end } = periodFor(e.workDate);
+    const key = `${start}|${end}`;
+    const bucket = byPeriod.get(key) ?? { start, end, workerIds: new Set<string>() };
+    bucket.workerIds.add(e.workerId);
+    byPeriod.set(key, bucket);
+  }
+  return [...byPeriod.values()]
+    .map((b) => ({ start: b.start, end: b.end, workerIds: [...b.workerIds] }))
+    .sort((a, b) => a.start.localeCompare(b.start));
 };
 
 /**
