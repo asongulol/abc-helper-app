@@ -34,6 +34,7 @@ import {
   getSavedPayments,
   lockPeriod,
   openOffCycleBatch,
+  reconcilePeriodApprovedTime,
   restorePaymentsSnapshot,
   shouldAutoRecalcDraft,
   unlockPeriod,
@@ -420,6 +421,33 @@ export const PayrollShell = ({
       setBusy(false);
     }
   };
+
+  // Approved time belongs on this batch the moment it's approved — but hours
+  // approved before that transfer existed have no click left to trigger it, and
+  // neither does anything approved outside the approve buttons. Opening a period
+  // pulls in whatever its batch is missing. The server only writes for workers
+  // that aren't on the batch yet, so a complete batch costs two reads.
+  const reconciledRef = useRef<Set<string>>(new Set());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadSaved/refreshPeriods are called, not tracked — the per-period ref is what prevents a re-run.
+  useEffect(() => {
+    const key = `${periodStart}|${periodEnd}`;
+    if (busy || reconciledRef.current.has(key)) return;
+    reconciledRef.current.add(key);
+    (async () => {
+      const res = await reconcilePeriodApprovedTime({ companyId, periodStart, periodEnd });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      if (res.data.workers === 0) return;
+      notify(
+        `Pulled ${res.data.workers} contractor${res.data.workers === 1 ? '' : 's'} with approved time onto this batch.`,
+        { type: 'success' },
+      );
+      await refreshPeriods();
+      await loadSaved();
+    })();
+  }, [companyId, periodStart, periodEnd, busy, notify]);
 
   // A legacy sibling app (shared prod DB) seeds a new regular period by cloning
   // the previous period's amounts, so this screen would otherwise show last
