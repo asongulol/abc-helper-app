@@ -624,7 +624,9 @@ export const PayrollShell = ({
         return;
       }
       setRows((prev) => (prev ?? []).filter((r) => r.paymentId !== paymentId));
-      notify(`Deleted ${name}'s statement.`, { type: 'success' });
+      notify(`${name} removed from this batch — their work is back in the unpaid queue.`, {
+        type: 'success',
+      });
     } finally {
       setBusy(false);
       setTimeout(() => {
@@ -1443,13 +1445,16 @@ export const PayrollShell = ({
                                       kind: 'deleteRow',
                                       paymentId: r.paymentId,
                                       name: r.name,
-                                      message: `Delete ${r.name}'s pay statement for ${fmtDate(periodStart)} – ${fmtDate(periodEnd)}?`,
+                                      message: `Remove ${r.name} from the ${fmtDate(periodStart)} – ${fmtDate(periodEnd)} batch?`,
                                       consequence:
-                                        'Manual overrides and Misc items on this statement are lost — recalculating rebuilds engine values only. Any off-cycle pay items on it are deleted too, and their sessions go back to unpaid.',
+                                        'Their sessions and tracked time are NOT deleted — they stay approved and go back to the unpaid queue, ready to pay in another run. What is lost is this statement: manual overrides and Misc items on it (recalculating rebuilds engine values only).',
                                     })
                                   }
                                 >
-                                  Delete
+                                  {/* Not "Delete": this removes a STATEMENT and
+                                      releases the work, it never deletes a
+                                      session or a time entry. */}
+                                  Remove
                                 </button>
                               )}
                             </td>
@@ -1568,10 +1573,10 @@ export const PayrollShell = ({
 
       {confirmModal?.kind === 'deleteRow' && (
         <ConfirmDangerModal
-          title="Delete this pay statement?"
+          title="Remove this contractor from the batch?"
           message={confirmModal.message}
           consequence={confirmModal.consequence}
-          confirmLabel="Delete statement"
+          confirmLabel="Remove from batch"
           busy={busy}
           onConfirm={() => {
             const { paymentId, name } = confirmModal;

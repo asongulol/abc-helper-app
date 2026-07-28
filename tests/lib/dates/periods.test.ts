@@ -3,6 +3,8 @@ import {
   isDateInAnyPeriod,
   isWeekday,
   lastDayOfMonth,
+  nextPeriod,
+  payPeriodChoices,
   periodDates,
   periodFor,
   previousPeriod,
@@ -115,5 +117,34 @@ describe('date helpers', () => {
     expect(lastDayOfMonth(2024, 2)).toBe(29);
     expect(lastDayOfMonth(2025, 2)).toBe(28);
     expect(lastDayOfMonth(2026, 12)).toBe(31);
+  });
+});
+
+describe('nextPeriod / payPeriodChoices — the runs offered for unpaid sessions', () => {
+  it('steps forward a half-month, across month and year ends', () => {
+    expect(nextPeriod('2026-07-03').start).toBe('2026-07-16');
+    expect(nextPeriod('2026-07-20').start).toBe('2026-08-01');
+    expect(nextPeriod('2026-12-20')).toEqual({
+      start: '2027-01-01',
+      end: '2027-01-15',
+      payDate: '2027-01-31',
+    });
+  });
+
+  it('leads with the period that OWNS the work, then the ones after it', () => {
+    // A Jul 3 session on Jul 28: the run that pays it is Jul 1-15 (by Jul 31),
+    // NOT the in-progress Jul 16-31 — the mis-route this modal now names aloud.
+    const choices = payPeriodChoices('2026-07-03', 2);
+    expect(choices.map((p) => p.start)).toEqual(['2026-07-01', '2026-07-16', '2026-08-01']);
+    expect(choices[0]?.payDate).toBe('2026-07-31');
+  });
+
+  it('never offers a period that closed before the work happened', () => {
+    const choices = payPeriodChoices('2026-07-03');
+    for (const p of choices) expect(p.end >= '2026-07-03').toBe(true);
+  });
+
+  it('round-trips with previousPeriod', () => {
+    expect(previousPeriod(nextPeriod('2026-03-05').start).start).toBe('2026-03-01');
   });
 });
