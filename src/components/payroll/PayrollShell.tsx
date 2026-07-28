@@ -739,11 +739,18 @@ export const PayrollShell = ({
   // Off-cycle batches are paid from their added sessions, not recalculated.
   const isOffCycle = currentPeriod?.kind === 'off_cycle';
 
-  // Batch list
-  const finishedBatches = periods.filter((p) => p.state === 'locked' || p.state === 'paid');
-  const shownBatches = showFinished
-    ? periods
-    : periods.filter((p) => p.state !== 'locked' && p.state !== 'paid');
+  // Batch list. A period with no statements is listed nowhere: the schedule
+  // creates periods whether or not anyone has worked in them, and "a future
+  // period exists" is not news to the person running payroll. It stays
+  // selectable via the Calculate card below (and reappears here the moment it
+  // has statements) — `periods` is unfiltered, this is a render filter only.
+  const hasStatements = (p: PeriodSummaryRow) => p.contractorCount > 0;
+  const finishedBatches = periods.filter(
+    (p) => (p.state === 'locked' || p.state === 'paid') && hasStatements(p),
+  );
+  const shownBatches = (
+    showFinished ? periods : periods.filter((p) => p.state !== 'locked' && p.state !== 'paid')
+  ).filter(hasStatements);
 
   return (
     <div>
@@ -764,7 +771,7 @@ export const PayrollShell = ({
             <p className="sub" style={{ margin: '4px 0 0' }}>
               {showFinished
                 ? 'Every period with statements.'
-                : 'Active periods (draft and uncalculated).'}{' '}
+                : 'Periods with statements in progress — empty ones are not listed.'}{' '}
               Select a period below to edit it, or use the Calculate card.
             </p>
           </div>
@@ -794,10 +801,10 @@ export const PayrollShell = ({
 
         {shownBatches.length === 0 ? (
           <EmptyState>
-            No periods to show.{' '}
+            Nothing in progress — no period has statements right now.{' '}
             {finishedBatches.length > 0
-              ? 'Use "Show locked/paid" to see finished periods.'
-              : 'Calculate a period below to get started.'}
+              ? 'Use "Show locked/paid" to see finished periods, or set a period start below and Calculate to begin one.'
+              : 'Set a period start below and Calculate to begin one.'}
           </EmptyState>
         ) : (
           <div className="table-scroll">
