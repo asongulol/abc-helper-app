@@ -645,6 +645,29 @@ export const findPeriod = async (
     : null;
 };
 
+/** Same lookup by period id, plus the window — a deleted statement only knows
+ *  its pay_period_id, and sending its time back to Approval needs the dates. */
+export const fetchPeriodById = async (
+  db: Db,
+  periodId: string,
+): Promise<(PeriodRef & { periodStart: string; periodEnd: string }) | null> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('id, state, kind, period_start, period_end')
+    .eq('id', periodId)
+    .maybeSingle();
+  if (error) throw new Error(`pay_periods: ${error.message}`);
+  return data
+    ? {
+        id: data.id,
+        state: data.state,
+        kind: data.kind === 'off_cycle' ? 'off_cycle' : 'regular',
+        periodStart: data.period_start,
+        periodEnd: data.period_end,
+      }
+    : null;
+};
+
 /** The allowance toggles a Calculate ran with — replayed when ONE row is later
  *  rebuilt, so an off-cycle add can't silently change the run's rules (RP-20). */
 export type PeriodCalcFlags = { includeHa: boolean; includeThirteenth: boolean };

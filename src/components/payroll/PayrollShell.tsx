@@ -668,9 +668,14 @@ export const PayrollShell = ({
       // The batch's contractor count and net just changed — without this the Pay
       // periods list above still advertised the removed statement's money.
       await refreshPeriods();
-      notify(`${name} removed from this batch — their work is back in the unpaid queue.`, {
-        type: 'success',
-      });
+      // A per-session contractor has no tracked hours to send back, so don't
+      // claim hours moved when nothing did.
+      notify(
+        res.data.unapproved > 0
+          ? `${name} removed — their hours are back on Time & Approval to edit or re-approve.`
+          : `${name} removed from this batch.`,
+        { type: 'success' },
+      );
     } finally {
       setBusy(false);
       setTimeout(() => {
@@ -698,7 +703,7 @@ export const PayrollShell = ({
       // and ₱0, so it stays visible (and Recalculate-able) without a hard reload.
       await refreshPeriods();
       notify(
-        `Cleared ${res.data.deleted} statement(s) — the work is back in the unpaid queue. Recalculate to rebuild.`,
+        `Cleared ${res.data.deleted} statement(s) — ${res.data.unapproved} time entr${res.data.unapproved === 1 ? 'y is' : 'ies are'} back on Time & Approval to review again.`,
         {
           type: 'success',
         },

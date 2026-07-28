@@ -11,6 +11,7 @@ import {
   mergeAddedHours,
   type PeriodLockInfo,
   restoreApprovals,
+  unapproveWindow,
   updateApproval,
   updateTrackedSeconds,
 } from '@/db/queries/time';
@@ -344,11 +345,14 @@ describe('approval/undo/edit writes are company-scoped (RP-45)', () => {
   type Chain = Promise<{ data: unknown[]; error: null }> & {
     eq: (col: string, val: unknown) => Chain;
     in: (col: string, val: unknown) => Chain;
+    gte: (col: string, val: unknown) => Chain;
+    lte: (col: string, val: unknown) => Chain;
+    select: (cols: string) => Chain;
   };
   const stubDb = () => {
-    const calls: Array<{ op: string; filters: Record<string, unknown> }> = [];
-    const builder = (op: string): Chain => {
-      const rec = { op, filters: {} as Record<string, unknown> };
+    const calls: Array<{ op: string; filters: Record<string, unknown>; payload?: unknown }> = [];
+    const builder = (op: string, payload?: unknown): Chain => {
+      const rec = { op, filters: {} as Record<string, unknown>, payload };
       calls.push(rec);
       const chain = Promise.resolve({ data: [] as unknown[], error: null }) as Chain;
       const record = (col: string, val: unknown) => {
@@ -357,10 +361,18 @@ describe('approval/undo/edit writes are company-scoped (RP-45)', () => {
       };
       chain.eq = record;
       chain.in = record;
+      // Range bounds get their own keys — both are work_date, so one map slot
+      // would hide a dropped end of the window.
+      chain.gte = (col, val) => record(`${col}>=`, val);
+      chain.lte = (col, val) => record(`${col}<=`, val);
+      chain.select = () => chain;
       return chain;
     };
     const db = {
-      from: () => ({ select: () => builder('select'), update: () => builder('update') }),
+      from: () => ({
+        select: () => builder('select'),
+        update: (patch: unknown) => builder('update', patch),
+      }),
     };
     return { db: db as unknown as SupabaseClient<Database>, calls };
   };
@@ -371,6 +383,33 @@ describe('approval/undo/edit writes are company-scoped (RP-45)', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.filters.company_id).toBe('co-1');
     expect(calls[0]?.filters.id).toEqual(['e1', 'e2']);
+  });
+
+  it('un-approves one worker inside the window only — rejected days stay rejected', async () => {
+    const { db, calls } = stubDb();
+    await unapproveWindow(db, 'co-1', '2026-07-01', '2026-07-15', 'w-9');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.payload).toEqual({
+      approval: 'pending',
+      approved_at: null,
+      approved_by: null,
+    });
+    expect(calls[0]?.filters).toEqual({
+      company_id: 'co-1',
+      // Only rows that are currently approved — a rejected day was decided
+      // against, and re-opening it would resurrect discarded work.
+      approval: 'approved',
+      'work_date>=': '2026-07-01',
+      'work_date<=': '2026-07-15',
+      worker_id: 'w-9',
+    });
+  });
+
+  it('un-approves the whole window when no worker is given (Clear batch)', async () => {
+    const { db, calls } = stubDb();
+    await unapproveWindow(db, 'co-1', '2026-07-01', '2026-07-15');
+    expect(calls[0]?.filters).not.toHaveProperty('worker_id');
+    expect(calls[0]?.filters.company_id).toBe('co-1');
   });
 
   it('scopes the undo restore by company', async () => {
