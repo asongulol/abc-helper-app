@@ -1567,8 +1567,18 @@ export async function payApprovedSessions(args: {
 }
 
 /**
- * No open draft → pay these sessions in the NEXT scheduled period (the one
- * containing today), creating it open if needed.
+ * No open draft → pay these sessions in the scheduled period that OWNS their
+ * dates, creating it open if it doesn't exist yet.
+ *
+ * NOT the period containing today: payroll runs a half-month in arrears, so on
+ * Jul 28 the next payroll to go out is Jul 1–15 (pay date Jul 31), not the
+ * in-progress Jul 16–31 (pay date Aug 15). Keying off today pushed Jul 1–14
+ * sessions a full cycle late AND joined them to a window that doesn't contain
+ * them — the exact thing audit #001/#009 forbids.
+ *
+ * A period that is already locked/paid is refused rather than reopened
+ * (upsertOpenPeriod would force state back to 'open'); the off-period batch is
+ * the mechanism for paying into a closed cycle.
  */
 export async function payApprovedSessionsToNextPeriod(args: {
   companyId: string;
@@ -1581,8 +1591,24 @@ export async function payApprovedSessionsToNextPeriod(args: {
   if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
   try {
     const db = await createServerSupabase();
-    const today = new Date().toISOString().slice(0, 10);
-    const p = periodFor(today);
+    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
+    if (sessions.length !== args.sessionIds.length)
+      return { ok: false, error: 'One or more sessions were not found.' };
+    const periods = new Set(sessions.map((s) => periodFor(s.sessionDate).start));
+    if (periods.size > 1)
+      return {
+        ok: false,
+        error: 'These sessions span more than one pay period. Pay them one period at a time.',
+      };
+    const first = sessions[0];
+    if (!first) return { ok: false, error: 'No sessions selected.' };
+    const p = periodFor(first.sessionDate);
+    const existing = await findPeriod(db, args.companyId, p.start, p.end);
+    if (existing && existing.state !== 'open')
+      return {
+        ok: false,
+        error: `The ${p.start} – ${p.end} period is already ${existing.state}. Use the off-period batch to pay these now.`,
+      };
     const period = await upsertOpenPeriod(db, args.companyId, p.start, p.end, p.payDate);
     const res = await addApprovedSessionsToPeriod(
       db,
