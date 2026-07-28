@@ -326,6 +326,20 @@ export const PayrollShell = ({
     }
   }, [autoUnlock, currentPeriod]);
 
+  /**
+   * Re-read the Pay periods list. Every write that changes a period's contractor
+   * count or net total has to do this, and it was open-coded at each call site —
+   * so the one that forgot (removing a single statement) left the list claiming
+   * "1 contractor · PHP 10,000.00" over a batch that was already empty. One
+   * helper, so the next such write has something to call instead of remember.
+   */
+  const refreshPeriods = async (): Promise<PeriodSummaryRow[] | null> => {
+    const sums = await getPeriodSummaries({ companyId });
+    if (!sums.ok) return null;
+    setPeriods(sums.data.periods);
+    return sums.data.periods;
+  };
+
   // Calculate. `auto` = the one-shot recompute of a carried-over clone on open;
   // it skips the confirm (a pristine clone has nothing to lose) and shows a toast
   // that explains why the amounts just changed.
@@ -399,8 +413,7 @@ export const PayrollShell = ({
       }
       // Refresh the batch list (contractor counts / net totals just changed) and
       // reload the saved rows to reflect the newly persisted draft; expand the table.
-      const sums = await getPeriodSummaries({ companyId });
-      if (sums.ok) setPeriods(sums.data.periods);
+      await refreshPeriods();
       setTableOpen(true);
       await loadSaved();
     } finally {
@@ -624,6 +637,9 @@ export const PayrollShell = ({
         return;
       }
       setRows((prev) => (prev ?? []).filter((r) => r.paymentId !== paymentId));
+      // The batch's contractor count and net just changed — without this the Pay
+      // periods list above still advertised the removed statement's money.
+      await refreshPeriods();
       notify(`${name} removed from this batch — their work is back in the unpaid queue.`, {
         type: 'success',
       });
@@ -652,8 +668,7 @@ export const PayrollShell = ({
       setRows([]);
       // Keep the batch list in sync — the discarded period now shows 0 contractors
       // and ₱0, so it stays visible (and Recalculate-able) without a hard reload.
-      const sums = await getPeriodSummaries({ companyId });
-      if (sums.ok) setPeriods(sums.data.periods);
+      await refreshPeriods();
       notify(
         `Cleared ${res.data.deleted} statement(s) — the work is back in the unpaid queue. Recalculate to rebuild.`,
         {
@@ -685,9 +700,8 @@ export const PayrollShell = ({
         return;
       }
       // The batch must be in `periods` for loadSaved to resolve it.
-      const sums = await getPeriodSummaries({ companyId });
-      if (sums.ok) setPeriods(sums.data.periods);
-      const row = sums.ok ? sums.data.periods.find((p) => p.id === res.data.batchId) : undefined;
+      const list = await refreshPeriods();
+      const row = list?.find((p) => p.id === res.data.batchId);
       if (row) selectBatch(row);
       else {
         setPeriodStart(res.data.periodStart);
