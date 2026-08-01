@@ -174,7 +174,8 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       weekly_hours: input.weeklyHours,
       bill_rate_usd: input.billRateUsd ?? null,
       session_rate_usd: input.sessionRateUsd ?? null,
-      status: input.linkStatus,
+      // Absent for an ended link — the form has no say over a departure.
+      ...(input.linkStatus ? { status: input.linkStatus } : {}),
     });
     await logEvent({
       companyId: input.companyId,
@@ -836,7 +837,9 @@ export async function saveWorkerCompanyLink(args: {
   sessionRateUsd: number | null;
   contract: ContractType;
   payBasis: PayBasis | null;
-  status: 'active' | 'inactive' | 'ended';
+  /** Omit to leave it as-is. Ending goes through endAssignment — see
+   *  EditableWorkerStatusSchema for why a status field can't do it. */
+  status?: 'active' | 'inactive';
 }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -866,7 +869,7 @@ export async function saveWorkerCompanyLink(args: {
         session_rate_usd: args.sessionRateUsd,
         contract: args.contract,
         pay_basis: args.payBasis,
-        status: args.status,
+        ...(args.status ? { status: args.status } : {}),
       })
       .eq('worker_id', args.workerId)
       .eq('company_id', args.companyId);

@@ -74,7 +74,14 @@ export const contractForEdit = (
   }
   return { contract: (contract as ContractType) || 'FT', payBasis: null };
 };
-export const WorkerStatusSchema = z.enum(['active', 'inactive', 'ended']);
+/**
+ * The statuses a form may WRITE. 'ended' is missing on purpose: ending closes
+ * rates and coverage targets as of a chosen last day, which a status field has
+ * nowhere to put — it goes through terminateContractor / endAssignment. An
+ * already-ended link omits the field entirely rather than posting 'ended' back,
+ * so a profile save leaves the departure it knows nothing about alone.
+ */
+export const EditableWorkerStatusSchema = z.enum(['active', 'inactive']);
 
 /** Same sanity bounds as a hire date (2000 → one year out); own wording. */
 const LastDaySchema = IsoDateSchema.refine((d) => hireDateRangeError(d) === null, {
@@ -190,7 +197,7 @@ export const SaveWorkerProfileSchema = z
       .nullable()
       .optional(),
     sessionRateUsd: z.number().min(0).max(100000).nullable().optional(),
-    linkStatus: WorkerStatusSchema,
+    linkStatus: EditableWorkerStatusSchema.optional(),
   })
   .superRefine(requirePayBasisForPhs);
 export type SaveWorkerProfileInput = z.infer<typeof SaveWorkerProfileSchema>;

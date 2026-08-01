@@ -93,22 +93,24 @@ export function PayTab({
               />
             </Field>
             <Field id="pp-link-status" label="Assignment status">
-              <select
-                id="pp-link-status"
-                value={form.linkStatus}
-                onChange={(e) =>
-                  set('linkStatus', e.target.value as 'active' | 'inactive' | 'ended')
-                }
-                disabled={isPending}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                {/* Ending is a workflow (it closes rates + coverage targets), not
-                    a field — shown so an already-ended link renders, never picked. */}
-                <option value="ended" disabled>
-                  Ended
-                </option>
-              </select>
+              {/* Ending is a workflow — it closes rates and coverage targets as
+                  of a last day this form can't name — so an ended link reads as
+                  text here rather than as an option nobody may pick. */}
+              {form.linkStatus === 'ended' ? (
+                <p id="pp-link-status" className="sub" style={{ margin: '6px 0 0' }}>
+                  Ended — reactivate from the Contractors roster.
+                </p>
+              ) : (
+                <select
+                  id="pp-link-status"
+                  value={form.linkStatus}
+                  onChange={(e) => set('linkStatus', e.target.value as 'active' | 'inactive')}
+                  disabled={isPending}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              )}
             </Field>
           </div>
         </section>
@@ -205,18 +207,21 @@ export function PayTab({
                 </Field>
               )}
               <Field id={`eng-status-${e.companyId}`} label="Status">
-                <select
-                  id={`eng-status-${e.companyId}`}
-                  value={e.status}
-                  onChange={(ev) => updateEng(i, { status: ev.target.value })}
-                  disabled={isPending}
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="ended" disabled>
+                {e.status === 'ended' ? (
+                  <p id={`eng-status-${e.companyId}`} className="sub" style={{ margin: '6px 0 0' }}>
                     Ended
-                  </option>
-                </select>
+                  </p>
+                ) : (
+                  <select
+                    id={`eng-status-${e.companyId}`}
+                    value={e.status}
+                    onChange={(ev) => updateEng(i, { status: ev.target.value })}
+                    disabled={isPending}
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                )}
               </Field>
               <button
                 type="button"

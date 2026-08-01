@@ -391,7 +391,9 @@ export const updateWorkerLink = async (
     weekly_hours: number | null;
     bill_rate_usd?: number | null;
     session_rate_usd?: number | null;
-    status: Database['public']['Enums']['worker_status'];
+    /** Omitted leaves the current status alone. 'ended' is not writable here —
+     *  that is endEngagement's job, which also closes rates and coverage. */
+    status?: 'active' | 'inactive';
   },
 ): Promise<void> => {
   const { error } = await db

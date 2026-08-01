@@ -34,7 +34,6 @@ const TAB_KEYS = [
 ] as const satisfies readonly TabKey[];
 
 type ValidPayoutMethod = 'wise' | 'bpi' | 'gcash' | 'paymaya' | 'paypal';
-type ValidWorkerStatus = 'active' | 'inactive' | 'ended';
 
 export function toForm(w: RosterWorker): FormState {
   // Legacy PH/PS map to the shared-prod PHS + pay_basis model for editing.
@@ -198,7 +197,11 @@ export function useContractorProfile(
         sessionRateUsd: e.sessionRateUsd,
         contract: e.contract as ContractType,
         payBasis: (e.payBasis ?? null) as PayBasis | null,
-        status: e.status === 'inactive' ? 'inactive' : e.status === 'ended' ? 'ended' : 'active',
+        // Same as the profile form: an ended engagement keeps its status, and
+        // "End…" is the only way to reach it.
+        ...(e.status === 'ended'
+          ? {}
+          : { status: e.status === 'inactive' ? 'inactive' : 'active' }),
       });
       notify(res.ok ? 'Engagement saved.' : res.error, {
         type: res.ok ? 'success' : 'error',
@@ -323,10 +326,14 @@ export function useContractorProfile(
       ? (form.payoutMethod as ValidPayoutMethod)
       : null;
 
-    const LINK_STATUSES: ValidWorkerStatus[] = ['active', 'inactive', 'ended'];
-    const linkStatus: ValidWorkerStatus = LINK_STATUSES.includes(form.linkStatus)
-      ? form.linkStatus
-      : 'active';
+    // An ended link keeps its status: the form can't name a last day, so it has
+    // nothing to say about a departure and leaves the field out of the payload.
+    const linkStatus: 'active' | 'inactive' | undefined =
+      form.linkStatus === 'ended'
+        ? undefined
+        : form.linkStatus === 'inactive'
+          ? 'inactive'
+          : 'active';
 
     const weeklyHours = form.weeklyHours !== '' ? Number(form.weeklyHours) : null;
     const billRateUsd = form.billRateUsd !== '' ? Number(form.billRateUsd) : null;
@@ -378,7 +385,7 @@ export function useContractorProfile(
         weeklyHours,
         billRateUsd,
         sessionRateUsd,
-        linkStatus,
+        ...(linkStatus ? { linkStatus } : {}),
       });
       if (!result.ok) {
         setServerError(result.error);
@@ -430,8 +437,9 @@ export function useContractorProfile(
         weeklyHours,
         billRateUsd,
         sessionRateUsd,
-        linkStatus,
-        workerStatus: linkStatus === 'active' ? 'active' : linkStatus,
+        // Nothing was written for an ended link, so the row keeps what it had.
+        linkStatus: linkStatus ?? worker.linkStatus,
+        workerStatus: linkStatus ?? worker.workerStatus,
       };
       onSaved?.(updated);
     });
