@@ -83,7 +83,7 @@ export const OptionBPanel = ({ companyId, period, onImported }: OptionBPanelProp
         notify(res.error, { type: 'error' });
         return;
       }
-      const { rowsWritten, membersSeen, unmatched } = res.data;
+      const { rowsWritten, membersSeen, unmatched, droppedAfterEnd } = res.data;
       if (rowsWritten === 0 && membersSeen === 0) {
         notify(`Hubstaff returned no activity for ${syncStart} → ${syncStop}.`, { type: 'info' });
         return;
@@ -105,15 +105,21 @@ export const OptionBPanel = ({ companyId, period, onImported }: OptionBPanelProp
         skippedDecided > 0
           ? ` ${skippedDecided} already approved/rejected day(s) were left untouched.`
           : '';
+      // Hubstaff keeps reporting a departed member's days — say so, or the
+      // hours look like they simply went missing.
+      const endedNote =
+        droppedAfterEnd > 0
+          ? ` ${droppedAfterEnd} day(s) fell after a contractor's last day and were not imported.`
+          : '';
       const divergenceNote =
         divergences > 0
           ? ` ⚠ ${divergences} of them now report DIFFERENT hours in Hubstaff — the approved value was kept. Check the audit log (time_divergence) and re-approve if the new number is right.`
           : '';
       notify(
-        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}${decidedNote}${divergenceNote}`,
+        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}${decidedNote}${endedNote}${divergenceNote}`,
         {
           type: divergences > 0 ? 'warn' : rowsWritten > 0 ? 'success' : 'info',
-          persistent: unmatched.length > 0 || divergences > 0,
+          persistent: unmatched.length > 0 || divergences > 0 || droppedAfterEnd > 0,
         },
       );
       onImported();

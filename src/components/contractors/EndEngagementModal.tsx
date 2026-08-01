@@ -26,7 +26,7 @@ const todayIso = (): string => {
  * so they share a form: last day + optional reason.
  *
  * The last day matters beyond the audit trail — it end-dates rates and coverage
- * targets, and (PR4) stops time importing past it.
+ * targets, and stops time importing past it (upsertTimeEntries).
  */
 export const EndEngagementModal = ({
   name,

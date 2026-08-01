@@ -72,6 +72,9 @@ export interface HubstaffSyncSummary {
   rowsWritten: number;
   idsPersisted: number;
   skippedDecided: number;
+  /** Days dropped because they fall after the contractor's last day. Hubstaff
+   *  keeps a departed member in the org, so their days keep arriving. */
+  droppedAfterEnd: number;
   /** F3: decided days whose Hubstaff seconds changed after a human decision. */
   divergences: TransformDivergence[];
   unmatched: string[];
@@ -162,6 +165,7 @@ export async function syncHubstaffForCompany(
       rowsWritten: 0,
       idsPersisted: 0,
       skippedDecided: 0,
+      droppedAfterEnd: 0,
       divergences: [],
       unmatched: [],
       importBatchId,
@@ -195,7 +199,8 @@ export async function syncHubstaffForCompany(
   });
 
   // 12. Upsert time_entries (conflict: company_id,source_name,work_date).
-  await upsertTimeEntries(db, result.rows);
+  //     Days after a contractor's last day are dropped there, not here.
+  const droppedAfterEnd = await upsertTimeEntries(db, result.rows);
 
   // 13. Persist stable hubstaff_user_id for name-matched links.
   for (const p of result.idsToPersist) {
@@ -228,8 +233,9 @@ export async function syncHubstaffForCompany(
     companyId,
     orgId,
     membersSeen,
-    rowsWritten: result.rows.length,
+    rowsWritten: result.rows.length - droppedAfterEnd,
     idsPersisted: result.idsToPersist.length,
+    droppedAfterEnd,
     // Real count of protected day-rows, not the guard-set size: a re-sync over
     // an approved period must not report "0 entries" with nothing else to show.
     skippedDecided: result.skippedDecided,

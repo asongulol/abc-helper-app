@@ -98,7 +98,7 @@ const addHoursMerged = async (
     };
   }
 
-  await upsertTimeEntries(
+  const droppedAfterEnd = await upsertTimeEntries(
     db,
     merged.map((m) => ({
       company_id: companyId,
@@ -113,6 +113,17 @@ const addHoursMerged = async (
       client_company_id: m.clientCompanyId,
     })),
   );
+  // Nothing written at all — "Hours added" would be a lie. ponytail: a PARTIAL
+  // drop (some days before the last day, some after) still reports success
+  // silently; surfacing that needs a `message` the two Add-hours panels don't
+  // read today. Rare by construction — the contractor picker lists no ended
+  // links, so this only fires on a row imported before the departure.
+  if (droppedAfterEnd === merged.length && merged.length > 0) {
+    return {
+      ok: false,
+      error: `Those days fall after ${sourceName}'s last day — their engagement has ended.`,
+    };
+  }
   return { ok: true };
 };
 
@@ -393,7 +404,9 @@ export async function editContractorTotal(args: unknown): Promise<ActionResult> 
 /** Import a batch of parsed CSV rows (upsert or skip mode). */
 export async function importCsvBatch(
   args: unknown,
-): Promise<ActionResult<{ batchId: string; written: number; skipped: number }>> {
+): Promise<
+  ActionResult<{ batchId: string; written: number; skipped: number; droppedAfterEnd: number }>
+> {
   const parsed = CsvImportSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -452,7 +465,7 @@ export async function importCsvBatch(
       // red error toast.
       return {
         ok: true,
-        data: { batchId, written: 0, skipped },
+        data: { batchId, written: 0, skipped, droppedAfterEnd: 0 },
         message: 'Nothing new to import — those rows already exist or are already decided.',
       };
     }
@@ -460,7 +473,8 @@ export async function importCsvBatch(
     // A Hubstaff CSV has no PTO column, so carry whatever the API sync stored
     // for the day rather than zeroing it on overwrite.
     const ptoByDay = new Map(existing.map((e) => [`${e.sourceName}|${e.workDate}`, e.ptoSeconds]));
-    await upsertTimeEntries(
+    // Days after a contractor's last day are dropped by the writer, not here.
+    const droppedAfterEnd = await upsertTimeEntries(
       db,
       toWrite.map((r) => ({
         company_id: companyId,
@@ -475,6 +489,7 @@ export async function importCsvBatch(
       })),
     );
 
+    const written = toWrite.length - droppedAfterEnd;
     const dates = [...new Set(toWrite.map((r) => r.workDate))].sort();
     const contractors = new Set(toWrite.map((r) => r.sourceName)).size;
     await logEvent({
@@ -483,13 +498,14 @@ export async function importCsvBatch(
       entity: `${dates[0] ?? ''} → ${dates[dates.length - 1] ?? ''}`,
       detail: {
         contractors,
-        rows: toWrite.length,
+        rows: written,
+        dropped_after_end: droppedAfterEnd,
         mode,
         batch: batchId,
       },
     });
 
-    return { ok: true, data: { batchId, written: toWrite.length, skipped } };
+    return { ok: true, data: { batchId, written, skipped, droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,
