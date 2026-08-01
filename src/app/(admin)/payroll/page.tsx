@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
 import { PayrollShell } from '@/components/payroll/PayrollShell';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchPeriodSummaries, preferredOpenDraft } from '@/db/queries/payroll';
+import { fetchPeriodSummaries, fetchSavedPayments, preferredOpenDraft } from '@/db/queries/payroll';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { batchForWindow } from '@/lib/payroll/batch-window';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
 
@@ -56,12 +57,27 @@ export default async function PayrollPage({
       ? periodFor(openDraft.periodStart)
       : arrears;
 
+  // The draft table used to arrive one server action AFTER hydration: the page
+  // shipped an empty shell, the browser hydrated, then asked for the rows. That
+  // round trip is the whole gap between "the tab opened" and "I can see the
+  // batch". Fetch it here so the rows ride along with the HTML — and, since the
+  // sidebar fully prefetches this route, they are usually in the client cache
+  // before the tab is even clicked.
+  //
+  // Only the batch the shell actually opens on. A `?batch=` deep-link that
+  // points somewhere else simply misses this seed and loads the old way; the
+  // shell matches on id before trusting it.
+  const initialBatch = batchForWindow(periods, defaultPeriod.start, defaultPeriod.end);
+  const initialPayments = initialBatch ? await fetchSavedPayments(db, initialBatch.id) : [];
+
   return (
     <PayrollShell
       companyId={companyId}
       isOwner={admin.isOwner}
       defaultPeriod={defaultPeriod}
       initialPeriods={periods}
+      initialBatchId={initialBatch?.id ?? null}
+      initialPayments={initialPayments}
       autoUnlock={autoUnlock}
     />
   );
