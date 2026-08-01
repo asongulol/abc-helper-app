@@ -400,6 +400,12 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
       const pto = ptoDay.get(uid)?.get(day) ?? 0;
       if (tracked === 0 && pto === 0) continue;
       // Hubstaff keeps a departed member in the org, so their days keep coming.
+      // ponytail: this runs BEFORE the decided guard below, where the app runs
+      // it after (transform skips decided, upsertTimeEntries drops after-end).
+      // Write-neutral — neither side stores a decided day past the last day —
+      // so a decided late day just lands in dropped_after_end here and in
+      // skippedDecided + a divergence row in-app. Swap the two blocks only if
+      // that attribution ever has to match.
       const lastDay = lastDayByWorker.get(wId);
       if (lastDay !== undefined && day > lastDay) {
         droppedAfterEnd += 1;
@@ -477,6 +483,28 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
         action: 'time_divergence',
         entity: companyId,
         detail: { count: divergences.length, window: { start, stop }, items: divergences.slice(0, 100) },
+      }),
+    }).catch(() => undefined);
+  }
+
+  // Same standard as the divergences above: dropped_after_end only ever reached
+  // the HTTP response, which pg_net discards, so a nightly drop left no trace at
+  // all. Action/detail keys match the manual sync's audit row in
+  // src/server/actions/hubstaff-sync.ts; entity says which one ran.
+  if (droppedAfterEnd) {
+    await fetch(`${SB_URL}/rest/v1/audit_log`, {
+      method: 'POST',
+      headers: { ...tokHdr, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        company_id: companyId,
+        action: 'import',
+        entity: 'Hubstaff cron sync',
+        detail: {
+          window: { start, stop },
+          rows_written: written,
+          dropped_after_end: droppedAfterEnd,
+          batch: importBatchId,
+        },
       }),
     }).catch(() => undefined);
   }
