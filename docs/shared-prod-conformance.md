@@ -79,6 +79,22 @@ migration CLI; do **not** append `rollback;`).
 | `invoices.amount_received_usd`, `invoices.received_on`, `invoices.payment_ref` | `audit/prod-additive-conformance.sql` | Awaiting manual apply |
 | `worker_tools.revealed_at` (nullable column only) | `audit/prod-additive-conformance.sql` | Awaiting manual apply |
 | function `my_tools_pending()` (read-only self-scoped boolean) | `audit/prod-additive-tools-functions.sql` | **Applied + verified on prod 2026-06-23** |
+| CHECK `worker_companies_ended_requires_ended_on` (+ an `ended_on` backfill) | `supabase/migrations/…037_worker_companies_ended_requires_ended_on.sql` | Awaiting manual apply |
+| trigger `time_entries_no_time_after_last_day()` on `time_entries` | `supabase/migrations/…038_time_entries_no_time_after_last_day.sql` | Awaiting manual apply |
+
+⚠️ 037 and 038 are additive, but unlike everything above them they **newly reject writes the live
+apps make today** — that is their purpose (issue #86: every last-day guard in this repo is
+app-level, and three original apps write `time_entries` straight from the browser with no such
+rule). Two consequences to sequence around before applying:
+
+- **038 before the guarded `hubstaff-sync` deploy breaks the nightly ingest, silently.** The
+  trigger raises, PostgREST upserts a window as one statement, and `pg_net` discards the response.
+  Deploy Option A in [DEPLOY.md](./DEPLOY.md) first.
+- **037 makes the deployed legacy `portal-admin` edge function's withdraw-offer half-fail.** It
+  PATCHes a bare `{status:"ended"}` across every link inside a `.catch(() => {})`, so the write
+  400s and is swallowed — the link stays `active` on the roster instead of ending unbounded.
+  Visibly wrong beats invisibly wrong, but someone should know. The legacy apps' own
+  active/inactive toggle already writes `ended_on` and is unaffected.
 
 The worker-tools reveal flow adopted prod's **persistent** model rather than abc-helper-app's
 one-time reveal-and-purge (purging `worker_tools.enc` would delete credentials the live apps still
