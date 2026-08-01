@@ -45,16 +45,30 @@ const resolve = cache(async (): Promise<Resolution> => {
   } = await supabase.auth.getUser();
   if (!user) return denied;
 
-  // `status='active'` mirrors the RLS helper my_worker_id() exactly: a revoked/
-  // deactivated login must resolve to no worker, so every portal path (including
-  // service-role writes that bypass RLS) denies it.
+  // Anything but `status='active'` denies, mirroring the RLS helper
+  // my_worker_id() exactly — but the status is READ rather than filtered on, so
+  // a revoked login can still be told apart from "not a contractor at all".
+  // Since #85 that revocation is what ends access (nightly sunset sweep), and
+  // without the distinction the login page reads as a rejected password.
   const { data: login } = await supabase
     .from('contractor_logins')
-    .select('worker_id')
+    .select('worker_id, status')
     .eq('auth_user_id', user.id)
-    .eq('status', 'active')
     .maybeSingle();
   if (!login) return denied;
+
+  if (login.status !== 'active') {
+    // Their own workers row is no longer readable — `workers_contractor_read` is
+    // keyed on my_worker_id(), which a revoked login does not resolve — so the
+    // service client answers the only question left: was this a departure (say
+    // so) or an admin pulling access for cause (stay generic)?
+    const { data: gone } = await createServiceClient()
+      .from('workers')
+      .select('status')
+      .eq('id', login.worker_id)
+      .maybeSingle();
+    return { worker: null, accessEnded: gone?.status === 'ended' };
+  }
 
   const { data: w } = await supabase
     .from('workers')
@@ -64,10 +78,15 @@ const resolve = cache(async (): Promise<Resolution> => {
   if (!w) return denied;
 
   // Departure does not revoke the login — terminateContractor leaves it alone on
-  // purpose, so the end of access is decided HERE, at sign-in, and only once the
-  // money has actually landed. Someone who left last week still needs their
-  // payslips. Only 'ended' workers pay for the check; for everyone else this is
-  // a status comparison and no extra round-trip.
+  // purpose — so access ends only once the money has actually landed. Someone who
+  // left last week still needs their payslips. Only 'ended' workers pay for the
+  // check; for everyone else this is a status comparison and no extra round-trip.
+  //
+  // The revocation that RLS honours is the nightly sweep's (sunsetPortalLogins,
+  // #85): this app's resolver cannot be the enforcement point, because the client
+  // that keeps the access is the legacy portal, which never runs any of this.
+  // Keeping the check here anyway closes the ≤24h window before the next tick,
+  // for the one client that does run it.
   if (w.status === 'ended' && !(await hasPayOutstanding(createServiceClient(), w.id))) {
     return { worker: null, accessEnded: true };
   }

@@ -15,6 +15,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { seedOnboardingProgress } from '@/db/queries/onboarding';
 import { decryptWorkerTools } from '@/db/queries/secrets';
+import { endEngagement } from '@/db/queries/workers';
 import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -320,14 +321,24 @@ export async function resetPortalPassword(args: {
   }
 }
 
-/** Revoke a contractor's portal access (sets contractor_logins.status = 'revoked'). */
+/**
+ * Revoke a contractor's portal access (sets contractor_logins.status = 'revoked',
+ * which is the only thing `my_worker_id()` — and therefore every contractor RLS
+ * policy — looks at).
+ *
+ * Service client, role verified above. `contractor_logins` has exactly ONE RLS
+ * policy and it is SELECT-only (baseline `contractor_logins_self`), so this
+ * update through a user-session client matched 0 rows and returned no error:
+ * the button reported "Portal access revoked." and revoked nothing. The legacy
+ * `portal-admin` edge function has always PATCHed this with the service key —
+ * same reason.
+ */
 export async function revokePortalLogin(args: { workerId: string }): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
   try {
-    const db = await createServerSupabase();
-    const { error } = await db
+    const { error } = await createServiceClient()
       .from('contractor_logins')
       .update({ status: 'revoked' })
       .eq('worker_id', args.workerId);
@@ -343,6 +354,60 @@ export async function revokePortalLogin(args: { workerId: string }): Promise<Act
     return {
       ok: false,
       error: humanizeError(err, 'Revoke failed.'),
+    };
+  }
+}
+
+/**
+ * Give a revoked portal login back (status → 'active'). The inverse of
+ * revokePortalLogin, and the undo for the nightly sunset sweep
+ * (`sunsetPortalLogins`).
+ *
+ * It exists because the sweep made revocation automatic: a departed contractor
+ * whose final pay landed loses the portal on the next tick, and if that pay is
+ * later re-drafted — a Wise transfer that bounced after `paid_at` was stamped is
+ * the documented case (#90 B) — they are owed money again with no way back into
+ * the one screen showing their own pay records. The sweep deliberately cannot
+ * restore anyone itself: it cannot tell its own revocation from an admin's, and
+ * silently reversing a deliberate one is worse than a manual click here.
+ *
+ * Password and email are untouched; a login whose auth user was BANNED
+ * (withdrawOffer) still cannot sign in — lift the ban separately.
+ */
+export async function restorePortalLogin(args: { workerId: string }): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  try {
+    const svc = createServiceClient();
+    const { data: login } = await svc
+      .from('contractor_logins')
+      .select('status')
+      .eq('worker_id', args.workerId)
+      .maybeSingle();
+    if (!login)
+      return {
+        ok: false,
+        error: 'This contractor has no portal login yet — create one first.',
+      };
+    if (login.status === 'active') return { ok: true, message: 'Portal access is already active.' };
+
+    const { error } = await svc
+      .from('contractor_logins')
+      .update({ status: 'active' })
+      .eq('worker_id', args.workerId);
+    if (error) return { ok: false, error: `Restore failed: ${error.message}` };
+
+    await logEvent({
+      action: 'portal_login.restored',
+      entity: args.workerId,
+      detail: { worker_id: args.workerId, by: admin.email, from: login.status },
+    });
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: humanizeError(err, 'Restore failed.'),
     };
   }
 }
@@ -535,10 +600,29 @@ export async function withdrawOffer(args: { workerId: string }): Promise<ActionR
         .catch(() => {});
     }
 
-    // Mark worker + company links ended (best-effort)
+    // Mark worker + company links ended (best-effort).
+    //
+    // The links go through `endEngagement`, not a bare status write. A bare
+    // `status='ended'` leaves `ended_on` NULL, and `ended_on` is what every
+    // last-day rule measures against — an unstamped 'ended' link is a departure
+    // with no last day, so the time-import guard, the allowance gate and the
+    // portal's final-pay gate all leave it alone and the contractor keeps
+    // importing and paying (#86). It is also now a CHECK violation (migration
+    // 37), which would fail this write outright.
+    //
+    // Today is the last day: the guard above already refused if any payment or
+    // time entry exists, so a withdrawn offer has nothing behind it to bound.
+    // `endEngagement` closes the rates and coverage targets onboarding may have
+    // opened, in the same pass. Service client for the same reason as the rest
+    // of this action — a company-scoped admin cannot see every link through RLS
+    // and would silently withdraw only part of the offer.
     await Promise.allSettled([
       svc.from('workers').update({ status: 'ended' }).eq('id', args.workerId),
-      svc.from('worker_companies').update({ status: 'ended' }).eq('worker_id', args.workerId),
+      endEngagement(svc, {
+        workerId: args.workerId,
+        companyId: null,
+        lastDay: new Date().toISOString().slice(0, 10),
+      }),
     ]);
 
     // Best-effort withdraw email.
