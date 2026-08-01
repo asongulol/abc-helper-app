@@ -11,6 +11,7 @@
 
 import { useRef, useState, useTransition } from 'react';
 import { Badge, useToast } from '@/components/ui';
+import type { PayPeriod } from '@/lib/dates/periods';
 import type { RosterLink } from '@/lib/time/attribution';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import type { HubstaffMember } from '@/lib/time/csv';
@@ -28,6 +29,8 @@ import { OptionBPanel } from './OptionBPanel';
 interface CsvImportCardProps {
   companyId: string;
   roster: RosterLink[];
+  /** Period the Hubstaff sync window starts on — the next unimported one. */
+  period: PayPeriod;
   onImported: () => void;
 }
 
@@ -69,7 +72,7 @@ interface ParsedState {
   skippedRows: number;
 }
 
-export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardProps) => {
+export const CsvImportCard = ({ companyId, roster, period, onImported }: CsvImportCardProps) => {
   const { notify } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [parseErr, setParseErr] = useState('');
@@ -254,7 +257,12 @@ export const CsvImportCard = ({ companyId, roster, onImported }: CsvImportCardPr
             )}
           </div>
         </div>
-        <OptionBPanel companyId={companyId} onImported={onImported} />
+        <OptionBPanel
+          key={period.start}
+          companyId={companyId}
+          period={period}
+          onImported={onImported}
+        />
       </div>
 
       {parseErr && (

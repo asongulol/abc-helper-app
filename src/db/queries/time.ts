@@ -195,6 +195,39 @@ export const fetchEntryDates = async (
   return (data ?? []).map((r) => ({ id: r.id, workDate: r.work_date }));
 };
 
+/** Latest day that has any imported time — null on a company with none yet.
+ *  Drives the default review period (see nextUnimportedPeriod). */
+export const fetchLastImportedDate = async (db: Db, companyId: string): Promise<string | null> => {
+  const { data, error } = await db
+    .from('time_entries')
+    .select('work_date')
+    .eq('company_id', companyId)
+    .order('work_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`last imported date: ${error.message}`);
+  return data?.work_date ?? null;
+};
+
+/** Pending entries OUTSIDE the shown period. The default period is now the next
+ *  unimported one, so hours still awaiting approval in an earlier period would
+ *  otherwise sit off-screen with nothing pointing at them. */
+export const countPendingOutside = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  end: string,
+): Promise<number> => {
+  const { count, error } = await db
+    .from('time_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('approval', 'pending')
+    .or(`work_date.lt.${start},work_date.gt.${end}`);
+  if (error) throw new Error(`pending outside period: ${error.message}`);
+  return count ?? 0;
+};
+
 const dayKey = (sourceName: string, workDate: string) => `${sourceName}|${workDate}`;
 
 export interface CsvRow {

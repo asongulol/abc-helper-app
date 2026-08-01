@@ -4,6 +4,7 @@ import {
   isWeekday,
   lastDayOfMonth,
   nextPeriod,
+  nextUnimportedPeriod,
   payPeriodChoices,
   periodDates,
   periodFor,
@@ -146,5 +147,28 @@ describe('nextPeriod / payPeriodChoices — the runs offered for unpaid sessions
 
   it('round-trips with previousPeriod', () => {
     expect(previousPeriod(nextPeriod('2026-03-05').start).start).toBe('2026-03-01');
+  });
+});
+
+describe('nextUnimportedPeriod — the /time default period', () => {
+  it("last import ended a period → the NEXT one (the owner's 7/15 → 7/16-7/31 case)", () => {
+    expect(nextUnimportedPeriod('2026-07-15', '2026-08-01')).toEqual(periodFor('2026-07-16'));
+  });
+
+  it('last import stopped mid-period → stays on that half-imported period', () => {
+    expect(nextUnimportedPeriod('2026-07-20', '2026-07-25')).toEqual(periodFor('2026-07-16'));
+  });
+
+  it('rolls across a month and a year boundary', () => {
+    expect(nextUnimportedPeriod('2026-07-31', '2026-08-05')).toEqual(periodFor('2026-08-01'));
+    expect(nextUnimportedPeriod('2025-12-31', '2026-01-04')).toEqual(periodFor('2026-01-01'));
+  });
+
+  it('never runs past today — future-dated PTO must not fling the default forward', () => {
+    expect(nextUnimportedPeriod('2026-09-10', '2026-08-01')).toEqual(periodFor('2026-08-01'));
+  });
+
+  it('nothing imported → the arrears default', () => {
+    expect(nextUnimportedPeriod(null, '2026-08-01')).toEqual(previousPeriod('2026-08-01'));
   });
 });

@@ -5,12 +5,14 @@ import { createServiceClient } from '@/db/clients/service';
 import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import { fetchWorkerClientsBatch } from '@/db/queries/sessions';
 import {
+  countPendingOutside,
   fetchContractorOptions,
+  fetchLastImportedDate,
   fetchPeriodEntries,
   fetchRosterLinks,
   fetchUnpaidEntries,
 } from '@/db/queries/time';
-import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { nextUnimportedPeriod, periodFor } from '@/lib/dates/periods';
 import { resolveHolidaysForRange } from '@/lib/pay/holidays';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
@@ -44,21 +46,27 @@ export default async function TimePage({
   const unpaidMode = sp.unpaid === '1';
   const today = new Date().toISOString().slice(0, 10);
 
-  // Default review period = the PRECEDING half-month: payroll runs a half-month
-  // in arrears, so the admin works the last unpaid period, not the in-progress
-  // one. An explicit ?start= deep-link (period picker) overrides. periodFor
-  // reconstitutes end+payDate and throws on malformed input.
-  const period = isIsoDate(sp.start) ? periodFor(sp.start) : previousPeriod(today);
-
   const db = await createServerSupabase();
 
-  const [entries, roster, contractorOptions, holidaysConfig] = await Promise.all([
+  // Default review period = the NEXT UNIMPORTED one: this page's job is getting
+  // the next batch of hours in, so it lands on the period the import will cover
+  // (last import through 7/15 → 7/16-7/31). Falls back to the arrears period on
+  // an empty company. An explicit ?start= deep-link (period picker) overrides;
+  // periodFor reconstitutes end+payDate and throws on malformed input.
+  const period = isIsoDate(sp.start)
+    ? periodFor(sp.start)
+    : nextUnimportedPeriod(await fetchLastImportedDate(db, companyId), today);
+
+  const [entries, roster, contractorOptions, holidaysConfig, pendingElsewhere] = await Promise.all([
     unpaidMode
       ? fetchUnpaidEntries(db, companyId)
       : fetchPeriodEntries(db, companyId, period.start, period.end),
     fetchRosterLinks(db, companyId),
     fetchContractorOptions(db, companyId),
     fetchHolidaysConfig(db, companyId),
+    // The unpaid view already spans every period, so the pointer to it is
+    // only worth counting in period view.
+    unpaidMode ? 0 : countPendingOutside(db, companyId, period.start, period.end),
   ]);
 
   // Each contractor's assigned CLIENT(s) — the invoicing target. Shown per row;
@@ -91,6 +99,7 @@ export default async function TimePage({
       periodDays={stats.periodDays}
       workingDays={stats.workingDays}
       unmatchedNames={unmatchedNames}
+      pendingElsewhere={pendingElsewhere}
       roster={roster}
       contractorOptions={contractorOptions}
       assignedClients={assignedClients}

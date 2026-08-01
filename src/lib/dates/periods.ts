@@ -83,6 +83,22 @@ export const nextPeriod = (dateStr: string): PayPeriod =>
   periodFor(utcMsToIso(isoToUtcMs(periodFor(dateStr).end) + DAY_MS));
 
 /**
+ * The period the admin should land on for importing: the one holding the first
+ * day with no time imported yet. Last import ran through 7/15 → 7/16–7/31; it
+ * ran through 7/20 → still 7/16–7/31 (that period is only half imported).
+ *
+ * Never runs past the period containing `today` — future-dated PTO lands in
+ * time_entries and would otherwise fling the default into September. With
+ * nothing imported at all, falls back to the arrears default.
+ */
+export const nextUnimportedPeriod = (lastImportedDate: string | null, today: string): PayPeriod => {
+  if (!lastImportedDate) return previousPeriod(today);
+  const next = periodFor(utcMsToIso(isoToUtcMs(lastImportedDate) + DAY_MS));
+  const current = periodFor(today);
+  return next.start > current.start ? current : next;
+};
+
+/**
  * Which scheduled runs approved sessions may be paid in: the period that OWNS
  * their dates, then the following `ahead` periods.
  *
