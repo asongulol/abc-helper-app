@@ -1324,6 +1324,9 @@ export const applyGrossOverride = (
  * catch-up marks or frees sessions, which legitimately moves gross, so gross
  * MUST be rebuilt. The override is re-armed against the NEW engine gross, so ↺
  * reverts to what the engine would pay today rather than a stale figure.
+ *
+ * One exception (#84): a zero HA/13th from the engine does NOT overwrite a
+ * non-zero stored one — see the comment on those two lines.
  */
 export const mergeManualColumns = (
   draft: PaymentDraft,
@@ -1340,6 +1343,17 @@ export const mergeManualColumns = (
   const merged: PaymentDraft = {
     ...draft,
     ...(gross ? { gross_php: gross.grossPhp, computed_gross_php: gross.computedGrossPhp } : {}),
+    // #84: a single-row rebuild must never ZERO an allowance the row already
+    // carries. Since 7b35dae the engine pays HA/13th only while a contractor is
+    // active, so approving one straggler entry (or adding an off-cycle item) for
+    // someone benched after the batch was calculated silently wiped a genuinely
+    // earned ₱20,000 — and HA pays in exactly ONE anniversary period a year with
+    // no carry-forward, so that is the whole year gone, not one batch. A
+    // non-zero engine figure still wins (rate/months changes are the engine's);
+    // deliberately clearing an allowance is a hand edit to 0, or the full
+    // Recalculate, which does not merge.
+    health_allowance_php: draft.health_allowance_php || manual.haPhp,
+    thirteenth_month_php: draft.thirteenth_month_php || manual.t13Php,
     pdd_lunch_php: manual.pddPhp,
     bonus_php: manual.bonusPhp,
     misc_items: manual.miscItems,

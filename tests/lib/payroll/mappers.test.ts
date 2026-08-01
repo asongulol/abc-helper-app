@@ -443,7 +443,8 @@ describe('F7: HA-eligible worker with zero approved time in their anniversary pe
     });
     expect(rows[0]?.inactive).toBe(false);
     expect(rows[0]?.result.healthAllowance).toBe(2_000_000);
-    expect(rows[0]?.result.thirteenth).toBeGreaterThan(0);
+    // (monthsWorkedInYear 2026-01-01 → 2026-06-15 = 5 + 14/30) / 12 × ₱15,000
+    expect(rows[0]?.result.thirteenth).toBe(683_333);
   });
 
   it('does NOT build a zero-time row outside the anniversary period', () => {
