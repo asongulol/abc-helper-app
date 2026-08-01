@@ -13,27 +13,46 @@
  * Time Approval table (pending); there is no preview for the API path.
  */
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
+import type { PayPeriod } from '@/lib/dates/periods';
 import { periodFor } from '@/lib/dates/periods';
 import type { HubstaffOrg } from '@/server/actions/hubstaff-sync';
-import { importHubstaffTime, listHubstaffOrgs } from '@/server/actions/hubstaff-sync';
+import {
+  getDefaultHubstaffOrgId,
+  importHubstaffTime,
+  listHubstaffOrgs,
+} from '@/server/actions/hubstaff-sync';
 
 interface OptionBPanelProps {
   companyId: string;
+  /** Window to pull — the next unimported period, resolved server-side. */
+  period: PayPeriod;
   /** Called on a successful import to refresh the approval table. */
   onImported: () => void;
 }
 
-export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
+export const OptionBPanel = ({ companyId, period, onImported }: OptionBPanelProps) => {
   const { notify } = useToast();
   const [orgId, setOrgId] = useState('');
-  const [syncStart, setSyncStart] = useState('');
-  const [syncStop, setSyncStop] = useState('');
+  const [syncStart, setSyncStart] = useState(period.start);
+  const [syncStop, setSyncStop] = useState(period.end);
   // null = unloaded, [] = loaded (zero orgs), [...] = loaded.
   const [orgs, setOrgs] = useState<HubstaffOrg[] | null>(null);
   const [loadingOrgs, startListing] = useTransition();
   const [syncing, startSync] = useTransition();
+
+  // Default to the org the sync actually uses (companies.hubstaff_org_id —
+  // Aaron Anderson E.H.S. LLC), so Import Time works without listing orgs first.
+  useEffect(() => {
+    let alive = true;
+    void getDefaultHubstaffOrgId(companyId).then((id) => {
+      if (alive && id != null) setOrgId((cur) => cur || String(id));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [companyId]);
 
   const listOrgs = () => {
     startListing(async () => {

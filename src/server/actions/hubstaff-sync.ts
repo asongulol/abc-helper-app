@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchHubstaffOrgId } from '@/db/queries/hubstaff';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -63,6 +64,30 @@ export async function listHubstaffOrgs(): Promise<ActionResult<ListHubstaffOrgsR
       ok: false,
       error: `Couldn't list orgs: ${detail} — is the hubstaff-sync function deployed and HUBSTAFF_REFRESH_TOKEN set?`,
     };
+  }
+}
+
+/**
+ * The org the sync will ACTUALLY use for this company (companies.hubstaff_org_id
+ * — Aaron Anderson E.H.S. LLC on this deployment). Used to pre-select the
+ * Organization picker so the admin doesn't have to list + pick an org whose
+ * value the sync ignores anyway.
+ *
+ * ponytail: returns the bare id (null on any failure) — it's a prefill, an
+ * error banner for it would be noise.
+ */
+export async function getDefaultHubstaffOrgId(companyId: unknown): Promise<number | null> {
+  const parsed = uuid('companyId must be a UUID').safeParse(companyId);
+  if (!parsed.success) return null;
+
+  const admin = await getCurrentAdmin();
+  if (!admin) return null;
+  if (!admin.isOwner && !admin.companyIds.includes(parsed.data)) return null;
+
+  try {
+    return await fetchHubstaffOrgId(createServiceClient(), parsed.data);
+  } catch {
+    return null;
   }
 }
 

@@ -47,6 +47,8 @@ interface TimeShellProps {
   periodDays: number;
   workingDays: number;
   unmatchedNames: string[];
+  /** Entries awaiting approval OUTSIDE the shown period — 0 in unpaid mode. */
+  pendingElsewhere: number;
   roster: RosterLink[];
   contractorOptions: ContractorOption[];
   /** worker_id → assigned active CLIENT companies (the invoicing target). */
@@ -61,6 +63,7 @@ export const TimeShell = ({
   periodDays,
   workingDays,
   unmatchedNames,
+  pendingElsewhere,
   roster,
   contractorOptions,
   assignedClients,
@@ -129,18 +132,27 @@ export const TimeShell = ({
             )}
             <button
               type="button"
-              className={unpaidMode ? 'btn sm' : 'btn ghost sm'}
+              className={unpaidMode || pendingElsewhere > 0 ? 'btn sm' : 'btn ghost sm'}
               onClick={toggleUnpaid}
               disabled={navPending}
               aria-busy={navPending}
             >
-              {unpaidMode ? '← Back to period view' : 'Show all unpaid'}
+              {unpaidMode
+                ? '← Back to period view'
+                : pendingElsewhere > 0
+                  ? `Show all unpaid · ${pendingElsewhere} pending elsewhere`
+                  : 'Show all unpaid'}
             </button>
           </div>
         </div>
       </div>
 
-      <CsvImportCard companyId={companyId} roster={roster} onImported={handleRefresh} />
+      <CsvImportCard
+        companyId={companyId}
+        roster={roster}
+        period={period}
+        onImported={handleRefresh}
+      />
 
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginBottom: 4 }}>Add a session (per-session contractors)</h3>
