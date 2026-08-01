@@ -111,6 +111,13 @@ Run it anytime with `pnpm check:prod-migrations`.
 
 ## vercel.json
 
-`vercel.json` pins the Next framework, the Singapore region (`sin1`, closest to
-PH contractors), and security headers (HSTS, nosniff, frame-deny, referrer +
-permissions policy). Adjust the region if your Supabase project is elsewhere.
+`vercel.json` pins the Next framework, the function region, and security headers
+(HSTS, nosniff, frame-deny, referrer + permissions policy).
+
+**Keep the region on the database, not on the users.** `pdx1` is Portland =
+`us-west-2` = the Supabase project's own region. Every page makes 4–15
+*sequential* Supabase round trips (`auth.getUser()`, then one HTTPS call per
+query), so the function↔DB hop is paid over and over while the browser↔function
+hop is paid once. This was `sin1` ("closest to PH contractors") against a
+`us-west-2` database: ~170 ms × every crossing, which is what made the Run
+Payroll tabs take seconds. Move the region only if the Supabase project moves.
