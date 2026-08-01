@@ -83,9 +83,23 @@ export const contractForEdit = (
  */
 export const EditableWorkerStatusSchema = z.enum(['active', 'inactive']);
 
-/** Same sanity bounds as a hire date (2000 → one year out); own wording. */
-const LastDaySchema = IsoDateSchema.refine((d) => hireDateRangeError(d) === null, {
-  message: 'Last day must be between 2000 and one year from now.',
+/** Today in Manila — the eastern-most timezone this app is used from, so a UTC
+ *  server never rejects a browser's own "today" as tomorrow. */
+const todayManila = (): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+
+/**
+ * A last day may not be in the future (#91). The status flip is immediate —
+ * `workers.status` goes 'ended' the moment this is submitted — so a date weeks
+ * out zeroes health allowance / 13th month (present-tense status rule in
+ * `lib/payroll/mappers`) for weeks the contractor is still working, and stops
+ * coverage expecting their hours. Matches the `max={today}` cap
+ * EndEngagementModal already enforces client-side.
+ * ponytail: reject rather than defer. A deferred status flip is the real
+ * feature if give-notice terminations are ever wanted.
+ */
+const LastDaySchema = IsoDateSchema.refine((d) => d >= '2000-01-01' && d <= todayManila(), {
+  message: 'Last day cannot be in the future.',
 });
 
 /** End EVERY engagement — the contractor has left. */
@@ -201,6 +215,36 @@ export const SaveWorkerProfileSchema = z
   })
   .superRefine(requirePayBasisForPhs);
 export type SaveWorkerProfileInput = z.infer<typeof SaveWorkerProfileSchema>;
+
+/**
+ * One company link's editable fields — the profile's "Client engagements" rows.
+ * `status` reuses EditableWorkerStatusSchema, so 'ended' is unrepresentable here
+ * too: this action writes through the service-role client, and a plain typed
+ * signature is erased at runtime, which left `status='ended'` with no `ended_on`
+ * one forged POST away (#81).
+ */
+export const SaveWorkerCompanyLinkSchema = z
+  .object({
+    workerId: uuid(),
+    companyId: uuid(),
+    role: z.string().max(100).nullable(),
+    billRateUsd: z
+      .number()
+      .min(0, 'Rate must be between 0 and 100,000.')
+      .max(100000, 'Rate must be between 0 and 100,000.')
+      .nullable(),
+    sessionRateUsd: z
+      .number()
+      .min(0, 'Rate must be between 0 and 100,000.')
+      .max(100000, 'Rate must be between 0 and 100,000.')
+      .nullable(),
+    contract: ContractTypeSchema,
+    payBasis: PayBasisSchema.nullable().default(null),
+    /** Omit to leave it as-is. */
+    status: EditableWorkerStatusSchema.optional(),
+  })
+  .superRefine(requirePayBasisForPhs);
+export type SaveWorkerCompanyLinkInput = z.infer<typeof SaveWorkerCompanyLinkSchema>;
 
 /** Deactivate/reactivate a worker's link to a company. */
 export const SetLinkStatusSchema = z.object({

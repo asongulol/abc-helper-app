@@ -95,11 +95,18 @@ export function PayTab({
             <Field id="pp-link-status" label="Assignment status">
               {/* Ending is a workflow — it closes rates and coverage targets as
                   of a last day this form can't name — so an ended link reads as
-                  text here rather than as an option nobody may pick. */}
+                  text here rather than as an option nobody may pick.
+                  <output>, not <p>: Field's <label htmlFor> needs a labelable
+                  element, and <output> is the one that renders as plain text
+                  (#95C). A <p> silently dropped the association. */}
               {form.linkStatus === 'ended' ? (
-                <p id="pp-link-status" className="sub" style={{ margin: '6px 0 0' }}>
+                <output
+                  id="pp-link-status"
+                  className="sub"
+                  style={{ margin: '6px 0 0', display: 'block' }}
+                >
                   Ended — reactivate from the Contractors roster.
-                </p>
+                </output>
               ) : (
                 <select
                   id="pp-link-status"
@@ -208,9 +215,14 @@ export function PayTab({
               )}
               <Field id={`eng-status-${e.companyId}`} label="Status">
                 {e.status === 'ended' ? (
-                  <p id={`eng-status-${e.companyId}`} className="sub" style={{ margin: '6px 0 0' }}>
+                  // <output> for the same reason as the field above (#95C).
+                  <output
+                    id={`eng-status-${e.companyId}`}
+                    className="sub"
+                    style={{ margin: '6px 0 0', display: 'block' }}
+                  >
                     Ended
-                  </p>
+                  </output>
                 ) : (
                   <select
                     id={`eng-status-${e.companyId}`}

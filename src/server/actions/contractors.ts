@@ -28,10 +28,9 @@ import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   AddContractorSchema,
-  type ContractType,
   EndAssignmentSchema,
   HireContractorSchema,
-  type PayBasis,
+  SaveWorkerCompanyLinkSchema,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
   TerminateContractorSchema,
@@ -256,19 +255,36 @@ export async function terminateContractor(args: unknown): Promise<ActionResult> 
 
   try {
     const db = await createServerSupabase();
+    const svc = createServiceClient();
 
     // This ends links at EVERY company, so a company-scoped admin needs access
     // to all of them — the per-company check the other actions do, widened to
     // match the blast radius. Read on the SERVICE client: through RLS the list
     // is a subset of admin.companyIds by construction and the guard below can
     // never fire (#82).
-    const links = await fetchWorkerLinks(createServiceClient(), input.workerId);
+    const links = await fetchWorkerLinks(svc, input.workerId);
     const companyIds = links.map((l) => l.companyId);
     if (!admin.isOwner && companyIds.some((id) => !admin.companyIds.includes(id))) {
       return {
         ok: false,
         error: 'This contractor is assigned to a company you cannot access — ask an owner.',
       };
+    }
+
+    // Already terminated: endEngagement skips ended links and setWorkerStatus
+    // refuses an ended row, so everything below is a no-op — an `ok` would only
+    // add an audit row claiming a last day nothing wrote. Refuse like
+    // endAssignment does. Read on the service client, same reason as the links.
+    // NB: this is the WORKER's status, not the links' — someone between
+    // assignments has every link ended while `workers.status` is 'inactive', and
+    // terminating them is exactly the path #95A asked for.
+    const { data: worker } = await svc
+      .from('workers')
+      .select('status')
+      .eq('id', input.workerId)
+      .maybeSingle();
+    if (worker?.status === 'ended') {
+      return { ok: false, error: 'That contractor has already been terminated.' };
     }
 
     await endEngagement(db, {
@@ -279,7 +295,7 @@ export async function terminateContractor(args: unknown): Promise<ActionResult> 
     await setWorkerStatus(db, input.workerId, 'ended');
     // Service client: worker_tools holds encrypted credentials and denies the
     // admin role, same reason withdrawOffer reaches for it.
-    await clearWorkerTools(createServiceClient(), input.workerId);
+    await clearWorkerTools(svc, input.workerId);
 
     await logEvent({
       // audit_log's INSERT policy is `is_company_admin(company_id)`, and
@@ -765,7 +781,15 @@ export async function setWorkerPhoto(args: {
       .update({ photo_url: args.path })
       .eq('id', args.workerId);
     if (error) return { ok: false, error: error.message };
+    // A NULL company_id collapses audit_log's INSERT policy to is_owner(), so
+    // the row silently vanished for every scoped admin (#93). This action takes
+    // no companyId, so name one the worker is actually linked to AND the caller
+    // can see. ponytail: first such link wins.
+    const links = await fetchWorkerLinks(svc, args.workerId);
     await logEvent({
+      companyId:
+        links.find((l) => admin.isOwner || admin.companyIds.includes(l.companyId))?.companyId ??
+        null,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { photo: true },
@@ -853,56 +877,64 @@ export async function getWorkerCompanies(args: {
   }
 }
 
-/** Update one company link's position / bill rate / contract / status (partial). */
-export async function saveWorkerCompanyLink(args: {
-  workerId: string;
-  companyId: string;
-  role: string | null;
-  billRateUsd: number | null;
-  sessionRateUsd: number | null;
-  contract: ContractType;
-  payBasis: PayBasis | null;
-  /** Omit to leave it as-is. Ending goes through endAssignment — see
-   *  EditableWorkerStatusSchema for why a status field can't do it. */
-  status?: 'active' | 'inactive';
-}): Promise<ActionResult> {
+/**
+ * Update one company link's position / bill rate / contract / status (partial).
+ *
+ * Zod-parsed like every other action here: it was plain-typed, and TypeScript is
+ * erased at runtime, so a forged POST could put `status='ended'` on a
+ * service-role (RLS-bypassing) update with no `ended_on`, no rate close and no
+ * coverage close — the exact #79 drift, and the time-import gate would never see
+ * it (#81). Ending goes through endAssignment; see EditableWorkerStatusSchema.
+ */
+export async function saveWorkerCompanyLink(args: unknown): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = SaveWorkerCompanyLinkSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
   // This action writes via the service-role client (RLS bypassed), so the
   // per-company scope must be enforced here — same guard as addContractor /
   // saveWorkerProfile / hireContractor.
-  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
-  }
-  // A PHS engagement with no pay_basis is unpayable (payModelFor → 'unset' →
-  // the worker is silently dropped from payroll). The Add/Hire/Profile paths
-  // enforce this via the requirePayBasisForPhs zod refinement; this plain-typed
-  // action needs the equivalent runtime guard.
-  if (args.contract === 'PHS' && args.payBasis == null) {
-    return {
-      ok: false,
-      error: 'Choose a pay basis (per hour or per session) for a per-hour/session contract.',
-    };
   }
   try {
     const svc = createServiceClient();
     const { error } = await svc
       .from('worker_companies')
       .update({
-        role: args.role,
-        bill_rate_usd: args.billRateUsd,
-        session_rate_usd: args.sessionRateUsd,
-        contract: args.contract,
-        pay_basis: args.payBasis,
-        ...(args.status ? { status: args.status } : {}),
+        role: input.role,
+        bill_rate_usd: input.billRateUsd,
+        session_rate_usd: input.sessionRateUsd,
+        contract: input.contract,
+        pay_basis: input.payBasis,
       })
-      .eq('worker_id', args.workerId)
-      .eq('company_id', args.companyId);
+      .eq('worker_id', input.workerId)
+      .eq('company_id', input.companyId);
     if (error) return { ok: false, error: error.message };
+    // Status in its own gated write, same as updateWorkerLink. RLS is bypassed
+    // here, so nothing else stops a stale tab posting 'active' over a link
+    // someone ended in another tab — reviving a departed engagement with
+    // `ended_on` still set (#88, via the likelier editor). Reviving is
+    // reactivateWorkerLink's job; it clears `ended_on` too. The rest of the
+    // patch lands either way, so editing an ended link's role still works.
+    if (input.status) {
+      const { error: sErr } = await svc
+        .from('worker_companies')
+        .update({ status: input.status })
+        .eq('worker_id', input.workerId)
+        .eq('company_id', input.companyId)
+        .neq('status', 'ended');
+      if (sErr) return { ok: false, error: sErr.message };
+    }
     await logEvent({
+      companyId: input.companyId,
       action: 'edit_contractor',
-      entity: args.workerId,
-      detail: { engagement: args.companyId },
+      entity: input.workerId,
+      detail: { engagement: input.companyId },
     });
     revalidatePath('/contractors');
     return { ok: true };
@@ -942,6 +974,7 @@ export async function assignWorkerCompany(args: {
     });
     if (error) return { ok: false, error: error.message };
     await logEvent({
+      companyId: args.companyId,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { assigned: args.companyId },
@@ -987,6 +1020,7 @@ export async function unassignWorkerCompany(args: {
       .eq('company_id', args.companyId);
     if (error) return { ok: false, error: error.message };
     await logEvent({
+      companyId: args.companyId,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { unassigned: args.companyId },

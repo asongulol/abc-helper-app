@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   endEngagement,
   hasPayOutstanding,
+  reactivateWorkerLink,
   setWorkerStatus,
   updateWorkerLink,
 } from '@/db/queries/workers';
@@ -19,7 +20,7 @@ type Call = {
   filters: Record<string, unknown>;
 };
 
-const stubDb = (opts: { endedCompanyIds?: string[] } = {}) => {
+const stubDb = (opts: { endedCompanyIds?: string[]; endedOn?: string } = {}) => {
   const calls: Call[] = [];
   const make = (rec: Call): Chain => {
     const chain = Promise.resolve({
@@ -36,6 +37,8 @@ const stubDb = (opts: { endedCompanyIds?: string[] } = {}) => {
     chain.is = (col: string, val: unknown) => record(`${col} is`, val);
     chain.lte = (col: string, val: unknown) => record(`${col}<=`, val);
     chain.select = () => chain;
+    chain.maybeSingle = () =>
+      Promise.resolve({ data: { ended_on: opts.endedOn ?? null }, error: null });
     return chain;
   };
   const db = {
@@ -170,6 +173,40 @@ describe('updateWorkerLink — a stale form cannot revive a departed link', () =
   });
 });
 
+describe('reactivateWorkerLink — reactivation is the inverse of a termination', () => {
+  // #95 B: terminate by mistake → Reactivate brought the link back but left the
+  // rate and the coverage target closed as of the last day, so the next payroll
+  // skipped the reinstated contractor for "no rate".
+  it('reopens the rate and coverage target closed on that last day', async () => {
+    const { db, calls } = stubDb({ endedOn: '2026-07-31' });
+    await reactivateWorkerLink(db, 'w1', 'co-1');
+
+    expect(find(calls, 'worker_companies')?.patch).toEqual({ status: 'active', ended_on: null });
+    expect(find(calls, 'rates')?.patch).toEqual({ effective_end: null });
+    expect(find(calls, 'rates')?.filters).toEqual({
+      worker_id: 'w1',
+      company_id: 'co-1',
+      // Only the rows the termination stamped — a rate a raise closed earlier
+      // stays closed.
+      effective_end: '2026-07-31',
+    });
+    expect(find(calls, 'coverage_targets')?.patch).toEqual({ effective_to: null });
+    expect(find(calls, 'coverage_targets')?.filters).toEqual({
+      worker_id: 'w1',
+      company_id: 'co-1',
+      effective_to: '2026-07-31',
+    });
+  });
+
+  it('reopens nothing when the link carries no last day', async () => {
+    const { db, calls } = stubDb();
+    await reactivateWorkerLink(db, 'w1', 'co-1');
+
+    expect(all(calls, 'rates')).toHaveLength(0);
+    expect(all(calls, 'coverage_targets')).toHaveLength(0);
+  });
+});
+
 describe('setWorkerStatus — ended is terminal', () => {
   // #88 path 1: a second admin clicking "End…" on someone already terminated
   // dropped them to 'inactive' — back on the roster as "between assignments",
@@ -183,15 +220,24 @@ describe('setWorkerStatus — ended is terminal', () => {
   });
 });
 
-/** Reads only, so the stub just answers per table. */
+/** Reads only, so the stub just answers per table — and records the columns each
+ *  read asks for, since #90's fix depends on company_id / period_start being in
+ *  the projection at all. */
 type ReadChain = Promise<{ data: unknown[] | null; error: null; count: number | null }> &
   Record<string, unknown>;
 
-const payStub = (fixture: {
-  links?: { ended_on: string | null }[];
-  payments?: { paid_at: string | null; pay_periods: { period_end: string } | null }[];
-  unpaidSessions?: number;
-}) => {
+type PayLink = { company_id: string; ended_on: string | null };
+type PayRow = {
+  paid_at: string | null;
+  company_id: string;
+  pay_periods: { period_start: string; period_end: string } | null;
+};
+
+const payStub = (fixture: { links?: PayLink[]; payments?: PayRow[]; unpaidSessions?: number }) => {
+  const selects: Record<string, string> = {};
+  /** Filters per table — the stub answers with the fixture whatever it is asked,
+   *  so a dropped scope has to fail an assertion or it fails nothing (#94). */
+  const filters: Record<string, Record<string, unknown>> = {};
   const answer = (table: string) => {
     if (table === 'worker_companies')
       return { data: fixture.links ?? [], error: null, count: null };
@@ -201,88 +247,188 @@ const payStub = (fixture: {
   const db = {
     from: (table: string) => {
       const chain = Promise.resolve(answer(table)) as unknown as ReadChain;
-      chain.select = () => chain;
-      chain.eq = () => chain;
-      chain.is = () => chain;
+      const seen = filters[table] ?? {};
+      filters[table] = seen;
+      const record = (col: string, val: unknown) => {
+        seen[col] = val;
+        return chain;
+      };
+      chain.select = (cols: string) => {
+        selects[table] = cols;
+        return chain;
+      };
+      chain.eq = record;
+      chain.is = (col: string, val: unknown) => record(`${col} is`, val);
       return chain;
     },
   };
-  return db as unknown as SupabaseClient<Database>;
+  return { db: db as unknown as SupabaseClient<Database>, selects, filters };
 };
 
+const outstanding = (fixture: Parameters<typeof payStub>[0]) =>
+  hasPayOutstanding(payStub(fixture).db, 'w1');
+
+const CO_A = 'co-a';
+const CO_B = 'co-b';
 const LAST_DAY = '2026-07-15';
-const finalPay = { paid_at: '2026-07-31T00:00:00Z', pay_periods: { period_end: '2026-07-31' } };
+/** Semi-monthly period that CONTAINS the 15th — the one that owes the final stub. */
+const finalPay = {
+  paid_at: '2026-07-31T00:00:00Z',
+  company_id: CO_A,
+  pay_periods: { period_start: '2026-07-01', period_end: '2026-07-15' },
+};
+const endedAt = (companyId: string, ended_on: string | null) => ({
+  company_id: companyId,
+  ended_on,
+});
 
 describe('hasPayOutstanding — access outlives the last day, not the last payment', () => {
   it('keeps access while a payment has not landed', async () => {
     expect(
-      await hasPayOutstanding(
-        payStub({
-          links: [{ ended_on: LAST_DAY }],
-          payments: [finalPay, { paid_at: null, pay_periods: { period_end: '2026-08-15' } }],
-        }),
-        'w1',
-      ),
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY)],
+        payments: [
+          finalPay,
+          {
+            paid_at: null,
+            company_id: CO_A,
+            pay_periods: { period_start: '2026-08-01', period_end: '2026-08-15' },
+          },
+        ],
+      }),
     ).toBe(true);
   });
 
   // The reason this is not a payments-only check. Ended on the 15th, payroll for
   // that period has not run, so NO row exists yet to be found unpaid.
   it('keeps access when the final period has not been run at all', async () => {
-    expect(
-      await hasPayOutstanding(payStub({ links: [{ ended_on: LAST_DAY }], payments: [] }), 'w1'),
-    ).toBe(true);
+    expect(await outstanding({ links: [endedAt(CO_A, LAST_DAY)], payments: [] })).toBe(true);
   });
 
   it('keeps access when every landed payment predates the last day', async () => {
     expect(
-      await hasPayOutstanding(
-        payStub({
-          links: [{ ended_on: LAST_DAY }],
-          payments: [
-            { paid_at: '2026-06-30T00:00:00Z', pay_periods: { period_end: '2026-06-30' } },
-          ],
-        }),
-        'w1',
-      ),
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY)],
+        payments: [
+          {
+            paid_at: '2026-06-30T00:00:00Z',
+            company_id: CO_A,
+            pay_periods: { period_start: '2026-06-16', period_end: '2026-06-30' },
+          },
+        ],
+      }),
     ).toBe(true);
   });
 
   // The #79 drift: 'ended' workers whose link was never stamped. No last day to
   // prove final pay against, so never lock them out on a guess.
   it('keeps access when no link carries an end date', async () => {
-    expect(
-      await hasPayOutstanding(payStub({ links: [{ ended_on: null }], payments: [] }), 'w1'),
-    ).toBe(true);
+    expect(await outstanding({ links: [endedAt(CO_A, null)], payments: [] })).toBe(true);
   });
 
   it('keeps access for approved sessions no period covers', async () => {
     expect(
-      await hasPayOutstanding(
-        payStub({ links: [{ ended_on: LAST_DAY }], payments: [finalPay], unpaidSessions: 2 }),
-        'w1',
-      ),
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY)],
+        payments: [finalPay],
+        unpaidSessions: 2,
+      }),
     ).toBe(true);
   });
 
-  it('uses the LATEST end date, so the earlier-ended link cannot call it settled', async () => {
+  // #90, false negative 1. Company A ended in May and its final stub was never
+  // calculated, so A has NO payment row at all; company B's later final pay
+  // landed. A global "any landed payment with period_end >= the latest last day"
+  // read B's payment as settling A too, and locked the contractor out of the
+  // portal while A still owed the whole May stub.
+  it('does not let one company payment settle another company last day', async () => {
     expect(
-      await hasPayOutstanding(
-        payStub({
-          links: [{ ended_on: '2026-05-31' }, { ended_on: '2026-08-31' }],
-          payments: [finalPay],
-        }),
-        'w1',
-      ),
+      await outstanding({
+        links: [endedAt(CO_A, '2026-05-31'), endedAt(CO_B, '2026-08-31')],
+        payments: [
+          {
+            paid_at: '2026-09-05T00:00:00Z',
+            company_id: CO_B,
+            pay_periods: { period_start: '2026-08-16', period_end: '2026-08-31' },
+          },
+        ],
+      }),
     ).toBe(true);
+  });
+
+  // #90, false negative 2. Off-cycle items land as an extra earnings line on the
+  // worker's CURRENT OPEN period — one that starts AFTER the last day. It is not
+  // the final stub, so it must not read as one.
+  it('does not let a later period at the same company settle the last day', async () => {
+    expect(
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY)],
+        payments: [
+          {
+            paid_at: '2026-08-15T00:00:00Z',
+            company_id: CO_A,
+            pay_periods: { period_start: '2026-08-01', period_end: '2026-08-15' },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it('settles each ended engagement against its own company period', async () => {
+    expect(
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY), endedAt(CO_B, '2026-08-31')],
+        payments: [
+          finalPay,
+          {
+            paid_at: '2026-09-05T00:00:00Z',
+            company_id: CO_B,
+            pay_periods: { period_start: '2026-08-16', period_end: '2026-08-31' },
+          },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it('ends access once the pay covering the last day has landed and nothing is left', async () => {
     expect(
-      await hasPayOutstanding(
-        payStub({ links: [{ ended_on: LAST_DAY }], payments: [finalPay], unpaidSessions: 0 }),
-        'w1',
-      ),
+      await outstanding({
+        links: [endedAt(CO_A, LAST_DAY)],
+        payments: [finalPay],
+        unpaidSessions: 0,
+      }),
     ).toBe(false);
+  });
+
+  // The company + period scoping only works if those columns are read at all; a
+  // projection that drops one leaves every comparison against undefined.
+  it('reads the company and the period bounds it scopes on', async () => {
+    const { db, selects } = payStub({ links: [endedAt(CO_A, LAST_DAY)], payments: [finalPay] });
+    await hasPayOutstanding(db, 'w1');
+
+    expect(selects.worker_companies).toContain('company_id');
+    expect(selects.payments).toContain('company_id');
+    expect(selects.payments).toContain('period_start');
+    expect(selects.payments).toContain('period_end');
+  });
+
+  // #94: deleting `.eq('worker_id', workerId)` from any of these three reads used
+  // to pass the entire suite, because every fixture above is already one worker's.
+  // In prod each read is company-wide without it: ANY colleague's unpaid payment
+  // holds EVERY departed contractor's portal open, and `lastDay` gets measured
+  // against somebody else's link.
+  it('scopes all three reads to the one worker', async () => {
+    const { db, filters } = payStub({ links: [endedAt(CO_A, LAST_DAY)], payments: [finalPay] });
+    await hasPayOutstanding(db, 'w1');
+
+    expect(filters.worker_companies).toEqual({ worker_id: 'w1' });
+    expect(filters.payments).toEqual({ worker_id: 'w1' });
+    // Sessions count "approved but not yet paid". Drop either half and rows that
+    // were never owed keep the account open forever.
+    expect(filters.service_sessions).toEqual({
+      worker_id: 'w1',
+      approval: 'approved',
+      'paid_at is': null,
+    });
   });
 });

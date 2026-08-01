@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { hireDateRangeError, SaveWorkerProfileSchema } from '@/types/schemas/contractors';
+import {
+  hireDateRangeError,
+  SaveWorkerProfileSchema,
+  TerminateContractorSchema,
+} from '@/types/schemas/contractors';
 
 // Valid v4 UUID — Zod v4 .uuid()-style checks elsewhere reject the all-1s
 // placeholder, but this module's `uuid()` helper accepts any 8-4-4-4-12 hex id.
@@ -69,6 +73,42 @@ describe('SaveWorkerProfileSchema — Finding #016.2 human error messages', () =
     expect(r.success).toBe(false);
     const r2 = SaveWorkerProfileSchema.safeParse({ ...base, hireDate: '2099-12-31' });
     expect(r2.success).toBe(false);
+  });
+});
+
+// 'ended' closes rates and coverage as of a last day a status field has nowhere
+// to put, so it is unrepresentable in anything a form posts (#81). An already
+// ended link omits the field instead of posting its own status back.
+describe('EditableWorkerStatusSchema — a form may not write "ended"', () => {
+  it("rejects linkStatus 'ended'", () => {
+    expect(SaveWorkerProfileSchema.safeParse({ ...base, linkStatus: 'ended' }).success).toBe(false);
+  });
+
+  it('accepts the field omitted entirely', () => {
+    const { linkStatus: _omitted, ...noStatus } = base;
+    expect(SaveWorkerProfileSchema.safeParse(noStatus).success).toBe(true);
+  });
+});
+
+// #91: the modal caps max={today} client-side only, while the status flip is
+// immediate — a last day weeks out zeroes HA/13th for weeks still worked.
+describe('LastDaySchema (#91)', () => {
+  const iso = (offsetDays: number) =>
+    new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+
+  it('rejects a future last day that the old one-year bound let through', () => {
+    const r = TerminateContractorSchema.safeParse({ workerId: ID, lastDay: iso(30) });
+    expect(r.success).toBe(false);
+    expect(r.success ? '' : r.error.issues[0]?.message).toBe('Last day cannot be in the future.');
+  });
+
+  it('accepts today and a past last day', () => {
+    expect(TerminateContractorSchema.safeParse({ workerId: ID, lastDay: iso(0) }).success).toBe(
+      true,
+    );
+    expect(TerminateContractorSchema.safeParse({ workerId: ID, lastDay: iso(-45) }).success).toBe(
+      true,
+    );
   });
 });
 

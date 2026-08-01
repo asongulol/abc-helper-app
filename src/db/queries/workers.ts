@@ -428,12 +428,26 @@ export const updateWorkerLink = async (
  * state that closed neither rates nor coverage targets, which is what left 6
  * ended workers on active links (#79). Ending now has exactly one home,
  * `endEngagement`, which closes all three as of the chosen last day.
+ *
+ * So this reopens all three too. Reviving only the link left the rate and the
+ * coverage target closed, and the next payroll skipped the reinstated
+ * contractor for "no rate" (#95) until an admin re-typed both by hand.
  */
 export const reactivateWorkerLink = async (
   db: Db,
   workerId: string,
   companyId: string,
 ): Promise<void> => {
+  // Read the last day before clearing it — it is what identifies the rows the
+  // termination closed.
+  const { data: link, error: rErr } = await db
+    .from('worker_companies')
+    .select('ended_on')
+    .eq('worker_id', workerId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  if (rErr) throw new Error(`worker_companies ended_on: ${rErr.message}`);
+
   const { error: wErr } = await db
     .from('workers')
     .update({ status: 'active' as const })
@@ -446,6 +460,34 @@ export const reactivateWorkerLink = async (
     .eq('worker_id', workerId)
     .eq('company_id', companyId);
   if (lErr) throw new Error(`worker_companies status update: ${lErr.message}`);
+
+  const lastDay = link?.ended_on;
+  if (!lastDay) return;
+
+  // Status first, rates last: if a reopen fails the link is back but the rate is
+  // still closed — visible as PayrollShell's "skipped (no rate)", which is the
+  // behaviour that existed before this. The other order would leave an open rate
+  // on an ended link, which is the #75 recalc hazard.
+  //
+  // ponytail: matched by date, so a rate a RAISE closed on that same date
+  // reopens too — the one-open-rate-per-(worker,company) partial unique index
+  // then rejects the write loudly. Upgrade path if that ever fires: have
+  // endEngagement record which rows it closed.
+  const { error: rateErr } = await db
+    .from('rates')
+    .update({ effective_end: null })
+    .eq('worker_id', workerId)
+    .eq('company_id', companyId)
+    .eq('effective_end', lastDay);
+  if (rateErr) throw new Error(`rates reopen: ${rateErr.message}`);
+
+  const { error: targetErr } = await db
+    .from('coverage_targets')
+    .update({ effective_to: null })
+    .eq('worker_id', workerId)
+    .eq('company_id', companyId)
+    .eq('effective_to', lastDay);
+  if (targetErr) throw new Error(`coverage_targets reopen: ${targetErr.message}`);
 };
 
 export type EndEngagementResult = {
@@ -579,11 +621,12 @@ export const fetchWorkerLinks = async (db: Db, workerId: string): Promise<Worker
  *
  * Three ways pay is still owed. Access ends only when ALL of them are false:
  *   1. a payment row that hasn't landed (`paid_at IS NULL` — draft/queued/failed)
- *   2. no landed payment covering the last day yet. The final period may simply not
- *      have been run, so the row that will owe them does not exist to check. This is
- *      what makes the rule safe the day after a termination: end someone on the 15th,
- *      payroll runs on the 30th, and the gap between is exactly when they most need
- *      the portal — a payments-only check would lock them out for all of it.
+ *   2. an ended engagement whose last day no landed payment covers yet. The final
+ *      period may simply not have been run, so the row that will owe them does not
+ *      exist to check. This is what makes the rule safe the day after a termination:
+ *      end someone on the 15th, payroll runs on the 30th, and the gap between is
+ *      exactly when they most need the portal — a payments-only check would lock
+ *      them out for all of it.
  *   3. approved sessions not yet paid — off-cycle work no period covers.
  *
  * Every unknown resolves to "still owed". Locking someone out early is the expensive
@@ -597,33 +640,65 @@ export const fetchWorkerLinks = async (db: Db, workerId: string): Promise<Worker
 export const hasPayOutstanding = async (db: Db, workerId: string): Promise<boolean> => {
   const { data: links, error: lErr } = await db
     .from('worker_companies')
-    .select('ended_on')
+    .select('company_id, ended_on')
     .eq('worker_id', workerId);
   if (lErr) throw new Error(`worker_companies ended_on: ${lErr.message}`);
 
-  // Latest last day across every engagement — the date final pay has to cover.
-  // Null when no link was ever stamped (an 'ended' worker from the #79 drift,
+  // One obligation per ended engagement: debts are per-company (`payments` and
+  // `pay_periods` both carry `company_id`), so each company owes pay through ITS
+  // OWN last day, not through the latest one anywhere (#90).
+  //
+  // Empty when no link was ever stamped (an 'ended' worker from the #79 drift,
   // written before endEngagement existed): nothing to prove final pay against,
   // so keep access rather than guess.
-  const lastDay = (links ?? [])
-    .map((l) => l.ended_on)
-    .filter((d): d is string => d !== null)
-    .sort()
-    .at(-1);
-  if (!lastDay) return true;
+  const owed = (links ?? []).filter(
+    (l): l is { company_id: string; ended_on: string } => l.ended_on !== null,
+  );
+  if (owed.length === 0) return true;
 
   const { data: pays, error: pErr } = await db
     .from('payments')
-    .select('paid_at, pay_periods(period_end)')
+    .select('paid_at, company_id, pay_periods(period_start, period_end)')
     .eq('worker_id', workerId);
   if (pErr) throw new Error(`payments outstanding: ${pErr.message}`);
   const rows = pays ?? [];
 
+  // ponytail: `paid_at` means SENT, not landed — wisePoll deliberately leaves the
+  // DB untouched for cancelled / funds_refunded / bounced_back (wise/service.ts),
+  // so a bounced final transfer still reads as paid here (#90 B). There is no DB
+  // signal to check; the fix belongs where the signal goes missing (have the poll
+  // record the failure), not in a guess here. Self-heals when an admin re-drafts.
   if (rows.some((p) => p.paid_at === null)) return true;
-  // Everything left has landed, so covering the last day is enough to call it
-  // final. Both are date columns ('YYYY-MM-DD'), which compare correctly as text.
-  if (!rows.some((p) => (p.pay_periods?.period_end ?? '') >= lastDay)) return true;
 
+  // Everything left has landed, but a landed payment settles exactly ONE company's
+  // last day, and only if its period actually CONTAINS that day. Before this,
+  // any payment with `period_end >= lastDay` settled every engagement at once:
+  // another company's final pay, or an off-cycle line riding the worker's current
+  // OPEN period (which ends after the last day by construction), locked out a
+  // contractor whose real final stub was never run (#90). Date columns
+  // ('YYYY-MM-DD') compare correctly as text.
+  //
+  // ponytail: containment means a final stub genuinely paid as an off-cycle line
+  // on a later period never settles, so access stays open. That is the cheap
+  // direction — a read-only view of their own rows outliving the money beats
+  // locking out someone still owed.
+  const settled = (l: { company_id: string; ended_on: string }) =>
+    rows.some((p) => {
+      const period = p.pay_periods;
+      return (
+        p.company_id === l.company_id &&
+        period != null &&
+        period.period_start <= l.ended_on &&
+        period.period_end >= l.ended_on
+      );
+    });
+  if (!owed.every(settled)) return true;
+
+  // ponytail: this covers approved SESSIONS only. Approved `time_entries` have no
+  // unpaid marker at all, so the check above is their only protection — company +
+  // period scoping is what makes it hold now, but hours approved INTO a period
+  // that already ran and landed are still invisible here. Upgrade path: stamp
+  // time_entries paid the way service_sessions are, then count them here too.
   const { count, error: sErr } = await db
     .from('service_sessions')
     .select('id', { count: 'exact', head: true })
@@ -632,6 +707,73 @@ export const hasPayOutstanding = async (db: Db, workerId: string): Promise<boole
     .is('paid_at', null);
   if (sErr) throw new Error(`unpaid sessions: ${sErr.message}`);
   return (count ?? 0) > 0;
+};
+
+/**
+ * Revoke the portal login of every departed contractor whose money has landed.
+ *
+ * This is what makes "access ends when the money lands" true at the DB rather
+ * than in this app's resolver. `my_worker_id()` — the helper every contractor
+ * RLS policy resolves through — reads `contractor_logins.status = 'active'` and
+ * nothing else, so flipping that column is the whole enforcement. Same value and
+ * same column as revokePortalLogin: manual and automatic revocation must be
+ * indistinguishable to RLS.
+ *
+ * Why a SWEEP and not a hook on the payment that lands: the exposed client is
+ * portal.abbilabs.com and raw PostgREST, neither of which runs a line of this
+ * app. A flip at resolve time only fires for someone who visits HERE, which the
+ * departed contractor never has to do; a flip inside markPaid/wisePoll only
+ * fires for money moved HERE, and the legacy apps stamp `paid_at` on the same
+ * shared DB (#85). A scheduled pass over the DB state is the only trigger that
+ * does not depend on which app acted.
+ *
+ * Direction is deliberate — the predicate is only ever asked to END access:
+ *   * candidates are 'ended' workers with a still-active login, so an active
+ *     contractor can never be touched;
+ *   * `hasPayOutstanding` resolves every unknown to "still owed" and this only
+ *     revokes on a hard false;
+ *   * any query error throws and the sweep stops WITHOUT writing further —
+ *     tomorrow's tick retries. Locking out someone still owed is the expensive
+ *     mistake; a late revocation is not.
+ * It never restores: it cannot tell its own revocation from an admin's
+ * deliberate one, and resurrecting the latter would be a silent undo of a
+ * security decision. Restoration is migration 39's trigger (reactivation) and
+ * restorePortalLogin (everything else).
+ *
+ * Takes the SERVICE client — contractor_logins has one RLS policy and it is
+ * SELECT-only, so this write lands as 0 rows under any user session.
+ */
+export const sunsetPortalLogins = async (
+  db: Db,
+): Promise<{ checked: number; revoked: string[] }> => {
+  const { data: ended, error: wErr } = await db.from('workers').select('id').eq('status', 'ended');
+  if (wErr) throw new Error(`ended workers: ${wErr.message}`);
+  const endedIds = (ended ?? []).map((w) => w.id);
+  if (endedIds.length === 0) return { checked: 0, revoked: [] };
+
+  const { data: logins, error: lErr } = await db
+    .from('contractor_logins')
+    .select('worker_id')
+    .eq('status', 'active')
+    .in('worker_id', endedIds);
+  if (lErr) throw new Error(`active contractor logins: ${lErr.message}`);
+
+  // ponytail: serial, and it re-reads the same worker_companies/payments rows per
+  // worker. The candidate set is "departed contractors who still have a login" —
+  // single digits per night. Upgrade path if that ever stops being true: batch the
+  // three reads once and pass slices to a pure predicate.
+  const revoked: string[] = [];
+  for (const { worker_id } of logins ?? []) {
+    if (await hasPayOutstanding(db, worker_id)) continue;
+    const { error } = await db
+      .from('contractor_logins')
+      .update({ status: 'revoked' })
+      .eq('worker_id', worker_id)
+      .eq('status', 'active');
+    if (error) throw new Error(`portal login revoke: ${error.message}`);
+    revoked.push(worker_id);
+  }
+  return { checked: (logins ?? []).length, revoked };
 };
 
 /** Wipe stored tool credentials — a terminated contractor can't be handed them. */

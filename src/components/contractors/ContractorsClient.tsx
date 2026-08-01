@@ -295,7 +295,14 @@ export function ContractorsClient({
           >
             Edit
           </Link>
-          {r._statusLabel === 'active' ? (
+          {/* Terminate keys off the WORKER's status, not the row label: someone
+              between assignments reads 'inactive' (or 'ended' on this company's
+              link) while `workers.status` is still 'inactive', and they used to
+              get Reactivate only — so a contractor who fully quit could never be
+              terminated, never had their tool credentials wiped, and never
+              entered the pay-outstanding portal sunset (#95A). Both buttons show
+              for them; the two states are independent. */}
+          {r.workerStatus !== 'ended' && (
             <button
               type="button"
               className="btn ghost sm"
@@ -310,7 +317,8 @@ export function ContractorsClient({
             >
               Terminate
             </button>
-          ) : (
+          )}
+          {r._statusLabel !== 'active' && (
             <button
               type="button"
               className="btn sm"

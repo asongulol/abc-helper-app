@@ -15,8 +15,21 @@ const CO_B = '22222222-2222-4222-8222-222222222222';
 const WORKER = '33333333-3333-4333-8333-333333333333';
 const LAST_DAY = '2026-07-31';
 
-/** Two distinct client objects, so a test can prove WHICH one a query got. */
-const clients = vi.hoisted(() => ({ rls: { tag: 'rls' }, service: { tag: 'service' } }));
+/** Two distinct client objects, so a test can prove WHICH one a query got. The
+ *  service one also answers the direct table reads/writes these actions make:
+ *  every builder call returns itself and awaiting resolves `state.row`. */
+const clients = vi.hoisted(() => {
+  const state = { row: { status: 'active' } as Record<string, unknown> | null };
+  const chain = () => {
+    const c: Record<string, unknown> = {
+      // biome-ignore lint/suspicious/noThenProperty: a supabase query builder is awaitable at every step — that is the thing being stubbed
+      then: (resolve: (v: unknown) => void) => resolve({ data: state.row, error: null }),
+    };
+    for (const k of ['select', 'update', 'eq', 'neq', 'maybeSingle']) c[k] = () => c;
+    return c;
+  };
+  return { rls: { tag: 'rls' }, service: { tag: 'service', from: () => chain() }, state };
+});
 const q = vi.hoisted(() => ({
   fetchWorkerLinks: vi.fn(),
   endEngagement: vi.fn(),
@@ -37,7 +50,9 @@ vi.mock('@/server/actions/payroll', () => ({ saveRate: vi.fn() }));
 vi.mock('@/server/actions/portal-admin', () => ({ createPortalLogin: vi.fn() }));
 vi.mock('@/db/queries/invoicing', () => ({ fetchActiveClients: vi.fn() }));
 
-const { endAssignment, terminateContractor } = await import('@/server/actions/contractors');
+const { endAssignment, saveWorkerCompanyLink, terminateContractor } = await import(
+  '@/server/actions/contractors'
+);
 
 const scopedTo = (...companyIds: string[]) => {
   admin.current = { email: 'scoped@abckidsny.com', companyIds, isOwner: false };
@@ -49,6 +64,7 @@ const links = (...rows: WorkerLink[]) => {
 beforeEach(() => {
   vi.clearAllMocks();
   q.endEngagement.mockResolvedValue({ endedCompanyIds: [CO_A] });
+  clients.state.row = { status: 'active' };
 });
 
 describe('terminateContractor', () => {
@@ -88,6 +104,52 @@ describe('terminateContractor', () => {
     expect(logEvent).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'contractor.terminated', companyId: CO_A }),
     );
+  });
+
+  // Every write below the guard skips an already-ended row, so this returned
+  // `ok` while doing nothing — and logged an audit row naming a last day that
+  // was never written anywhere.
+  it('refuses a contractor who is already terminated', async () => {
+    scopedTo(CO_A);
+    links({ companyId: CO_A, status: 'ended' });
+    clients.state.row = { status: 'ended' };
+
+    expect(await terminateContractor({ workerId: WORKER, lastDay: LAST_DAY })).toEqual({
+      ok: false,
+      error: 'That contractor has already been terminated.',
+    });
+    expect(q.endEngagement).not.toHaveBeenCalled();
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+});
+
+// #81: this was a plain-typed action spreading `status` into a service-role
+// (RLS-bypassing) update. TypeScript is erased at runtime, so 'ended' — a valid
+// DB enum value — was one forged POST away from a link with no `ended_on`: no
+// rate close, no coverage close, and invisible to the time-import gate.
+describe('saveWorkerCompanyLink', () => {
+  const args = {
+    workerId: WORKER,
+    companyId: CO_A,
+    role: 'Billing Specialist',
+    billRateUsd: 25,
+    sessionRateUsd: null,
+    contract: 'FT',
+    payBasis: null,
+  };
+
+  it("rejects status:'ended' at the trust boundary", async () => {
+    scopedTo(CO_A);
+
+    expect((await saveWorkerCompanyLink({ ...args, status: 'ended' })).ok).toBe(false);
+    expect(logEvent).not.toHaveBeenCalled();
+  });
+
+  it('accepts the same payload with the status omitted', async () => {
+    scopedTo(CO_A);
+
+    expect((await saveWorkerCompanyLink(args)).ok).toBe(true);
+    expect(logEvent).toHaveBeenCalledWith(expect.objectContaining({ companyId: CO_A }));
   });
 });
 
