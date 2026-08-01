@@ -3,6 +3,7 @@ import type { RosterWorker } from '@/db/queries/workers';
 import {
   createPortalLogin,
   resetPortalPassword,
+  restorePortalLogin,
   revokePortalLogin,
 } from '@/server/actions/portal-admin';
 
@@ -85,6 +86,25 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
             }}
           >
             Revoke login
+          </button>
+          {/* The undo for the nightly sunset sweep — without it an automatic (or
+              mistaken) revocation has no way back. ponytail: always enabled, no
+              login-status gate: RosterWorker doesn't carry contractor_logins.status,
+              and restorePortalLogin already answers "no login yet" and "already
+              active" itself. Add the gate only if the extra query earns its keep. */}
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={loginBusy}
+            title="Give a revoked portal login back — use this if access was ended in error, or if their pay was re-drafted after it landed."
+            onClick={() =>
+              runLogin(
+                () => restorePortalLogin({ workerId: worker.workerId }),
+                'Portal access restored.',
+              )
+            }
+          >
+            Restore login
           </button>
         </div>
       </div>
