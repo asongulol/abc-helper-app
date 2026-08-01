@@ -36,6 +36,32 @@ admins sign in on `abbilabs.com`). Override only if your admin domains differ.
 | `HUBSTAFF_REFRESH_TOKEN` | "Sync from Hubstaff" errors when invoked; manual/CSV import still works |
 | `CRON_SECRET` | Shared secret for cron-invoked routes (the Deno edge fns) |
 
+### The DB has its own copy of both of these
+
+`pg_cron` jobs POST to the app from *inside Postgres*, so they cannot read
+Vercel env vars. They read `public.app_secrets` instead — a **second, separate**
+place the same two values have to be right:
+
+| Vercel env var | `app_secrets` key | Used by |
+|---|---|---|
+| `APP_URL` | `app_base_url` | the URL every DB cron POSTs to (bare origin; the job appends the path) |
+| `CRON_SECRET` | `cron_secret` | the `x-cron-secret` header those jobs send |
+
+They must **match**, and a mismatch is silent — the route just 401s nightly and
+`cron.job_run_details` still says `succeeded` (see the pg_net warning below).
+`app_base_url` is worse than a mismatch when unset: `NULL || '/api/cron/...'` is
+`NULL`, so `net.http_post` errors before it sends anything.
+
+Migration 0016 seeds `app_base_url` with a `CHANGE-ME` placeholder — but on prod
+that seed **never ran** (0016 predates the conformance baseline and only its
+schema half reached prod; the doc-expiry / hiring-review crons live there are
+the *legacy edge-function* jobs, `jobid` 1–2). The row was inserted by hand on
+2026-08-01. Check it before scheduling any new job that POSTs to the app:
+
+```sql
+select key, value from public.app_secrets where key in ('app_base_url','cron_secret');
+```
+
 ---
 
 ## Two deployment modes
@@ -124,23 +150,54 @@ pipeline in either repo has ever deployed an edge function.** Editing a file
 under `supabase/functions/` therefore changes *nothing* in production until a
 human runs the commands below — this runbook is the only mechanism there is.
 
-### Current state (2026-08-01) — the slot does not run this repo's code
+### Current state (2026-08-01) — the slot runs the legacy repo's guarded copy
 
 | | |
 |---|---|
-| Live `hubstaff-sync` slot | version **45**, last updated **~2026-06-23** |
-| Source-of-record | **the legacy repo** — `abc-work-app-payroll-wis-hubstaff-app/supabase/functions/hubstaff-sync/index.ts` |
-| This repo's copy | **never deployed** |
+| Live `hubstaff-sync` slot | version **46**, deployed **2026-08-01**, `verify_jwt: false` |
+| Source-of-record | **the legacy repo** — `abc-work-app-payroll-wis-hubstaff-app/supabase/functions/hubstaff-sync/index.ts` (commit `5d2bf03`) |
+| This repo's copy | **still never deployed** |
 
 Both repos' `supabase/.temp/project-ref` is `cgsidolrauzsowqlllsz`, so
 `supabase functions deploy` from **either** working copy overwrites the **same
 live slot on shared prod**. There is no staging slot and no preview.
 
-The practical consequence today: the no-time-after-last-day guard lives in this
-repo's copy and in `upsertTimeEntries` (`src/db/queries/time.ts`), and the
-nightly 20:00 UTC `cron_ingest` runs **neither** — it runs version 45, which
-reads `ended_on` and never uses it, and keeps upserting `pending` rows for
-terminated contractors on a 3-day lookback (issue #80).
+Option A below is **done**: the no-time-after-last-day guard is live in the slot
+and in `upsertTimeEntries` (`src/db/queries/time.ts`), and migrations 37/38/39
+are applied to prod (see `supabase/prod-applied.json`). Issue #80 is closed at
+both the edge and the DB.
+
+#### ⚠️ Always pass `--no-verify-jwt` — and a green cron proves nothing
+
+The v45 deploy (~2026-06-23) omitted it, so the slot sat at `verify_jwt: true`
+for six weeks. The nightly cron sends `apikey` + `x-cron-secret` and **no
+`Authorization` header** (migration 0010), so every run was rejected by the
+platform gateway with `UNAUTHORIZED_NO_AUTH_HEADER` before reaching the
+function. `apikey` alone does **not** satisfy the functions gateway — it does
+for PostgREST, which is the trap. The ingest imported nothing at all in that
+window; the sporadic `time_entries` batches over those weeks were manual
+imports from the legacy admin app, which *does* send `Authorization`.
+
+Nothing surfaced it. `cron.job_run_details.status` said `succeeded` every
+night, because that only means **pg_net queued the request** — the HTTP result
+lands in `net._http_response`, which is pruned after hours. **Never read
+`job_run_details` as evidence a cron's target ran.**
+
+To actually check a pg_net cron, probe the endpoint and read the error's
+*shape* — the gateway's 401 and the function's own 401 are different objects:
+
+```bash
+curl -sS -X POST https://cgsidolrauzsowqlllsz.supabase.co/functions/v1/hubstaff-sync \
+  -H 'Content-Type: application/json' -d '{"action":"list_orgs"}'
+# {"code":"UNAUTHORIZED_NO_AUTH_HEADER",...}  → gateway blocked it; verify_jwt is ON, cron is dead
+# {"error":"missing auth"}                    → request reached the function; cron path is open
+```
+
+`supabase functions list --project-ref cgsidolrauzsowqlllsz` shows `verify_jwt`
+per slot. The legacy repo has no `supabase/config.toml`, so nothing declares
+`verify_jwt = false` for it — the flag on the command line is the only thing
+holding the cron open, and the next deploy that forgets it kills the ingest
+silently again.
 
 ### Who calls the slot
 
@@ -154,7 +211,7 @@ So nothing in *this* repo breaks whichever copy is deployed. What is at stake is
 the legacy admin app's Hubstaff UI (org picker, project mapping, "Sync now",
 activity backfill).
 
-### Option A — deploy the legacy copy (smallest blast radius)
+### Option A — deploy the legacy copy (smallest blast radius) — ✅ DONE 2026-08-01
 
 The guard has been ported into the legacy file (same `<= lastDay` keep
 boundary, same per-`(company, worker)` `ended_on` lookup, `dropped_after_end` in
@@ -241,9 +298,10 @@ deploy happened or which copy is live.
 
 The durable fix is the `time_entries` trigger in issue #86 — a DB-level check of
 `worker_companies.ended_on` covers *every* writer (both edge copies, the legacy
-browser apps, the mobile app) and needs no deploy at all. It now exists as
+browser apps, the mobile app) and needs no deploy at all. It is
 `supabase/migrations/00000000000038_time_entries_no_time_after_last_day.sql`,
-**not yet applied to prod**.
+**applied to prod 2026-08-01** (with 37 before it and 39 after — see
+`supabase/prod-applied.json` for what each one moved).
 
 > **Sequencing: do Option A first, then apply migration 38.** The trigger
 > *raises*, and PostgREST sends a window as one bulk upsert — so a single
