@@ -1,9 +1,12 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
 import {
   type AuditLogRow,
+  getPayfileDownloads,
   lastPayfileDownloads,
   PAYFILE_DOWNLOAD_ACTION,
 } from '@/db/queries/audit';
+import type { Database } from '@/db/types';
 
 const row = (p: Partial<AuditLogRow> & { createdAt: string }): AuditLogRow => ({
   id: p.createdAt,
@@ -67,5 +70,36 @@ describe('lastPayfileDownloads — cross-admin double-export guard (RP-59)', () 
 
   it('returns nothing when the period was never exported', () => {
     expect(lastPayfileDownloads([], 'me@x.com')).toEqual([]);
+  });
+});
+
+/** Records the filters the read applies, so a dropped one fails the test.
+ *  A real Promise underneath, like the awaitable Supabase builder. */
+type Chain = Promise<{ data: unknown[]; error: null }> & Record<string, unknown>;
+
+const stubDb = () => {
+  const filters: Record<string, unknown> = {};
+  const chain = Promise.resolve({ data: [], error: null }) as unknown as Chain;
+  chain.select = () => chain;
+  chain.eq = (col: string, val: unknown) => {
+    filters[col] = val;
+    return chain;
+  };
+  chain.order = () => chain;
+  chain.limit = () => chain;
+  return { db: { from: () => chain } as unknown as SupabaseClient<Database>, filters };
+};
+
+describe('getPayfileDownloads — the double-pay guard only holds if it reads the right rows', () => {
+  // #94. Both filters are load-bearing and neither is re-checked after the read:
+  // without `entity` another period's export warns on this one, and without
+  // `action` the 20-row window fills with unrelated audit rows that
+  // lastPayfileDownloads then discards — no warning at all, which is the
+  // direction that lets a second admin export and pay the same batch twice.
+  it('reads payfile downloads for this period only', async () => {
+    const { db, filters } = stubDb();
+    await getPayfileDownloads(db, 'period-1', 'me@x.com');
+
+    expect(filters).toEqual({ action: PAYFILE_DOWNLOAD_ACTION, entity: 'period-1' });
   });
 });

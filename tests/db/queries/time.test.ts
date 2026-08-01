@@ -358,15 +358,26 @@ describe('upsertTimeEntries — nobody logs time after their last day', () => {
   });
 
   /** worker_companies reads resolve to `links`; the upsert payload is captured.
-   *  The read chains .not() then .in() twice before it is awaited. */
+   *  The read chains .not() then .in() twice before it is awaited, and every
+   *  filter is recorded — the stub answers with the fixture whatever it is asked,
+   *  so a dropped or inverted filter is invisible to the behaviour tests (#94). */
   const stubDb = (links: Link[]) => {
     const written: Row[] = [];
+    const filters: Record<string, unknown> = {};
     const read = Promise.resolve({ data: links, error: null }) as Promise<{
       data: Link[];
       error: null;
-    }> & { in: () => unknown; not: () => unknown };
-    read.in = () => read;
-    read.not = () => read;
+    }> &
+      Record<string, unknown>;
+    const record = (col: string, val: unknown) => {
+      filters[col] = val;
+      return read;
+    };
+    read.in = (col: string, vals: unknown) => record(`${col} in`, vals);
+    // The operator is part of the key: `.is('ended_on', null)` is the INVERSE of
+    // `.not('ended_on','is',null)` and must not land in the same slot.
+    read.not = (col: string, op: string, val: unknown) => record(`${col} not ${op}`, val);
+    read.is = (col: string, val: unknown) => record(`${col} is`, val);
     const db = {
       from: () => ({
         select: () => read,
@@ -376,7 +387,7 @@ describe('upsertTimeEntries — nobody logs time after their last day', () => {
         },
       }),
     };
-    return { db: db as unknown as SupabaseClient<Database>, written };
+    return { db: db as unknown as SupabaseClient<Database>, written, filters };
   };
 
   it('drops the days after the last day and keeps the last day itself', async () => {
@@ -443,6 +454,30 @@ describe('upsertTimeEntries — nobody logs time after their last day', () => {
     const dropped = await upsertTimeEntries(db, [row({ work_date: '2026-07-20' })]);
     expect(written).toHaveLength(1);
     expect(dropped).toBe(0);
+  });
+
+  // #94. Every test above feeds the guard its links directly, so they prove the
+  // arithmetic and nothing about the read that supplies it. Written as
+  // `.is('ended_on', null)` the read returns only OPEN links, the client-side
+  // `if (link.ended_on)` then discards all of them, the map comes back empty and
+  // every date after every last day imports — with all of the above still green.
+  // Exact match, not a subset: an inverted filter shows up as an extra key.
+  it('asks for ended links only, scoped to the workers and companies being written', async () => {
+    const { db, filters } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+    ]);
+    await upsertTimeEntries(db, [
+      row({ work_date: '2026-07-03' }),
+      row({ company_id: 'client-a', worker_id: 'w2', work_date: '2026-07-03' }),
+      // Unattributed rows carry no worker to bound, so they widen neither list.
+      row({ company_id: 'co-9', worker_id: null, work_date: '2026-07-03' }),
+    ]);
+
+    expect(filters).toEqual({
+      'ended_on not is': null,
+      'company_id in': ['co-1', 'client-a', 'co-9'],
+      'worker_id in': ['w1', 'w2'],
+    });
   });
 });
 
