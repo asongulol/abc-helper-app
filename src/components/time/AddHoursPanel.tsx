@@ -40,6 +40,7 @@ export const AddHoursPanel = ({
 
   const handleSubmit = () => {
     startTransition(async () => {
+      let dropped = 0;
       if (mode === 'total') {
         const h = Number.parseFloat(totalStr);
         if (Number.isNaN(h) || h <= 0) {
@@ -57,6 +58,7 @@ export const AddHoursPanel = ({
           notify(res.error, { type: 'error' });
           return;
         }
+        dropped = res.data.droppedAfterEnd;
       } else {
         const days = dates
           .map((date) => ({
@@ -78,8 +80,19 @@ export const AddHoursPanel = ({
           notify(res.error, { type: 'error' });
           return;
         }
+        dropped = res.data.droppedAfterEnd;
       }
-      notify(`Hours added for ${sourceName}.`, { type: 'success' });
+      // This panel opens on any contractor with rows in the period, including a
+      // departed one. Days after their last day aren't written — say so, or the
+      // hours the admin just typed read as saved.
+      if (dropped > 0) {
+        notify(
+          `Hours added for ${sourceName} — but ${dropped} day(s) fell after their last day and were not saved.`,
+          { type: 'warn', persistent: true },
+        );
+      } else {
+        notify(`Hours added for ${sourceName}.`, { type: 'success' });
+      }
       onDone();
     });
   };

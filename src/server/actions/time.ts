@@ -73,7 +73,7 @@ const addHoursMerged = async (
     batchId: string;
     additions: Array<{ workDate: string; seconds: number }>;
   },
-): Promise<{ ok: true } | { ok: false; error: string }> => {
+): Promise<{ ok: true; droppedAfterEnd: number } | { ok: false; error: string }> => {
   const { companyId, workerId, sourceName, clientId, batchId, additions } = args;
   const dates = additions.map((a) => a.workDate).sort();
   const dateMin = dates[0];
@@ -113,18 +113,21 @@ const addHoursMerged = async (
       client_company_id: m.clientCompanyId,
     })),
   );
-  // Nothing written at all — "Hours added" would be a lie. ponytail: a PARTIAL
-  // drop (some days before the last day, some after) still reports success
-  // silently; surfacing that needs a `message` the two Add-hours panels don't
-  // read today. Rare by construction — the contractor picker lists no ended
-  // links, so this only fires on a row imported before the departure.
+  // Nothing written at all — "Hours added" would be a lie, so that's an error.
+  // A PARTIAL drop is not an error (the days on or before the last day did
+  // write), but it must not read as clean success either: it rides back as a
+  // count the panels report, same as the CSV import summary. Reachable in normal
+  // use — the per-row Add-hours panel renders for any contractor with rows in
+  // the period, and a departed contractor's pre-termination pending rows are
+  // exactly that. ponytail: a count, not the dates. Return the dropped
+  // work_dates if admins need to know which days to re-enter elsewhere.
   if (droppedAfterEnd === merged.length && merged.length > 0) {
     return {
       ok: false,
       error: `Those days fall after ${sourceName}'s last day — their engagement has ended.`,
     };
   }
-  return { ok: true };
+  return { ok: true, droppedAfterEnd };
 };
 
 // ─── Approval ────────────────────────────────────────────────────────────────
@@ -249,7 +252,9 @@ export async function undoApproval(
 // ─── Manual hours ─────────────────────────────────────────────────────────────
 
 /** Add total hours for a contractor (total mode → first day of period only). */
-export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batchId: string }>> {
+export async function addHoursTotal(
+  args: unknown,
+): Promise<ActionResult<{ batchId: string; droppedAfterEnd: number }>> {
   const parsed = AddHoursTotalSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -282,9 +287,10 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
         period: `${period.start} → ${period.end}`,
         hours: +hours.toFixed(2),
         mode: 'total',
+        dropped_after_end: written.droppedAfterEnd,
       },
     });
-    return { ok: true, data: { batchId } };
+    return { ok: true, data: { batchId, droppedAfterEnd: written.droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,
@@ -294,7 +300,9 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
 }
 
 /** Add daily hours for a contractor (only days with hours > 0). */
-export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batchId: string }>> {
+export async function addHoursDaily(
+  args: unknown,
+): Promise<ActionResult<{ batchId: string; droppedAfterEnd: number }>> {
   const parsed = AddHoursDailySchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -329,9 +337,10 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
         period: period ? `${period.start} → ${period.end}` : null,
         hours: +totalHours.toFixed(2),
         mode: 'daily',
+        dropped_after_end: written.droppedAfterEnd,
       },
     });
-    return { ok: true, data: { batchId } };
+    return { ok: true, data: { batchId, droppedAfterEnd: written.droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,
