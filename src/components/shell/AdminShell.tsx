@@ -283,6 +283,7 @@ export const AdminShell = ({
                     className={active ? 'side-item active' : 'side-item'}
                     aria-current={active ? 'page' : undefined}
                     title={collapsed ? item.label : undefined}
+                    prefetch={group.prefetch ?? 'auto'}
                   >
                     <span className="side-ico" aria-hidden="true">
                       {item.icon}

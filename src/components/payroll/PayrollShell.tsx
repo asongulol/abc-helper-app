@@ -23,6 +23,7 @@ import { centavosToPhp, fmtDate, money } from '@/lib/format';
 import { centavos } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { usdReference } from '@/lib/pay/calc';
+import { batchForWindow } from '@/lib/payroll/batch-window';
 import { hasManualAdjustments, type MiscEdit, miscPatch } from '@/lib/payroll/row-edit';
 import { recomputeNetCentavos } from '@/lib/payroll/row-net';
 import { payoutMethodLabel, periodStateLabel, periodStateTone } from '@/lib/payroll/status-pills';
@@ -84,6 +85,10 @@ interface PayrollShellProps {
   isOwner: boolean;
   defaultPeriod: PayPeriod;
   initialPeriods: PeriodSummaryRow[];
+  /** Batch `initialPayments` belongs to, or null when the window has no batch. */
+  initialBatchId: string | null;
+  /** Server-rendered draft rows, so the table paints with the HTML. */
+  initialPayments: SavedPayment[];
   /** Deep-link from Process & Pay → open the unlock modal once the locked period loads. */
   autoUnlock?: boolean;
 }
@@ -136,6 +141,8 @@ export const PayrollShell = ({
   isOwner: _isOwner,
   defaultPeriod,
   initialPeriods,
+  initialBatchId,
+  initialPayments,
   autoUnlock = false,
 }: PayrollShellProps) => {
   const idPeriodStart = useId();
@@ -156,7 +163,9 @@ export const PayrollShell = ({
   const [periodStart, setPeriodStart] = useState(defaultPeriod.start);
   const [periodEnd, setPeriodEnd] = useState(defaultPeriod.end);
   const [payDate, setPayDate] = useState(defaultPeriod.payDate);
-  const [currentPeriod, setCurrentPeriod] = useState<PeriodSummaryRow | null>(null);
+  const [currentPeriod, setCurrentPeriod] = useState<PeriodSummaryRow | null>(
+    initialPeriods.find((p) => p.id === initialBatchId) ?? null,
+  );
 
   // FX — kept as raw text so the field can be cleared and "0." stays typable
   // (RP-33); every consumer reads the parsed `fxNum`.
@@ -168,8 +177,11 @@ export const PayrollShell = ({
   const [includeHA, setIncludeHA] = useState(true);
   const [include13, setInclude13] = useState(false);
 
-  // Draft rows
-  const [rows, setRows] = useState<EditableRow[] | null>(null);
+  // Draft rows — seeded from the server render (see payroll/page.tsx) so the
+  // table is on screen at first paint instead of one round trip later.
+  const [rows, setRows] = useState<EditableRow[] | null>(
+    initialBatchId ? initialPayments.map(toEditableRow) : null,
+  );
   const [busy, setBusy] = useState(false);
   const suppressSave = useRef(false);
   // RP-26: set by an actual edit (row patch or a typed FX). Without it the
@@ -280,15 +292,24 @@ export const PayrollShell = ({
     if (b) selectBatch(b);
   }, [searchParams, initialPeriods, selectBatch]);
 
+  const seededBatchId = useRef(initialBatchId);
+
   // Load saved draft / snapshot for the current period
   const loadSaved = useCallback(async () => {
-    const periodRow = periods.find(
-      (p) => p.periodStart === periodStart && p.periodEnd === periodEnd,
-    );
-    setCurrentPeriod(periodRow ?? null);
+    const periodRow = batchForWindow(periods, periodStart, periodEnd);
+    setCurrentPeriod(periodRow);
 
     if (!periodRow) {
       setRows(null);
+      return;
+    }
+
+    // The server already sent this batch's rows with the HTML — don't spend a
+    // round trip re-fetching them on mount. Consumed once: any later period
+    // change (or a `?batch=` deep-link pointing elsewhere) falls straight
+    // through, and every write path still reloads through here as before.
+    if (seededBatchId.current === periodRow.id) {
+      seededBatchId.current = null;
       return;
     }
 
