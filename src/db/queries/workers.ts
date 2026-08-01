@@ -523,6 +523,71 @@ export const fetchWorkerCompanyIds = async (db: Db, workerId: string): Promise<s
   return (data ?? []).map((r) => r.company_id);
 };
 
+/**
+ * Is money still owed to a departed contractor?
+ *
+ * This is the whole basis for portal access after a termination. `terminateContractor`
+ * deliberately leaves the login alone, so access is derived here at sign-in instead of
+ * revoked on the last day: someone who has left keeps their payslips, statements and
+ * documents until the money is actually in their hands.
+ *
+ * Three ways pay is still owed. Access ends only when ALL of them are false:
+ *   1. a payment row that hasn't landed (`paid_at IS NULL` — draft/queued/failed)
+ *   2. no landed payment covering the last day yet. The final period may simply not
+ *      have been run, so the row that will owe them does not exist to check. This is
+ *      what makes the rule safe the day after a termination: end someone on the 15th,
+ *      payroll runs on the 30th, and the gap between is exactly when they most need
+ *      the portal — a payments-only check would lock them out for all of it.
+ *   3. approved sessions not yet paid — off-cycle work no period covers.
+ *
+ * Every unknown resolves to "still owed". Locking someone out early is the expensive
+ * mistake; leaving a read-only view of their own rows open longer than strictly needed
+ * is not.
+ *
+ * Takes the SERVICE client: `worker_companies` is admin-only under RLS, so a contractor
+ * reading it resolves zero rows and would silently look fully paid. Scoped by
+ * `worker_id` in every query, the same way fetchUnpaidApprovedSessions is.
+ */
+export const hasPayOutstanding = async (db: Db, workerId: string): Promise<boolean> => {
+  const { data: links, error: lErr } = await db
+    .from('worker_companies')
+    .select('ended_on')
+    .eq('worker_id', workerId);
+  if (lErr) throw new Error(`worker_companies ended_on: ${lErr.message}`);
+
+  // Latest last day across every engagement — the date final pay has to cover.
+  // Null when no link was ever stamped (an 'ended' worker from the #79 drift,
+  // written before endEngagement existed): nothing to prove final pay against,
+  // so keep access rather than guess.
+  const lastDay = (links ?? [])
+    .map((l) => l.ended_on)
+    .filter((d): d is string => d !== null)
+    .sort()
+    .at(-1);
+  if (!lastDay) return true;
+
+  const { data: pays, error: pErr } = await db
+    .from('payments')
+    .select('paid_at, pay_periods(period_end)')
+    .eq('worker_id', workerId);
+  if (pErr) throw new Error(`payments outstanding: ${pErr.message}`);
+  const rows = pays ?? [];
+
+  if (rows.some((p) => p.paid_at === null)) return true;
+  // Everything left has landed, so covering the last day is enough to call it
+  // final. Both are date columns ('YYYY-MM-DD'), which compare correctly as text.
+  if (!rows.some((p) => (p.pay_periods?.period_end ?? '') >= lastDay)) return true;
+
+  const { count, error: sErr } = await db
+    .from('service_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('worker_id', workerId)
+    .eq('approval', 'approved')
+    .is('paid_at', null);
+  if (sErr) throw new Error(`unpaid sessions: ${sErr.message}`);
+  return (count ?? 0) > 0;
+};
+
 /** Wipe stored tool credentials — a terminated contractor can't be handed them. */
 export const clearWorkerTools = async (db: Db, workerId: string): Promise<void> => {
   const { error } = await db

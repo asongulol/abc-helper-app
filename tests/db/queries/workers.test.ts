@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
-import { endEngagement } from '@/db/queries/workers';
+import { endEngagement, hasPayOutstanding } from '@/db/queries/workers';
 import type { Database } from '@/db/types';
 
 /** Records every update payload + filter, so a dropped end-date fails the test.
@@ -113,5 +113,109 @@ describe('endEngagement — a departure closes everything it left open', () => {
       worker_id: 'w1',
       status: 'active',
     });
+  });
+});
+
+/** Reads only, so the stub just answers per table. */
+type ReadChain = Promise<{ data: unknown[] | null; error: null; count: number | null }> &
+  Record<string, unknown>;
+
+const payStub = (fixture: {
+  links?: { ended_on: string | null }[];
+  payments?: { paid_at: string | null; pay_periods: { period_end: string } | null }[];
+  unpaidSessions?: number;
+}) => {
+  const answer = (table: string) => {
+    if (table === 'worker_companies')
+      return { data: fixture.links ?? [], error: null, count: null };
+    if (table === 'payments') return { data: fixture.payments ?? [], error: null, count: null };
+    return { data: null, error: null, count: fixture.unpaidSessions ?? 0 };
+  };
+  const db = {
+    from: (table: string) => {
+      const chain = Promise.resolve(answer(table)) as unknown as ReadChain;
+      chain.select = () => chain;
+      chain.eq = () => chain;
+      chain.is = () => chain;
+      return chain;
+    },
+  };
+  return db as unknown as SupabaseClient<Database>;
+};
+
+const LAST_DAY = '2026-07-15';
+const finalPay = { paid_at: '2026-07-31T00:00:00Z', pay_periods: { period_end: '2026-07-31' } };
+
+describe('hasPayOutstanding — access outlives the last day, not the last payment', () => {
+  it('keeps access while a payment has not landed', async () => {
+    expect(
+      await hasPayOutstanding(
+        payStub({
+          links: [{ ended_on: LAST_DAY }],
+          payments: [finalPay, { paid_at: null, pay_periods: { period_end: '2026-08-15' } }],
+        }),
+        'w1',
+      ),
+    ).toBe(true);
+  });
+
+  // The reason this is not a payments-only check. Ended on the 15th, payroll for
+  // that period has not run, so NO row exists yet to be found unpaid.
+  it('keeps access when the final period has not been run at all', async () => {
+    expect(
+      await hasPayOutstanding(payStub({ links: [{ ended_on: LAST_DAY }], payments: [] }), 'w1'),
+    ).toBe(true);
+  });
+
+  it('keeps access when every landed payment predates the last day', async () => {
+    expect(
+      await hasPayOutstanding(
+        payStub({
+          links: [{ ended_on: LAST_DAY }],
+          payments: [
+            { paid_at: '2026-06-30T00:00:00Z', pay_periods: { period_end: '2026-06-30' } },
+          ],
+        }),
+        'w1',
+      ),
+    ).toBe(true);
+  });
+
+  // The #79 drift: 'ended' workers whose link was never stamped. No last day to
+  // prove final pay against, so never lock them out on a guess.
+  it('keeps access when no link carries an end date', async () => {
+    expect(
+      await hasPayOutstanding(payStub({ links: [{ ended_on: null }], payments: [] }), 'w1'),
+    ).toBe(true);
+  });
+
+  it('keeps access for approved sessions no period covers', async () => {
+    expect(
+      await hasPayOutstanding(
+        payStub({ links: [{ ended_on: LAST_DAY }], payments: [finalPay], unpaidSessions: 2 }),
+        'w1',
+      ),
+    ).toBe(true);
+  });
+
+  it('uses the LATEST end date, so the earlier-ended link cannot call it settled', async () => {
+    expect(
+      await hasPayOutstanding(
+        payStub({
+          links: [{ ended_on: '2026-05-31' }, { ended_on: '2026-08-31' }],
+          payments: [finalPay],
+        }),
+        'w1',
+      ),
+    ).toBe(true);
+  });
+
+  it('ends access once the pay covering the last day has landed and nothing is left', async () => {
+    expect(
+      await hasPayOutstanding(
+        payStub({ links: [{ ended_on: LAST_DAY }], payments: [finalPay], unpaidSessions: 0 }),
+        'w1',
+      ),
+    ).toBe(false);
   });
 });
