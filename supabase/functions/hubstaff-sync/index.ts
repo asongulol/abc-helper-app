@@ -278,7 +278,7 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
 
   // Worker match index (employer-wide).
   const wcRes = await fetch(
-    `${SB_URL}/rest/v1/worker_companies?select=company_id,worker_id,hubstaff_name,hubstaff_user_id,status,workers(first_name,last_name,status)`,
+    `${SB_URL}/rest/v1/worker_companies?select=company_id,worker_id,hubstaff_name,hubstaff_user_id,status,ended_on,workers(first_name,last_name,status)`,
     { headers: tokHdr },
   );
   const links: Array<Record<string, unknown>> = wcRes.ok ? await wcRes.json() : [];
@@ -302,6 +302,20 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
   }
   const matchWorker = (uid: number, nm: string): string | null =>
     byId.get(uid) ?? byStrict.get(nameKey(nm)) ?? byLoose.get(looseKey(nm)) ?? null;
+
+  // Last day each worker may still log time AT THIS COMPANY. Mirrors
+  // upsertTimeEntries in src/db/queries/time.ts — the cron writes time_entries
+  // over REST and never reaches that guard, and the cron is exactly where a
+  // departed contractor's days keep arriving night after night. Scoped to the
+  // link the hours land on: ending one client assignment leaves the employer
+  // link open and the hours keep flowing, which is the point. An unstamped
+  // 'ended' link is left alone rather than guessed at.
+  const lastDayByWorker = new Map<string, string>();
+  for (const l of links) {
+    const wid = String(l.worker_id ?? '');
+    const endedOn = l.ended_on as string | null;
+    if (wid && endedOn && l.company_id === companyId) lastDayByWorker.set(wid, endedOn);
+  }
 
   // Days in window.
   const days: string[] = [];
@@ -355,6 +369,7 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
   // Build rows (pure transform logic mirrored from src/lib/hubstaff/transform.ts).
   const unmatched = new Set<string>();
   const rows: unknown[] = [];
+  let droppedAfterEnd = 0;
   const importBatchId = crypto.randomUUID();
   const idsToPersist: Array<{ company_id: string; worker_id: string; uid: number }> = [];
   const divergences: Array<{
@@ -384,6 +399,18 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
       const tracked = trackedDay.get(uid)?.get(day) ?? 0;
       const pto = ptoDay.get(uid)?.get(day) ?? 0;
       if (tracked === 0 && pto === 0) continue;
+      // Hubstaff keeps a departed member in the org, so their days keep coming.
+      // ponytail: this runs BEFORE the decided guard below, where the app runs
+      // it after (transform skips decided, upsertTimeEntries drops after-end).
+      // Write-neutral — neither side stores a decided day past the last day —
+      // so a decided late day just lands in dropped_after_end here and in
+      // skippedDecided + a divergence row in-app. Swap the two blocks only if
+      // that attribution ever has to match.
+      const lastDay = lastDayByWorker.get(wId);
+      if (lastDay !== undefined && day > lastDay) {
+        droppedAfterEnd += 1;
+        continue;
+      }
       const srcKey = `${co}|${src}|${day}`;
       const workerKey = `${co}|${wId}|${day}`;
       if (decidedBySrc.has(srcKey) || decidedByWorker.has(workerKey)) {
@@ -460,12 +487,35 @@ async function handleCronIngest(body: Record<string, unknown>): Promise<Response
     }).catch(() => undefined);
   }
 
+  // Same standard as the divergences above: dropped_after_end only ever reached
+  // the HTTP response, which pg_net discards, so a nightly drop left no trace at
+  // all. Action/detail keys match the manual sync's audit row in
+  // src/server/actions/hubstaff-sync.ts; entity says which one ran.
+  if (droppedAfterEnd) {
+    await fetch(`${SB_URL}/rest/v1/audit_log`, {
+      method: 'POST',
+      headers: { ...tokHdr, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        company_id: companyId,
+        action: 'import',
+        entity: 'Hubstaff cron sync',
+        detail: {
+          window: { start, stop },
+          rows_written: written,
+          dropped_after_end: droppedAfterEnd,
+          batch: importBatchId,
+        },
+      }),
+    }).catch(() => undefined);
+  }
+
   return json({
     ok: true,
     window: { start, stop },
     company_id: companyId,
     members_seen: userIds.length,
     rows_written: written,
+    dropped_after_end: droppedAfterEnd,
     ids_persisted: idsToPersist.length,
     divergences,
     unmatched: [...unmatched],

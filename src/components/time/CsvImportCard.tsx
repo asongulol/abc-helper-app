@@ -183,15 +183,27 @@ export const CsvImportCard = ({ companyId, roster, period, onImported }: CsvImpo
         notify(res.error, { type: 'error' });
         return;
       }
-      const { written, skipped } = res.data ?? { written: 0, skipped: 0 };
+      const { written, skipped, droppedAfterEnd } = res.data ?? {
+        written: 0,
+        skipped: 0,
+        droppedAfterEnd: 0,
+      };
+      // A departed contractor still shows up in a Hubstaff export. Their days
+      // after the last day aren't imported — say so, or the hours read as lost.
+      const endedNote =
+        droppedAfterEnd > 0
+          ? ` ${droppedAfterEnd} day(s) fell after a contractor's last day and were not imported.`
+          : '';
       if (written === 0) {
-        notify(res.message ?? 'All rows already exist — nothing new to import.', {
-          type: 'info',
-          persistent: true,
-        });
+        notify(
+          endedNote
+            ? `Nothing imported.${endedNote}`
+            : (res.message ?? 'All rows already exist — nothing new to import.'),
+          { type: endedNote ? 'warn' : 'info', persistent: true },
+        );
       } else {
         notify(
-          `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already imported or already decided).` : '.'}`,
+          `Imported ${written} entr${written === 1 ? 'y' : 'ies'} for ${matchedMembers.length} contractor(s)${skipped > 0 ? ` (${skipped} skipped — already imported or already decided).` : '.'}${endedNote}`,
           { type: 'success', persistent: true },
         );
       }

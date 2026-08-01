@@ -256,6 +256,27 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       );
     }
     const offCycleEarnings = args.offCycleByWorker?.get(workerId);
+    // Allowances are for people currently engaged: an inactive contractor is
+    // between assignments and an ended one has left, and neither earns the
+    // anniversary HA or accrues 13th month. Gross still pays — work done is
+    // owed — and so do the hand-typed pdd/bonus/misc lines, which an admin put
+    // on the row deliberately.
+    // ponytail: present-tense status, so recalculating an OPEN period for
+    // someone active then but inactive now zeroes their allowance. Only open
+    // periods can move (migration 18 freezes the money columns at lock), but
+    // the blast radius is NOT one batch: `healthAllowance` pays in exactly one
+    // anniversary period per year with no carry-forward, so zeroing it in that
+    // one batch loses the worker's whole ₱20,000 for the year, permanently —
+    // a fortnight on the bench around their anniversary is enough (#84). The
+    // 13th accrues every period, so there the cost really is one batch.
+    // `mergeManualColumns` now keeps a non-zero stored HA/13th across
+    // single-row rebuilds, so the loss needs a deliberate Recalculate and the
+    // hand-typed repair sticks. Real upgrade path: judge this as-of the period
+    // instead of now. The 'ended' half is already datable —
+    // worker_companies.ended_on now carries the last day — so it needs the
+    // roster query to select it, not status history; only 'inactive', which
+    // nothing dates, actually needs the history.
+    const inactive = isInactiveWorker(w.status, link.linkStatus);
     const result = calcContractorRow({
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
@@ -269,12 +290,11 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       hireDate: w.hireDate,
       healthAllowanceEligible: w.healthAllowanceEligible,
       thirteenthMonthEligible: w.thirteenthMonthEligible,
-      includeHealthAllowance: args.includeHealthAllowance ?? true,
-      includeThirteenth: args.includeThirteenth ?? true,
+      includeHealthAllowance: (args.includeHealthAllowance ?? true) && !inactive,
+      includeThirteenth: (args.includeThirteenth ?? true) && !inactive,
       ...(args.holidays !== undefined ? { holidays: args.holidays } : {}),
       ...(offCycleEarnings !== undefined ? { offCycleEarnings } : {}),
     });
-    const inactive = isInactiveWorker(w.status, link.linkStatus);
     out.push({
       workerId,
       name: fullName(w) || workerId,
@@ -326,11 +346,12 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       // a calendar date and roster membership alone, and `rates` are not
       // end-dated when someone leaves, so without this guard a recalc conjures a
       // ₱20k allowance for a contractor who left before the anniversary came
-      // round. Inactive rows with real work still pay (RP-18) — they surface
-      // above and only need acknowledging at lock.
-      // ponytail: judged at recalc time, since a link records only a status and
-      // no end date. Someone HA-eligible with zero time in the window who leaves
-      // later is skipped too; add an ended_on column if that case ever appears.
+      // round. Inactive rows with real work still surface above and still pay
+      // their gross (RP-18) — they just carry no allowance, same rule as here.
+      // ponytail: judged at recalc time from present-tense status, the same
+      // shortcut `build` takes. `worker_companies.ended_on` now records the last
+      // day, but reading it here would only matter with status history to go
+      // with it — see the note on the flags in `build`.
       if (isInactiveWorker(r.worker.status, r.linkStatus)) continue;
       if (healthAllowance(r.worker.hireDate, args.periodStart, args.periodEnd) <= 0) continue;
       build(r.workerId, 0);

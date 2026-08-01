@@ -129,9 +129,15 @@ export const InvoicingClient = ({
         notify(res.error, { type: 'error' });
         return;
       }
+      // Hubstaff keeps reporting a departed member's days; those aren't written.
+      // Unsaid, the sync reads as "Synced 0 time row(s)" — a silent failure.
+      const endedNote =
+        res.data.droppedAfterEnd > 0
+          ? ` ${res.data.droppedAfterEnd} day(s) fell after a contractor's last day and were not imported.`
+          : '';
       notify(
-        `Synced ${res.data.rowsWritten} time row(s) for ${res.data.window.start} → ${res.data.window.stop}.`,
-        { type: 'success' },
+        `Synced ${res.data.rowsWritten} time row(s) for ${res.data.window.start} → ${res.data.window.stop}.${endedNote}`,
+        { type: endedNote ? 'warn' : 'success', persistent: endedNote !== '' },
       );
       if (clientId) handlePreview(); // re-price the preview against the fresh time
     });

@@ -112,6 +112,8 @@ export interface ImportHubstaffTimeResult {
   divergences: number;
   /** Decided day-rows the sync refused to overwrite. */
   skippedDecided: number;
+  /** Days dropped for falling after a contractor's last day. */
+  droppedAfterEnd: number;
   window: { start: string; stop: string };
 }
 
@@ -157,6 +159,7 @@ export async function importHubstaffTime(
         window: `${summary.window.start} → ${summary.window.stop}`,
         rows_written: summary.rowsWritten,
         members_seen: summary.membersSeen,
+        dropped_after_end: summary.droppedAfterEnd,
         unmatched: summary.unmatched,
         batch: summary.importBatchId,
       },
@@ -170,6 +173,7 @@ export async function importHubstaffTime(
         unmatched: summary.unmatched,
         divergences: summary.divergences.length,
         skippedDecided: summary.skippedDecided,
+        droppedAfterEnd: summary.droppedAfterEnd,
         window: summary.window,
       },
     };

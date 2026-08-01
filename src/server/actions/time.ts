@@ -73,7 +73,7 @@ const addHoursMerged = async (
     batchId: string;
     additions: Array<{ workDate: string; seconds: number }>;
   },
-): Promise<{ ok: true } | { ok: false; error: string }> => {
+): Promise<{ ok: true; droppedAfterEnd: number } | { ok: false; error: string }> => {
   const { companyId, workerId, sourceName, clientId, batchId, additions } = args;
   const dates = additions.map((a) => a.workDate).sort();
   const dateMin = dates[0];
@@ -98,7 +98,7 @@ const addHoursMerged = async (
     };
   }
 
-  await upsertTimeEntries(
+  const droppedAfterEnd = await upsertTimeEntries(
     db,
     merged.map((m) => ({
       company_id: companyId,
@@ -113,7 +113,21 @@ const addHoursMerged = async (
       client_company_id: m.clientCompanyId,
     })),
   );
-  return { ok: true };
+  // Nothing written at all — "Hours added" would be a lie, so that's an error.
+  // A PARTIAL drop is not an error (the days on or before the last day did
+  // write), but it must not read as clean success either: it rides back as a
+  // count the panels report, same as the CSV import summary. Reachable in normal
+  // use — the per-row Add-hours panel renders for any contractor with rows in
+  // the period, and a departed contractor's pre-termination pending rows are
+  // exactly that. ponytail: a count, not the dates. Return the dropped
+  // work_dates if admins need to know which days to re-enter elsewhere.
+  if (droppedAfterEnd === merged.length && merged.length > 0) {
+    return {
+      ok: false,
+      error: `Those days fall after ${sourceName}'s last day — their engagement has ended.`,
+    };
+  }
+  return { ok: true, droppedAfterEnd };
 };
 
 // ─── Approval ────────────────────────────────────────────────────────────────
@@ -238,7 +252,9 @@ export async function undoApproval(
 // ─── Manual hours ─────────────────────────────────────────────────────────────
 
 /** Add total hours for a contractor (total mode → first day of period only). */
-export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batchId: string }>> {
+export async function addHoursTotal(
+  args: unknown,
+): Promise<ActionResult<{ batchId: string; droppedAfterEnd: number }>> {
   const parsed = AddHoursTotalSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -271,9 +287,10 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
         period: `${period.start} → ${period.end}`,
         hours: +hours.toFixed(2),
         mode: 'total',
+        dropped_after_end: written.droppedAfterEnd,
       },
     });
-    return { ok: true, data: { batchId } };
+    return { ok: true, data: { batchId, droppedAfterEnd: written.droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,
@@ -283,7 +300,9 @@ export async function addHoursTotal(args: unknown): Promise<ActionResult<{ batch
 }
 
 /** Add daily hours for a contractor (only days with hours > 0). */
-export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batchId: string }>> {
+export async function addHoursDaily(
+  args: unknown,
+): Promise<ActionResult<{ batchId: string; droppedAfterEnd: number }>> {
   const parsed = AddHoursDailySchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -318,9 +337,10 @@ export async function addHoursDaily(args: unknown): Promise<ActionResult<{ batch
         period: period ? `${period.start} → ${period.end}` : null,
         hours: +totalHours.toFixed(2),
         mode: 'daily',
+        dropped_after_end: written.droppedAfterEnd,
       },
     });
-    return { ok: true, data: { batchId } };
+    return { ok: true, data: { batchId, droppedAfterEnd: written.droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,
@@ -393,7 +413,9 @@ export async function editContractorTotal(args: unknown): Promise<ActionResult> 
 /** Import a batch of parsed CSV rows (upsert or skip mode). */
 export async function importCsvBatch(
   args: unknown,
-): Promise<ActionResult<{ batchId: string; written: number; skipped: number }>> {
+): Promise<
+  ActionResult<{ batchId: string; written: number; skipped: number; droppedAfterEnd: number }>
+> {
   const parsed = CsvImportSchema.safeParse(args);
   if (!parsed.success)
     return {
@@ -452,7 +474,7 @@ export async function importCsvBatch(
       // red error toast.
       return {
         ok: true,
-        data: { batchId, written: 0, skipped },
+        data: { batchId, written: 0, skipped, droppedAfterEnd: 0 },
         message: 'Nothing new to import — those rows already exist or are already decided.',
       };
     }
@@ -460,7 +482,8 @@ export async function importCsvBatch(
     // A Hubstaff CSV has no PTO column, so carry whatever the API sync stored
     // for the day rather than zeroing it on overwrite.
     const ptoByDay = new Map(existing.map((e) => [`${e.sourceName}|${e.workDate}`, e.ptoSeconds]));
-    await upsertTimeEntries(
+    // Days after a contractor's last day are dropped by the writer, not here.
+    const droppedAfterEnd = await upsertTimeEntries(
       db,
       toWrite.map((r) => ({
         company_id: companyId,
@@ -475,6 +498,7 @@ export async function importCsvBatch(
       })),
     );
 
+    const written = toWrite.length - droppedAfterEnd;
     const dates = [...new Set(toWrite.map((r) => r.workDate))].sort();
     const contractors = new Set(toWrite.map((r) => r.sourceName)).size;
     await logEvent({
@@ -483,13 +507,14 @@ export async function importCsvBatch(
       entity: `${dates[0] ?? ''} → ${dates[dates.length - 1] ?? ''}`,
       detail: {
         contractors,
-        rows: toWrite.length,
+        rows: written,
+        dropped_after_end: droppedAfterEnd,
         mode,
         batch: batchId,
       },
     });
 
-    return { ok: true, data: { batchId, written: toWrite.length, skipped } };
+    return { ok: true, data: { batchId, written, skipped, droppedAfterEnd } };
   } catch (err) {
     return {
       ok: false,

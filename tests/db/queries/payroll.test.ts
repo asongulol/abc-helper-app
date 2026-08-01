@@ -544,6 +544,27 @@ describe('mergeManualColumns — a single-row rebuild keeps what a human typed (
     expect(merged.net_php).toBe(20250);
   });
 
+  it('keeps a hand-typed HA/13th the engine now zeroes for an inactive worker (#84)', () => {
+    // The row was calculated (or hand-repaired) with the ₱20,000 anniversary HA;
+    // the worker is now inactive, so the engine draft carries 0. Approving one
+    // straggler entry must not eat the allowance — HA pays once a year with no
+    // carry-forward, so the rebuild would cost the whole year, not the batch.
+    const withAllowances = { ...stored, haPhp: 20000, t13Php: 6000 };
+    const merged = mergeManualColumns(draft, withAllowances);
+    expect(merged.health_allowance_php).toBe(20000);
+    expect(merged.thirteenth_month_php).toBe(6000);
+    // 20000 gross + 20000 HA + 6000 13th + 250 pdd + 3000 bonus + 500 misc + 1500 off-cycle
+    expect(merged.net_php).toBe(51250);
+    expect(merged.payout_amount).toBe(51250);
+  });
+
+  it('lets a non-zero engine allowance win over the stored one', () => {
+    const engine = { ...draft, health_allowance_php: 20000, thirteenth_month_php: 6800 };
+    const merged = mergeManualColumns(engine, { ...stored, haPhp: 1, t13Php: 2 });
+    expect(merged.health_allowance_php).toBe(20000);
+    expect(merged.thirteenth_month_php).toBe(6800);
+  });
+
   it('leaves a non-override note alone (287 prod rows carry import prose)', () => {
     const imported = { ...stored, note: 'Historical import (Hubstaff daily report)' };
     expect(mergeManualColumns(draft, imported).note).toBeUndefined();

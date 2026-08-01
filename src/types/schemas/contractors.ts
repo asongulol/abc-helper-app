@@ -74,7 +74,45 @@ export const contractForEdit = (
   }
   return { contract: (contract as ContractType) || 'FT', payBasis: null };
 };
-export const WorkerStatusSchema = z.enum(['active', 'inactive', 'ended']);
+/**
+ * The statuses a form may WRITE. 'ended' is missing on purpose: ending closes
+ * rates and coverage targets as of a chosen last day, which a status field has
+ * nowhere to put — it goes through terminateContractor / endAssignment. An
+ * already-ended link omits the field entirely rather than posting 'ended' back,
+ * so a profile save leaves the departure it knows nothing about alone.
+ */
+export const EditableWorkerStatusSchema = z.enum(['active', 'inactive']);
+
+/** Today in Manila — the eastern-most timezone this app is used from, so a UTC
+ *  server never rejects a browser's own "today" as tomorrow. */
+const todayManila = (): string =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+
+/**
+ * A last day may not be in the future (#91). The status flip is immediate —
+ * `workers.status` goes 'ended' the moment this is submitted — so a date weeks
+ * out zeroes health allowance / 13th month (present-tense status rule in
+ * `lib/payroll/mappers`) for weeks the contractor is still working, and stops
+ * coverage expecting their hours. Matches the `max={today}` cap
+ * EndEngagementModal already enforces client-side.
+ * ponytail: reject rather than defer. A deferred status flip is the real
+ * feature if give-notice terminations are ever wanted.
+ */
+const LastDaySchema = IsoDateSchema.refine((d) => d >= '2000-01-01' && d <= todayManila(), {
+  message: 'Last day cannot be in the future.',
+});
+
+/** End EVERY engagement — the contractor has left. */
+export const TerminateContractorSchema = z.object({
+  workerId: uuid(),
+  lastDay: LastDaySchema,
+  reason: z.string().max(500).optional(),
+});
+export type TerminateContractorInput = z.infer<typeof TerminateContractorSchema>;
+
+/** End ONE company assignment; the contractor stays on the roster. */
+export const EndAssignmentSchema = TerminateContractorSchema.extend({ companyId: uuid() });
+export type EndAssignmentInput = z.infer<typeof EndAssignmentSchema>;
 
 /**
  * Require a valid pay_basis whenever the contract is PHS (per hour / session);
@@ -173,10 +211,40 @@ export const SaveWorkerProfileSchema = z
       .nullable()
       .optional(),
     sessionRateUsd: z.number().min(0).max(100000).nullable().optional(),
-    linkStatus: WorkerStatusSchema,
+    linkStatus: EditableWorkerStatusSchema.optional(),
   })
   .superRefine(requirePayBasisForPhs);
 export type SaveWorkerProfileInput = z.infer<typeof SaveWorkerProfileSchema>;
+
+/**
+ * One company link's editable fields — the profile's "Client engagements" rows.
+ * `status` reuses EditableWorkerStatusSchema, so 'ended' is unrepresentable here
+ * too: this action writes through the service-role client, and a plain typed
+ * signature is erased at runtime, which left `status='ended'` with no `ended_on`
+ * one forged POST away (#81).
+ */
+export const SaveWorkerCompanyLinkSchema = z
+  .object({
+    workerId: uuid(),
+    companyId: uuid(),
+    role: z.string().max(100).nullable(),
+    billRateUsd: z
+      .number()
+      .min(0, 'Rate must be between 0 and 100,000.')
+      .max(100000, 'Rate must be between 0 and 100,000.')
+      .nullable(),
+    sessionRateUsd: z
+      .number()
+      .min(0, 'Rate must be between 0 and 100,000.')
+      .max(100000, 'Rate must be between 0 and 100,000.')
+      .nullable(),
+    contract: ContractTypeSchema,
+    payBasis: PayBasisSchema.nullable().default(null),
+    /** Omit to leave it as-is. */
+    status: EditableWorkerStatusSchema.optional(),
+  })
+  .superRefine(requirePayBasisForPhs);
+export type SaveWorkerCompanyLinkInput = z.infer<typeof SaveWorkerCompanyLinkSchema>;
 
 /** Deactivate/reactivate a worker's link to a company. */
 export const SetLinkStatusSchema = z.object({

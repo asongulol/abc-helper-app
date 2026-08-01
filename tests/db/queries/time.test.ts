@@ -14,6 +14,7 @@ import {
   unapproveWindow,
   updateApproval,
   updateTrackedSeconds,
+  upsertTimeEntries,
 } from '@/db/queries/time';
 import type { Database } from '@/db/types';
 
@@ -336,6 +337,147 @@ describe('canonicalizeCsvRows — a Hubstaff rename must not double-pay (RP-38/R
       ]),
     );
     expect(out).toHaveLength(3);
+  });
+});
+
+describe('upsertTimeEntries — nobody logs time after their last day', () => {
+  type Link = { company_id: string; worker_id: string; ended_on: string | null };
+  type Row = Parameters<typeof upsertTimeEntries>[1][number];
+
+  const row = (over: Partial<Row> = {}): Row => ({
+    company_id: 'co-1',
+    worker_id: 'w1',
+    source_name: 'Ana Cruz',
+    work_date: '2026-07-04',
+    tracked_seconds: 28_800,
+    pto_seconds: 0,
+    approval: 'pending',
+    import_batch_id: 'b1',
+    activity_pct: 70,
+    ...over,
+  });
+
+  /** worker_companies reads resolve to `links`; the upsert payload is captured.
+   *  The read chains .not() then .in() twice before it is awaited, and every
+   *  filter is recorded — the stub answers with the fixture whatever it is asked,
+   *  so a dropped or inverted filter is invisible to the behaviour tests (#94). */
+  const stubDb = (links: Link[]) => {
+    const written: Row[] = [];
+    const filters: Record<string, unknown> = {};
+    const read = Promise.resolve({ data: links, error: null }) as Promise<{
+      data: Link[];
+      error: null;
+    }> &
+      Record<string, unknown>;
+    const record = (col: string, val: unknown) => {
+      filters[col] = val;
+      return read;
+    };
+    read.in = (col: string, vals: unknown) => record(`${col} in`, vals);
+    // The operator is part of the key: `.is('ended_on', null)` is the INVERSE of
+    // `.not('ended_on','is',null)` and must not land in the same slot.
+    read.not = (col: string, op: string, val: unknown) => record(`${col} not ${op}`, val);
+    read.is = (col: string, val: unknown) => record(`${col} is`, val);
+    const db = {
+      from: () => ({
+        select: () => read,
+        upsert: (rows: Row[]) => {
+          written.push(...rows);
+          return Promise.resolve({ error: null });
+        },
+      }),
+    };
+    return { db: db as unknown as SupabaseClient<Database>, written, filters };
+  };
+
+  it('drops the days after the last day and keeps the last day itself', async () => {
+    const { db, written } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+    ]);
+    const dropped = await upsertTimeEntries(db, [
+      row({ work_date: '2026-07-03' }),
+      row({ work_date: '2026-07-04' }),
+      row({ work_date: '2026-07-05' }),
+    ]);
+    expect(written.map((r) => r.work_date)).toEqual(['2026-07-03', '2026-07-04']);
+    expect(dropped).toBe(1);
+  });
+
+  it('ignores an ended link at ANOTHER company — a client assignment ending is not leaving', async () => {
+    // The repro shape in prod: everyone is linked to the employer company that
+    // holds all time, PLUS the clients they are assigned to.
+    const { db, written } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: null },
+      { company_id: 'client-a', worker_id: 'w1', ended_on: '2026-07-04' },
+    ]);
+    const dropped = await upsertTimeEntries(db, [row({ work_date: '2026-07-20' })]);
+    expect(written).toHaveLength(1);
+    expect(dropped).toBe(0);
+  });
+
+  it('drops on the employer link even while a client link stays open (termination stamps both, drift stamps one)', async () => {
+    const { db, written } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+      { company_id: 'client-a', worker_id: 'w1', ended_on: null },
+    ]);
+    const dropped = await upsertTimeEntries(db, [row({ work_date: '2026-07-20' })]);
+    expect(written).toHaveLength(0);
+    expect(dropped).toBe(1);
+  });
+
+  it('bounds each worker by their own last day', async () => {
+    const { db, written } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+      { company_id: 'co-1', worker_id: 'w2', ended_on: null },
+    ]);
+    const dropped = await upsertTimeEntries(db, [
+      row({ worker_id: 'w1', work_date: '2026-07-05' }),
+      row({ worker_id: 'w2', source_name: 'Ben Diaz', work_date: '2026-07-05' }),
+    ]);
+    expect(written.map((r) => r.worker_id)).toEqual(['w2']);
+    expect(dropped).toBe(1);
+  });
+
+  it('writes an unattributed row as-is — no worker, no last day to measure', async () => {
+    const { db, written } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+    ]);
+    const dropped = await upsertTimeEntries(db, [
+      row({ worker_id: null, work_date: '2026-07-20' }),
+    ]);
+    expect(written).toHaveLength(1);
+    expect(dropped).toBe(0);
+  });
+
+  it("leaves an 'ended' worker alone when the link was never stamped (the #79 drift)", async () => {
+    const { db, written } = stubDb([{ company_id: 'co-1', worker_id: 'w1', ended_on: null }]);
+    const dropped = await upsertTimeEntries(db, [row({ work_date: '2026-07-20' })]);
+    expect(written).toHaveLength(1);
+    expect(dropped).toBe(0);
+  });
+
+  // #94. Every test above feeds the guard its links directly, so they prove the
+  // arithmetic and nothing about the read that supplies it. Written as
+  // `.is('ended_on', null)` the read returns only OPEN links, the client-side
+  // `if (link.ended_on)` then discards all of them, the map comes back empty and
+  // every date after every last day imports — with all of the above still green.
+  // Exact match, not a subset: an inverted filter shows up as an extra key.
+  it('asks for ended links only, scoped to the workers and companies being written', async () => {
+    const { db, filters } = stubDb([
+      { company_id: 'co-1', worker_id: 'w1', ended_on: '2026-07-04' },
+    ]);
+    await upsertTimeEntries(db, [
+      row({ work_date: '2026-07-03' }),
+      row({ company_id: 'client-a', worker_id: 'w2', work_date: '2026-07-03' }),
+      // Unattributed rows carry no worker to bound, so they widen neither list.
+      row({ company_id: 'co-9', worker_id: null, work_date: '2026-07-03' }),
+    ]);
+
+    expect(filters).toEqual({
+      'ended_on not is': null,
+      'company_id in': ['co-1', 'client-a', 'co-9'],
+      'worker_id in': ['w1', 'w2'],
+    });
   });
 });
 

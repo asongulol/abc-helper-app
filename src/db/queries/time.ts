@@ -370,7 +370,58 @@ export const datesOutsidePeriod = (
     ),
   ].sort();
 
-/** Upsert time entries (conflict on company_id,source_name,work_date). */
+/**
+ * The last day these workers may still log time at these companies, keyed
+ * "companyId|workerId". Absent = the engagement is open, nothing to bound.
+ *
+ * Scoped to the link the hours land on, not to the worker: everyone is linked
+ * to the employer company (which holds all time) AND to the client companies
+ * they are assigned to. `endAssignment` closes ONE client link and leaves the
+ * employer link open, so those hours keep importing — which is the point, they
+ * are still working. `terminateContractor` closes every link, employer
+ * included, and that is the one that stops the clock.
+ *
+ * An 'ended' link that was never stamped (the #79 drift, written before
+ * `endEngagement` existed) has no last day to measure against and is left
+ * alone: dropping real tracked hours on a guess is the expensive mistake here.
+ */
+const fetchLastWorkDays = async (
+  db: Db,
+  rows: readonly { company_id: string; worker_id: string | null }[],
+): Promise<Map<string, string>> => {
+  const workerIds = [
+    ...new Set(rows.map((r) => r.worker_id).filter((id): id is string => id !== null)),
+  ];
+  if (workerIds.length === 0) return new Map();
+
+  // Only closed links can bound anything, so let Postgres drop the rest — in
+  // the common case (nobody has left) this comes back empty.
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('company_id, worker_id, ended_on')
+    .not('ended_on', 'is', null)
+    .in('company_id', [...new Set(rows.map((r) => r.company_id))])
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`worker_companies (ended_on): ${error.message}`);
+
+  const lastDays = new Map<string, string>();
+  for (const link of data ?? []) {
+    if (link.ended_on) lastDays.set(`${link.company_id}|${link.worker_id}`, link.ended_on);
+  }
+  return lastDays;
+};
+
+/**
+ * Upsert time entries (conflict on company_id,source_name,work_date), dropping
+ * any day that falls AFTER the worker's last day. Returns how many were dropped
+ * so the caller can say so — a silent drop reads as "imported 0 entries".
+ *
+ * The guard lives here because this is the one door into time_entries: the CSV
+ * upload, the Hubstaff sync and manual hours all come through it, and Hubstaff
+ * keeps reporting a departed contractor's org membership long after they leave.
+ * Everything up to and including the last day still imports, still approves and
+ * still pays — arrears are owed whether or not someone is still engaged.
+ */
 export const upsertTimeEntries = async (
   db: Db,
   rows: Array<{
@@ -386,12 +437,25 @@ export const upsertTimeEntries = async (
     /** CLIENT these hours bill to (invoicing attribution); null = unattributed. */
     client_company_id?: string | null;
   }>,
-): Promise<void> => {
-  if (rows.length === 0) return;
-  const { error } = await db
-    .from('time_entries')
-    .upsert(rows, { onConflict: 'company_id,source_name,work_date' });
-  if (error) throw new Error(`time_entries upsert: ${error.message}`);
+): Promise<number> => {
+  if (rows.length === 0) return 0;
+
+  const lastDays = await fetchLastWorkDays(db, rows);
+  // An unattributed row (worker_id null) carries no last day and is written as
+  // it always was — it is never paid until someone attributes it anyway.
+  const keep = rows.filter((r) => {
+    const lastDay =
+      r.worker_id === null ? undefined : lastDays.get(`${r.company_id}|${r.worker_id}`);
+    return lastDay === undefined || r.work_date <= lastDay;
+  });
+
+  if (keep.length > 0) {
+    const { error } = await db
+      .from('time_entries')
+      .upsert(keep, { onConflict: 'company_id,source_name,work_date' });
+    if (error) throw new Error(`time_entries upsert: ${error.message}`);
+  }
+  return rows.length - keep.length;
 };
 
 /**

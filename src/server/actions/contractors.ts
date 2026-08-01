@@ -11,8 +11,12 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
+  clearWorkerTools,
+  endEngagement,
+  fetchWorkerLinks,
   insertWorkerWithLink,
-  setWorkerLinkStatus,
+  reactivateWorkerLink,
+  setWorkerStatus,
   updateWorkerLink,
   updateWorkerProfile,
 } from '@/db/queries/workers';
@@ -24,11 +28,12 @@ import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   AddContractorSchema,
-  type ContractType,
+  EndAssignmentSchema,
   HireContractorSchema,
-  type PayBasis,
+  SaveWorkerCompanyLinkSchema,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
+  TerminateContractorSchema,
 } from '@/types/schemas/contractors';
 
 /** Quick-add a blank contractor and link them to the selected company. */
@@ -168,7 +173,8 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       weekly_hours: input.weeklyHours,
       bill_rate_usd: input.billRateUsd ?? null,
       session_rate_usd: input.sessionRateUsd ?? null,
-      status: input.linkStatus,
+      // Absent for an ended link — the form has no say over a departure.
+      ...(input.linkStatus ? { status: input.linkStatus } : {}),
     });
     await logEvent({
       companyId: input.companyId,
@@ -185,7 +191,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
   }
 }
 
-/** Deactivate or reactivate a contractor's company link. */
+/** Reactivate a contractor's company link. Ending one goes elsewhere — below. */
 export async function setContractorLinkStatus(args: unknown): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -201,15 +207,22 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
   }
+  // Reactivation only. Ending an engagement has to close rates and coverage
+  // targets too, so it goes through terminateContractor / endAssignment — a
+  // second path that writes status='ended' and nothing else is what left 6
+  // ended workers sitting on active links (#79).
+  if (!input.active) {
+    return { ok: false, error: 'Use Terminate or End assignment to end an engagement.' };
+  }
 
   try {
     const db = await createServerSupabase();
-    await setWorkerLinkStatus(db, input.workerId, input.companyId, input.active);
+    await reactivateWorkerLink(db, input.workerId, input.companyId);
     await logEvent({
       companyId: input.companyId,
       action: 'edit_contractor',
       entity: input.workerId,
-      detail: { status: input.active ? 'active' : 'ended' },
+      detail: { status: 'active' },
     });
     return { ok: true };
   } catch (err) {
@@ -217,6 +230,155 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
       ok: false,
       error: humanizeError(err, 'Status update failed.'),
     };
+  }
+}
+
+/**
+ * Terminate a contractor — they have left, so EVERY engagement ends as of
+ * `lastDay`, rates and coverage targets close, and stored tool credentials are
+ * wiped.
+ *
+ * Deliberately does NOT touch the portal login: access is kept until their
+ * final pay lands (owner decision), which is derived at sign-in rather than
+ * revoked here. Nor does it block or alter payment — time already worked is
+ * still payable, immediately via an off-cycle batch or on the next scheduled
+ * period. Ending an engagement is not the same as closing the books on it.
+ */
+export async function terminateContractor(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = TerminateContractorSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  try {
+    const db = await createServerSupabase();
+    const svc = createServiceClient();
+
+    // This ends links at EVERY company, so a company-scoped admin needs access
+    // to all of them — the per-company check the other actions do, widened to
+    // match the blast radius. Read on the SERVICE client: through RLS the list
+    // is a subset of admin.companyIds by construction and the guard below can
+    // never fire (#82).
+    const links = await fetchWorkerLinks(svc, input.workerId);
+    const companyIds = links.map((l) => l.companyId);
+    if (!admin.isOwner && companyIds.some((id) => !admin.companyIds.includes(id))) {
+      return {
+        ok: false,
+        error: 'This contractor is assigned to a company you cannot access — ask an owner.',
+      };
+    }
+
+    // Already terminated: endEngagement skips ended links and setWorkerStatus
+    // refuses an ended row, so everything below is a no-op — an `ok` would only
+    // add an audit row claiming a last day nothing wrote. Refuse like
+    // endAssignment does. Read on the service client, same reason as the links.
+    // NB: this is the WORKER's status, not the links' — someone between
+    // assignments has every link ended while `workers.status` is 'inactive', and
+    // terminating them is exactly the path #95A asked for.
+    const { data: worker } = await svc
+      .from('workers')
+      .select('status')
+      .eq('id', input.workerId)
+      .maybeSingle();
+    if (worker?.status === 'ended') {
+      return { ok: false, error: 'That contractor has already been terminated.' };
+    }
+
+    await endEngagement(db, {
+      workerId: input.workerId,
+      companyId: null,
+      lastDay: input.lastDay,
+    });
+    await setWorkerStatus(db, input.workerId, 'ended');
+    // Service client: worker_tools holds encrypted credentials and denies the
+    // admin role, same reason withdrawOffer reaches for it.
+    await clearWorkerTools(svc, input.workerId);
+
+    await logEvent({
+      // audit_log's INSERT policy is `is_company_admin(company_id)`, and
+      // is_company_admin(NULL) collapses to is_owner() — so a NULL here silently
+      // dropped the row for exactly the scoped admins whose terminations most
+      // need a trail (#93). A termination spans every company; `detail.companies`
+      // carries the span, this just has to name one the admin can see.
+      // ponytail: first link wins. One row per company if audit ever needs
+      // per-company retrieval of this action.
+      companyId: companyIds[0] ?? null,
+      action: 'contractor.terminated',
+      entity: input.workerId,
+      detail: {
+        last_day: input.lastDay,
+        ...(input.reason ? { reason: input.reason } : {}),
+        companies: companyIds.length,
+        by: admin.email,
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Termination failed.') };
+  }
+}
+
+/**
+ * End ONE company assignment as of `lastDay`. The contractor stays on the
+ * roster: if this was their last active link they become `inactive` — between
+ * assignments, still willing to work — never `ended`. Only `terminateContractor`
+ * ends someone.
+ */
+export async function endAssignment(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = EndAssignmentSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const { endedCompanyIds } = await endEngagement(db, {
+      workerId: input.workerId,
+      companyId: input.companyId,
+      lastDay: input.lastDay,
+    });
+    // Nothing was open to end — a stale tab clicking "End…" on an assignment
+    // that already ended. Say so instead of re-running the tail below, which is
+    // how a terminated contractor got dropped back to 'inactive' (#88).
+    if (endedCompanyIds.length === 0) {
+      return { ok: false, error: 'That assignment has already ended.' };
+    }
+
+    // Global count on the SERVICE client. Through RLS this sees only the calling
+    // admin's companies, so a worker still active at a company they cannot see
+    // counted as zero and went 'inactive' everywhere — zeroing their health
+    // allowance and 13th-month at the company still employing them (#83).
+    const remainingActive = (await fetchWorkerLinks(createServiceClient(), input.workerId)).filter(
+      (l) => l.status === 'active',
+    ).length;
+    if (remainingActive === 0) await setWorkerStatus(db, input.workerId, 'inactive');
+
+    await logEvent({
+      companyId: input.companyId,
+      action: 'assignment.ended',
+      entity: input.workerId,
+      detail: {
+        last_day: input.lastDay,
+        ...(input.reason ? { reason: input.reason } : {}),
+        remaining_active: remainingActive,
+        by: admin.email,
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Ending the assignment failed.') };
   }
 }
 
@@ -619,7 +781,15 @@ export async function setWorkerPhoto(args: {
       .update({ photo_url: args.path })
       .eq('id', args.workerId);
     if (error) return { ok: false, error: error.message };
+    // A NULL company_id collapses audit_log's INSERT policy to is_owner(), so
+    // the row silently vanished for every scoped admin (#93). This action takes
+    // no companyId, so name one the worker is actually linked to AND the caller
+    // can see. ponytail: first such link wins.
+    const links = await fetchWorkerLinks(svc, args.workerId);
     await logEvent({
+      companyId:
+        links.find((l) => admin.isOwner || admin.companyIds.includes(l.companyId))?.companyId ??
+        null,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { photo: true },
@@ -707,54 +877,64 @@ export async function getWorkerCompanies(args: {
   }
 }
 
-/** Update one company link's position / bill rate / contract / status (partial). */
-export async function saveWorkerCompanyLink(args: {
-  workerId: string;
-  companyId: string;
-  role: string | null;
-  billRateUsd: number | null;
-  sessionRateUsd: number | null;
-  contract: ContractType;
-  payBasis: PayBasis | null;
-  status: 'active' | 'inactive' | 'ended';
-}): Promise<ActionResult> {
+/**
+ * Update one company link's position / bill rate / contract / status (partial).
+ *
+ * Zod-parsed like every other action here: it was plain-typed, and TypeScript is
+ * erased at runtime, so a forged POST could put `status='ended'` on a
+ * service-role (RLS-bypassing) update with no `ended_on`, no rate close and no
+ * coverage close — the exact #79 drift, and the time-import gate would never see
+ * it (#81). Ending goes through endAssignment; see EditableWorkerStatusSchema.
+ */
+export async function saveWorkerCompanyLink(args: unknown): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = SaveWorkerCompanyLinkSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
   // This action writes via the service-role client (RLS bypassed), so the
   // per-company scope must be enforced here — same guard as addContractor /
   // saveWorkerProfile / hireContractor.
-  if (!admin.isOwner && !admin.companyIds.includes(args.companyId)) {
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
-  }
-  // A PHS engagement with no pay_basis is unpayable (payModelFor → 'unset' →
-  // the worker is silently dropped from payroll). The Add/Hire/Profile paths
-  // enforce this via the requirePayBasisForPhs zod refinement; this plain-typed
-  // action needs the equivalent runtime guard.
-  if (args.contract === 'PHS' && args.payBasis == null) {
-    return {
-      ok: false,
-      error: 'Choose a pay basis (per hour or per session) for a per-hour/session contract.',
-    };
   }
   try {
     const svc = createServiceClient();
     const { error } = await svc
       .from('worker_companies')
       .update({
-        role: args.role,
-        bill_rate_usd: args.billRateUsd,
-        session_rate_usd: args.sessionRateUsd,
-        contract: args.contract,
-        pay_basis: args.payBasis,
-        status: args.status,
+        role: input.role,
+        bill_rate_usd: input.billRateUsd,
+        session_rate_usd: input.sessionRateUsd,
+        contract: input.contract,
+        pay_basis: input.payBasis,
       })
-      .eq('worker_id', args.workerId)
-      .eq('company_id', args.companyId);
+      .eq('worker_id', input.workerId)
+      .eq('company_id', input.companyId);
     if (error) return { ok: false, error: error.message };
+    // Status in its own gated write, same as updateWorkerLink. RLS is bypassed
+    // here, so nothing else stops a stale tab posting 'active' over a link
+    // someone ended in another tab — reviving a departed engagement with
+    // `ended_on` still set (#88, via the likelier editor). Reviving is
+    // reactivateWorkerLink's job; it clears `ended_on` too. The rest of the
+    // patch lands either way, so editing an ended link's role still works.
+    if (input.status) {
+      const { error: sErr } = await svc
+        .from('worker_companies')
+        .update({ status: input.status })
+        .eq('worker_id', input.workerId)
+        .eq('company_id', input.companyId)
+        .neq('status', 'ended');
+      if (sErr) return { ok: false, error: sErr.message };
+    }
     await logEvent({
+      companyId: input.companyId,
       action: 'edit_contractor',
-      entity: args.workerId,
-      detail: { engagement: args.companyId },
+      entity: input.workerId,
+      detail: { engagement: input.companyId },
     });
     revalidatePath('/contractors');
     return { ok: true };
@@ -794,6 +974,7 @@ export async function assignWorkerCompany(args: {
     });
     if (error) return { ok: false, error: error.message };
     await logEvent({
+      companyId: args.companyId,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { assigned: args.companyId },
@@ -839,6 +1020,7 @@ export async function unassignWorkerCompany(args: {
       .eq('company_id', args.companyId);
     if (error) return { ok: false, error: error.message };
     await logEvent({
+      companyId: args.companyId,
       action: 'edit_contractor',
       entity: args.workerId,
       detail: { unassigned: args.companyId },
