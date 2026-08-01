@@ -196,10 +196,10 @@ export const CsvImportCard = ({ companyId, roster, period, onImported }: CsvImpo
           : '';
       if (written === 0) {
         notify(
-          droppedAfterEnd > 0
+          endedNote
             ? `Nothing imported.${endedNote}`
             : (res.message ?? 'All rows already exist — nothing new to import.'),
-          { type: droppedAfterEnd > 0 ? 'warn' : 'info', persistent: true },
+          { type: endedNote ? 'warn' : 'info', persistent: true },
         );
       } else {
         notify(

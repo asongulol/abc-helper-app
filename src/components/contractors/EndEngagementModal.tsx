@@ -14,11 +14,9 @@ export interface EndEngagementModalProps {
 }
 
 /** Today in the browser's own timezone — `toISOString()` would shift the date
- *  back a day for anyone west of UTC, which is everyone using this app. */
-const todayIso = (): string => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
+ *  back a day for anyone west of UTC, which is everyone using this app.
+ *  'en-CA' formats as YYYY-MM-DD, same trick as `todayLocal` in ProcessPay. */
+const todayIso = (): string => new Date().toLocaleDateString('en-CA');
 
 /**
  * The one dialog behind both departure flows — terminate (every engagement) and
@@ -35,7 +33,9 @@ export const EndEngagementModal = ({
   onConfirm,
   onCancel,
 }: EndEngagementModalProps) => {
-  const [lastDay, setLastDay] = useState(todayIso);
+  // One reading of "today" for both the default and the ceiling.
+  const today = todayIso();
+  const [lastDay, setLastDay] = useState(today);
   const [reason, setReason] = useState('');
   const dateId = useId();
   const reasonId = useId();
@@ -63,7 +63,7 @@ export const EndEngagementModal = ({
           id={dateId}
           type="date"
           value={lastDay}
-          max={todayIso()}
+          max={today}
           onChange={(e) => setLastDay(e.target.value)}
           disabled={busy}
           required
@@ -91,7 +91,7 @@ export const EndEngagementModal = ({
           : 'If this is their only active assignment they become inactive (between assignments), not terminated.'}
       </p>
 
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+      <div className="actions">
         <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>

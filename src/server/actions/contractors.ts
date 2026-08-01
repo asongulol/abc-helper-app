@@ -15,7 +15,7 @@ import {
   endEngagement,
   fetchWorkerCompanyIds,
   insertWorkerWithLink,
-  setWorkerLinkStatus,
+  reactivateWorkerLink,
   setWorkerStatus,
   updateWorkerLink,
   updateWorkerProfile,
@@ -191,7 +191,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
   }
 }
 
-/** Deactivate or reactivate a contractor's company link. */
+/** Reactivate a contractor's company link. Ending one goes elsewhere — below. */
 export async function setContractorLinkStatus(args: unknown): Promise<ActionResult> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
@@ -217,12 +217,12 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
 
   try {
     const db = await createServerSupabase();
-    await setWorkerLinkStatus(db, input.workerId, input.companyId, input.active);
+    await reactivateWorkerLink(db, input.workerId, input.companyId);
     await logEvent({
       companyId: input.companyId,
       action: 'edit_contractor',
       entity: input.workerId,
-      detail: { status: input.active ? 'active' : 'ended' },
+      detail: { status: 'active' },
     });
     return { ok: true };
   } catch (err) {

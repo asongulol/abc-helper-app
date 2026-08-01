@@ -394,9 +394,12 @@ const fetchLastWorkDays = async (
   ];
   if (workerIds.length === 0) return new Map();
 
+  // Only closed links can bound anything, so let Postgres drop the rest — in
+  // the common case (nobody has left) this comes back empty.
   const { data, error } = await db
     .from('worker_companies')
     .select('company_id, worker_id, ended_on')
+    .not('ended_on', 'is', null)
     .in('company_id', [...new Set(rows.map((r) => r.company_id))])
     .in('worker_id', workerIds);
   if (error) throw new Error(`worker_companies (ended_on): ${error.message}`);

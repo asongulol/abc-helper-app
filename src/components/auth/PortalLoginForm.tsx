@@ -25,7 +25,7 @@ type TurnstileWindow = Window & {
   __abcTurnstileToken?: ((token: string) => void) | undefined;
 };
 
-export const PortalLoginForm = ({ accessEnded = false }: { accessEnded?: boolean }) => {
+export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);

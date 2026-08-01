@@ -159,14 +159,16 @@ export function ContractorsClient({
     setReactivateTarget(worker);
   }
 
-  function toggleStatus(worker: RosterWorker, active: boolean) {
+  /** The only direction this row action still goes — ending an engagement is
+   *  Terminate / End assignment, which need a last day this has nowhere to put. */
+  function runReactivate(worker: RosterWorker) {
     const id = worker.workerId;
     setBusyIds((s) => new Set([...s, id]));
     startTransition(async () => {
       const result = await setContractorLinkStatus({
         workerId: id,
         companyId,
-        active,
+        active: true,
       });
       setBusyIds((s) => {
         const next = new Set(s);
@@ -177,16 +179,8 @@ export function ContractorsClient({
         notify(result.error, { type: 'error' });
         return;
       }
-      notify(active ? 'Contractor reactivated.' : 'Contractor deactivated.', {
-        type: 'success',
-      });
-      const newStatus = active ? 'active' : 'ended';
-      const updated: RosterWorker = {
-        ...worker,
-        workerStatus: newStatus as RosterWorker['workerStatus'],
-        linkStatus: newStatus as RosterWorker['linkStatus'],
-      };
-      refreshRow(updated);
+      notify('Contractor reactivated.', { type: 'success' });
+      refreshRow({ ...worker, workerStatus: 'active', linkStatus: 'active' });
     });
   }
 
@@ -463,7 +457,7 @@ export function ContractorsClient({
           onConfirm={() => {
             const target = reactivateTarget;
             setReactivateTarget(null);
-            toggleStatus(target, true);
+            runReactivate(target);
           }}
           onCancel={() => setReactivateTarget(null)}
         />

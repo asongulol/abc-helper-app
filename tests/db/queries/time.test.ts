@@ -358,14 +358,15 @@ describe('upsertTimeEntries — nobody logs time after their last day', () => {
   });
 
   /** worker_companies reads resolve to `links`; the upsert payload is captured.
-   *  `.in()` chains twice (company then worker) before it is awaited. */
+   *  The read chains .not() then .in() twice before it is awaited. */
   const stubDb = (links: Link[]) => {
     const written: Row[] = [];
     const read = Promise.resolve({ data: links, error: null }) as Promise<{
       data: Link[];
       error: null;
-    }> & { in: () => unknown };
+    }> & { in: () => unknown; not: () => unknown };
     read.in = () => read;
+    read.not = () => read;
     const db = {
       from: () => ({
         select: () => read,

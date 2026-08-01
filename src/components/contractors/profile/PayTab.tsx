@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { RosterWorker } from '@/db/queries/workers';
+import { fullName } from '@/lib/names';
 import type { WorkerEngagement } from '@/server/actions/contractors';
 import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
 import { EndEngagementModal } from '../EndEngagementModal';
@@ -283,7 +284,7 @@ export function PayTab({
 
       {endTarget && (
         <EndEngagementModal
-          name={`${worker.firstName} ${worker.lastName}`.trim()}
+          name={fullName(worker)}
           companyName={endTarget.companyName}
           busy={isPending}
           onConfirm={({ lastDay, reason }) => {

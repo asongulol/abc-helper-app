@@ -402,28 +402,29 @@ export const updateWorkerLink = async (
   if (error) throw new Error(`worker_companies update: ${error.message}`);
 };
 
-/** Set a worker's link status (active/inactive/ended) and mirror to worker.status. */
-export const setWorkerLinkStatus = async (
+/**
+ * Bring a worker's company link back to 'active' and mirror it to worker.status.
+ *
+ * Reactivation only, on purpose. This used to take an `active` boolean and
+ * stamp `ended_on` with TODAY on the way down — a second writer of the ended
+ * state that closed neither rates nor coverage targets, which is what left 6
+ * ended workers on active links (#79). Ending now has exactly one home,
+ * `endEngagement`, which closes all three as of the chosen last day.
+ */
+export const reactivateWorkerLink = async (
   db: Db,
   workerId: string,
   companyId: string,
-  active: boolean,
 ): Promise<void> => {
-  const workerStatus: Database['public']['Enums']['worker_status'] = active ? 'active' : 'ended';
-  const linkStatus: Database['public']['Enums']['worker_status'] = active ? 'active' : 'ended';
-
   const { error: wErr } = await db
     .from('workers')
-    .update({ status: workerStatus })
+    .update({ status: 'active' as const })
     .eq('id', workerId);
   if (wErr) throw new Error(`workers status update: ${wErr.message}`);
 
   const { error: lErr } = await db
     .from('worker_companies')
-    .update({
-      status: linkStatus,
-      ended_on: active ? null : new Date().toISOString().slice(0, 10),
-    })
+    .update({ status: 'active' as const, ended_on: null })
     .eq('worker_id', workerId)
     .eq('company_id', companyId);
   if (lErr) throw new Error(`worker_companies status update: ${lErr.message}`);

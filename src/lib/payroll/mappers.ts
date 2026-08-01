@@ -264,7 +264,10 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     // ponytail: present-tense status, so recalculating an OPEN period for
     // someone active then but inactive now zeroes their allowance. Only open
     // periods can move (migration 18 freezes the money columns at lock), so the
-    // blast radius is one unlocked batch; add worker status history if it bites.
+    // blast radius is one unlocked batch. The 'ended' half of that is already
+    // datable — worker_companies.ended_on now carries the last day — so it
+    // needs the roster query to select it, not status history; only 'inactive',
+    // which nothing dates, actually needs the history.
     const inactive = isInactiveWorker(w.status, link.linkStatus);
     const result = calcContractorRow({
       workedSeconds,
