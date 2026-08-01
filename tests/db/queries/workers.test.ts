@@ -1,6 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
-import { endEngagement, hasPayOutstanding } from '@/db/queries/workers';
+import {
+  endEngagement,
+  hasPayOutstanding,
+  setWorkerStatus,
+  updateWorkerLink,
+} from '@/db/queries/workers';
 import type { Database } from '@/db/types';
 
 /** Records every update payload + filter, so a dropped end-date fails the test.
@@ -14,19 +19,20 @@ type Call = {
   filters: Record<string, unknown>;
 };
 
-const stubDb = (opts: { endedCompanyIds?: string[]; remainingActive?: number } = {}) => {
+const stubDb = (opts: { endedCompanyIds?: string[] } = {}) => {
   const calls: Call[] = [];
   const make = (rec: Call): Chain => {
     const chain = Promise.resolve({
       data: (opts.endedCompanyIds ?? []).map((id) => ({ company_id: id })),
       error: null,
-      count: opts.remainingActive ?? 0,
+      count: 0,
     }) as unknown as Chain;
     const record = (col: string, val: unknown) => {
       rec.filters[col] = val;
       return chain;
     };
     chain.eq = record;
+    chain.neq = (col: string, val: unknown) => record(`${col}!=`, val);
     chain.is = (col: string, val: unknown) => record(`${col} is`, val);
     chain.lte = (col: string, val: unknown) => record(`${col}<=`, val);
     chain.select = () => chain;
@@ -49,8 +55,9 @@ const stubDb = (opts: { endedCompanyIds?: string[]; remainingActive?: number } =
   return { db: db as unknown as SupabaseClient<Database>, calls };
 };
 
-const find = (calls: Call[], table: string, op: Call['op'] = 'update') =>
-  calls.find((c) => c.table === table && c.op === op);
+const all = (calls: Call[], table: string, op: Call['op'] = 'update') =>
+  calls.filter((c) => c.table === table && c.op === op);
+const find = (calls: Call[], table: string, op: Call['op'] = 'update') => all(calls, table, op)[0];
 
 describe('endEngagement — a departure closes everything it left open', () => {
   it('ends the link, the rate and the coverage target on the same last day', async () => {
@@ -100,19 +107,79 @@ describe('endEngagement — a departure closes everything it left open', () => {
     });
   });
 
-  it('reports the links still active, so the caller can drop them to inactive', async () => {
-    const { db, calls } = stubDb({ endedCompanyIds: ['co-1'], remainingActive: 2 });
+  // #89: without this filter a termination re-stamps `ended_on` on a link that
+  // ended months ago — the real last day is gone, and the import guard
+  // (time.ts, keyed company|worker → ended_on) then admits every date in
+  // between as importable, approvable, payable time.
+  it('never re-stamps a link that already ended', async () => {
+    const { db, calls } = stubDb({ endedCompanyIds: ['co-1'] });
+    await endEngagement(db, { workerId: 'w1', companyId: null, lastDay: '2026-07-31' });
+
+    expect(find(calls, 'worker_companies')?.filters).toMatchObject({ 'status!=': 'ended' });
+  });
+
+  // The count that used to live here read through RLS, so a scoped admin ending
+  // one company's assignment saw 0 remaining and flipped a worker still working
+  // elsewhere to 'inactive' globally (#83). The caller counts it on the service
+  // client now; nothing here may quietly grow a second opinion.
+  it('reports only the links it actually ended', async () => {
+    const { db } = stubDb({ endedCompanyIds: ['co-1'] });
     const res = await endEngagement(db, {
       workerId: 'w1',
       companyId: 'co-1',
       lastDay: '2026-07-31',
     });
 
-    expect(res.remainingActive).toBe(2);
-    expect(find(calls, 'worker_companies', 'select')?.filters).toMatchObject({
+    expect(res).toEqual({ endedCompanyIds: ['co-1'] });
+  });
+});
+
+const LINK_PATCH = {
+  contract: 'FT' as const,
+  role: 'Therapist',
+  hubstaff_name: null,
+  weekly_hours: 40,
+};
+
+describe('updateWorkerLink — a stale form cannot revive a departed link', () => {
+  // #88 path 2: admin opens the profile while active, someone else terminates,
+  // the still-open form saves with linkStatus 'active'. Without the filter the
+  // ended link goes back to 'active' while `ended_on` stays set and the rates
+  // stay closed — on the roster, on coverage, and unpayable.
+  it('gates the status write on the link not already being ended', async () => {
+    const { db, calls } = stubDb();
+    await updateWorkerLink(db, 'w1', 'co-1', { ...LINK_PATCH, status: 'active' });
+
+    const [fields, status] = all(calls, 'worker_companies');
+    // The rest of the edit still lands — fixing a departed contractor's role
+    // must not be silently dropped.
+    expect(fields?.patch).not.toHaveProperty('status');
+    expect(status?.patch).toEqual({ status: 'active' });
+    expect(status?.filters).toMatchObject({
       worker_id: 'w1',
-      status: 'active',
+      company_id: 'co-1',
+      'status!=': 'ended',
     });
+  });
+
+  it('issues no status write at all when the patch omits it', async () => {
+    const { db, calls } = stubDb();
+    await updateWorkerLink(db, 'w1', 'co-1', LINK_PATCH);
+
+    expect(all(calls, 'worker_companies')).toHaveLength(1);
+  });
+});
+
+describe('setWorkerStatus — ended is terminal', () => {
+  // #88 path 1: a second admin clicking "End…" on someone already terminated
+  // dropped them to 'inactive' — back on the roster as "between assignments",
+  // and past the portal's final-pay gate (which only checks status==='ended')
+  // for good. Only reactivateWorkerLink lifts 'ended', and it clears `ended_on`.
+  it('refuses to write over an already-ended worker', async () => {
+    const { db, calls } = stubDb();
+    await setWorkerStatus(db, 'w1', 'inactive');
+
+    expect(find(calls, 'workers')?.filters).toMatchObject({ id: 'w1', 'status!=': 'ended' });
   });
 });
 

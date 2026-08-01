@@ -396,12 +396,28 @@ export const updateWorkerLink = async (
     status?: 'active' | 'inactive';
   },
 ): Promise<void> => {
+  const { status, ...rest } = patch;
   const { error } = await db
     .from('worker_companies')
-    .update(patch)
+    .update(rest)
     .eq('worker_id', workerId)
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies update: ${error.message}`);
+  if (!status) return;
+
+  // Status goes in its own gated write. A profile form opened while the
+  // contractor was active still submits 'active' after someone else ended the
+  // link in another tab, which put a departed worker back on the roster with
+  // `ended_on` still set — active and unpayable (#88). Reviving an ended link is
+  // reactivateWorkerLink's job; it clears `ended_on` too. The rest of the patch
+  // lands either way, so editing a departed contractor's role still works.
+  const { error: sErr } = await db
+    .from('worker_companies')
+    .update({ status })
+    .eq('worker_id', workerId)
+    .eq('company_id', companyId)
+    .neq('status', 'ended');
+  if (sErr) throw new Error(`worker_companies status update: ${sErr.message}`);
 };
 
 /**
@@ -433,10 +449,8 @@ export const reactivateWorkerLink = async (
 };
 
 export type EndEngagementResult = {
-  /** Company ids whose link this call ended. */
+  /** Company ids whose link this call ended. Empty means nothing was still open. */
   endedCompanyIds: string[];
-  /** Links still 'active' for this worker AFTER the end. */
-  remainingActive: number;
 };
 
 /**
@@ -451,8 +465,12 @@ export type EndEngagementResult = {
  *                  the last day (the root cause behind the #75 allowance bug)
  *   3. coverage targets — `effective_to`, so /overview stops expecting hours
  *
+ * Already-ended links are left completely alone — see the filter below.
+ *
  * Caller decides what `workers.status` becomes: 'ended' for a termination,
- * 'inactive' when this was their last active assignment.
+ * 'inactive' when this was their last active assignment. That decision needs a
+ * GLOBAL view of the worker's links, which this client cannot give (#83), so it
+ * is made from {@link fetchWorkerLinks} on the service client instead.
  */
 export const endEngagement = async (
   db: Db,
@@ -465,7 +483,13 @@ export const endEngagement = async (
     db
       .from('worker_companies')
       .update({ status: 'ended' as const, ended_on: args.lastDay })
-      .eq('worker_id', args.workerId),
+      .eq('worker_id', args.workerId)
+      // Never touch a link that already ended. Re-stamping `ended_on` erases the
+      // real last day AND re-opens the time-import guard (time.ts:398) for every
+      // date in between, making months of past hours importable and payable
+      // (#89). It is also what let a second "End…" click end a departed worker
+      // all over again (#88).
+      .neq('status', 'ended'),
   ).select('company_id');
   if (linkErr) throw new Error(`worker_companies end: ${linkErr.message}`);
 
@@ -493,37 +517,56 @@ export const endEngagement = async (
   );
   if (targetErr) throw new Error(`coverage_targets close: ${targetErr.message}`);
 
-  const { count, error: countErr } = await db
-    .from('worker_companies')
-    .select('company_id', { count: 'exact', head: true })
-    .eq('worker_id', args.workerId)
-    .eq('status', 'active');
-  if (countErr) throw new Error(`worker_companies remaining: ${countErr.message}`);
-
-  return {
-    endedCompanyIds: (ended ?? []).map((r) => r.company_id),
-    remainingActive: count ?? 0,
-  };
+  return { endedCompanyIds: (ended ?? []).map((r) => r.company_id) };
 };
 
-/** Set `workers.status` directly (termination / last-assignment-ended). */
+/**
+ * Set `workers.status` directly (termination / last-assignment-ended).
+ *
+ * Never lifts 'ended': a departed contractor is only brought back by
+ * reactivateWorkerLink, which clears `ended_on` with it. Without this a stale
+ * "End assignment" click on someone already terminated dropped them to
+ * 'inactive' — back on the roster, and past the portal's final-pay gate for
+ * good (#88).
+ */
 export const setWorkerStatus = async (
   db: Db,
   workerId: string,
   status: Database['public']['Enums']['worker_status'],
 ): Promise<void> => {
-  const { error } = await db.from('workers').update({ status }).eq('id', workerId);
+  const { error } = await db
+    .from('workers')
+    .update({ status })
+    .eq('id', workerId)
+    .neq('status', 'ended');
   if (error) throw new Error(`workers status update: ${error.message}`);
 };
 
-/** Company ids this worker is linked to, any status — for admin scope checks. */
-export const fetchWorkerCompanyIds = async (db: Db, workerId: string): Promise<string[]> => {
+export type WorkerLink = {
+  companyId: string;
+  status: Database['public']['Enums']['worker_status'];
+};
+
+/**
+ * Every company link this worker has, any status.
+ *
+ * Pass the SERVICE client. `worker_companies_admin_all` scopes rows to the
+ * caller's own companies, so read through an admin's client this list is always
+ * a subset of `admin.companyIds` — which made the cross-company terminate guard
+ * vacuously true (#82) and let ending one company's assignment flip a worker
+ * still working elsewhere to 'inactive' globally (#83). Both write
+ * `workers.status`, which is global; the input has to be global too.
+ *
+ * Scoped by `worker_id` only, like hasPayOutstanding — it exposes nothing the
+ * caller isn't already acting on.
+ */
+export const fetchWorkerLinks = async (db: Db, workerId: string): Promise<WorkerLink[]> => {
   const { data, error } = await db
     .from('worker_companies')
-    .select('company_id')
+    .select('company_id, status')
     .eq('worker_id', workerId);
-  if (error) throw new Error(`worker_companies ids: ${error.message}`);
-  return (data ?? []).map((r) => r.company_id);
+  if (error) throw new Error(`worker_companies links: ${error.message}`);
+  return (data ?? []).map((r) => ({ companyId: r.company_id, status: r.status }));
 };
 
 /**

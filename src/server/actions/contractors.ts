@@ -13,7 +13,7 @@ import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
   clearWorkerTools,
   endEngagement,
-  fetchWorkerCompanyIds,
+  fetchWorkerLinks,
   insertWorkerWithLink,
   reactivateWorkerLink,
   setWorkerStatus,
@@ -259,8 +259,11 @@ export async function terminateContractor(args: unknown): Promise<ActionResult> 
 
     // This ends links at EVERY company, so a company-scoped admin needs access
     // to all of them — the per-company check the other actions do, widened to
-    // match the blast radius.
-    const companyIds = await fetchWorkerCompanyIds(db, input.workerId);
+    // match the blast radius. Read on the SERVICE client: through RLS the list
+    // is a subset of admin.companyIds by construction and the guard below can
+    // never fire (#82).
+    const links = await fetchWorkerLinks(createServiceClient(), input.workerId);
+    const companyIds = links.map((l) => l.companyId);
     if (!admin.isOwner && companyIds.some((id) => !admin.companyIds.includes(id))) {
       return {
         ok: false,
@@ -279,6 +282,14 @@ export async function terminateContractor(args: unknown): Promise<ActionResult> 
     await clearWorkerTools(createServiceClient(), input.workerId);
 
     await logEvent({
+      // audit_log's INSERT policy is `is_company_admin(company_id)`, and
+      // is_company_admin(NULL) collapses to is_owner() — so a NULL here silently
+      // dropped the row for exactly the scoped admins whose terminations most
+      // need a trail (#93). A termination spans every company; `detail.companies`
+      // carries the span, this just has to name one the admin can see.
+      // ponytail: first link wins. One row per company if audit ever needs
+      // per-company retrieval of this action.
+      companyId: companyIds[0] ?? null,
       action: 'contractor.terminated',
       entity: input.workerId,
       detail: {
@@ -316,11 +327,25 @@ export async function endAssignment(args: unknown): Promise<ActionResult> {
 
   try {
     const db = await createServerSupabase();
-    const { remainingActive } = await endEngagement(db, {
+    const { endedCompanyIds } = await endEngagement(db, {
       workerId: input.workerId,
       companyId: input.companyId,
       lastDay: input.lastDay,
     });
+    // Nothing was open to end — a stale tab clicking "End…" on an assignment
+    // that already ended. Say so instead of re-running the tail below, which is
+    // how a terminated contractor got dropped back to 'inactive' (#88).
+    if (endedCompanyIds.length === 0) {
+      return { ok: false, error: 'That assignment has already ended.' };
+    }
+
+    // Global count on the SERVICE client. Through RLS this sees only the calling
+    // admin's companies, so a worker still active at a company they cannot see
+    // counted as zero and went 'inactive' everywhere — zeroing their health
+    // allowance and 13th-month at the company still employing them (#83).
+    const remainingActive = (await fetchWorkerLinks(createServiceClient(), input.workerId)).filter(
+      (l) => l.status === 'active',
+    ).length;
     if (remainingActive === 0) await setWorkerStatus(db, input.workerId, 'inactive');
 
     await logEvent({
