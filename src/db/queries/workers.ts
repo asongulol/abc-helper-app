@@ -428,3 +428,106 @@ export const setWorkerLinkStatus = async (
     .eq('company_id', companyId);
   if (lErr) throw new Error(`worker_companies status update: ${lErr.message}`);
 };
+
+export type EndEngagementResult = {
+  /** Company ids whose link this call ended. */
+  endedCompanyIds: string[];
+  /** Links still 'active' for this worker AFTER the end. */
+  remainingActive: number;
+};
+
+/**
+ * End an engagement as of `lastDay` — ONE company link, or every link when
+ * `companyId` is null (full termination).
+ *
+ * Closes the three open-ended things a departure leaves dangling, which is the
+ * whole point of routing both flows through here rather than a bare status
+ * write:
+ *   1. the link  — status 'ended' + `ended_on` (the date nothing read before)
+ *   2. rates     — `effective_end`, so a later recalc can't resolve pay past
+ *                  the last day (the root cause behind the #75 allowance bug)
+ *   3. coverage targets — `effective_to`, so /overview stops expecting hours
+ *
+ * Caller decides what `workers.status` becomes: 'ended' for a termination,
+ * 'inactive' when this was their last active assignment.
+ */
+export const endEngagement = async (
+  db: Db,
+  args: { workerId: string; companyId: string | null; lastDay: string },
+): Promise<EndEngagementResult> => {
+  const forOneCompany = <T extends { eq: (col: string, val: string) => T }>(q: T): T =>
+    args.companyId === null ? q : q.eq('company_id', args.companyId);
+
+  const { data: ended, error: linkErr } = await forOneCompany(
+    db
+      .from('worker_companies')
+      .update({ status: 'ended' as const, ended_on: args.lastDay })
+      .eq('worker_id', args.workerId),
+  ).select('company_id');
+  if (linkErr) throw new Error(`worker_companies end: ${linkErr.message}`);
+
+  const { error: rateErr } = await forOneCompany(
+    db
+      .from('rates')
+      .update({ effective_end: args.lastDay })
+      .eq('worker_id', args.workerId)
+      .is('effective_end', null)
+      // rates_check is `effective_end >= effective_start`, so never close a rate
+      // that starts AFTER the last day — a future-dated raise for someone who
+      // left is left alone (harmless: their link is ended, so no row is built).
+      .lte('effective_start', args.lastDay),
+  );
+  if (rateErr) throw new Error(`rates close: ${rateErr.message}`);
+
+  const { error: targetErr } = await forOneCompany(
+    db
+      .from('coverage_targets')
+      .update({ effective_to: args.lastDay })
+      .eq('worker_id', args.workerId)
+      .is('effective_to', null)
+      // Same CHECK shape as rates (effective_to >= effective_from).
+      .lte('effective_from', args.lastDay),
+  );
+  if (targetErr) throw new Error(`coverage_targets close: ${targetErr.message}`);
+
+  const { count, error: countErr } = await db
+    .from('worker_companies')
+    .select('company_id', { count: 'exact', head: true })
+    .eq('worker_id', args.workerId)
+    .eq('status', 'active');
+  if (countErr) throw new Error(`worker_companies remaining: ${countErr.message}`);
+
+  return {
+    endedCompanyIds: (ended ?? []).map((r) => r.company_id),
+    remainingActive: count ?? 0,
+  };
+};
+
+/** Set `workers.status` directly (termination / last-assignment-ended). */
+export const setWorkerStatus = async (
+  db: Db,
+  workerId: string,
+  status: Database['public']['Enums']['worker_status'],
+): Promise<void> => {
+  const { error } = await db.from('workers').update({ status }).eq('id', workerId);
+  if (error) throw new Error(`workers status update: ${error.message}`);
+};
+
+/** Company ids this worker is linked to, any status — for admin scope checks. */
+export const fetchWorkerCompanyIds = async (db: Db, workerId: string): Promise<string[]> => {
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('company_id')
+    .eq('worker_id', workerId);
+  if (error) throw new Error(`worker_companies ids: ${error.message}`);
+  return (data ?? []).map((r) => r.company_id);
+};
+
+/** Wipe stored tool credentials — a terminated contractor can't be handed them. */
+export const clearWorkerTools = async (db: Db, workerId: string): Promise<void> => {
+  const { error } = await db
+    .from('worker_tools')
+    .update({ enc: null, popup_pending: false })
+    .eq('worker_id', workerId);
+  if (error) throw new Error(`worker_tools clear: ${error.message}`);
+};

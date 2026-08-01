@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import type { RosterWorker } from '@/db/queries/workers';
 import type { WorkerEngagement } from '@/server/actions/contractors';
 import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
+import { EndEngagementModal } from '../EndEngagementModal';
 import { RateCard } from '../RateCard';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
@@ -17,6 +19,7 @@ interface Props extends ProfileTabProps {
   updateEng: (i: number, patch: Partial<WorkerEngagement>) => void;
   saveEng: (e: WorkerEngagement) => void;
   removeEng: (e: WorkerEngagement) => void;
+  endEng: (e: WorkerEngagement, lastDay: string, reason: string) => void;
   assignTo: string;
   setAssignTo: (v: string) => void;
   handleAssign: () => void;
@@ -33,6 +36,7 @@ export function PayTab({
   updateEng,
   saveEng,
   removeEng,
+  endEng,
   assignTo,
   setAssignTo,
   handleAssign,
@@ -44,6 +48,7 @@ export function PayTab({
   onSubmit,
   panelProps,
 }: Props) {
+  const [endTarget, setEndTarget] = useState<WorkerEngagement | null>(null);
   return (
     <div {...panelProps}>
       {/* Only the per-company engagement saves via the profile form; the rate
@@ -97,7 +102,11 @@ export function PayTab({
               >
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
-                <option value="ended">Ended</option>
+                {/* Ending is a workflow (it closes rates + coverage targets), not
+                    a field — shown so an already-ended link renders, never picked. */}
+                <option value="ended" disabled>
+                  Ended
+                </option>
               </select>
             </Field>
           </div>
@@ -203,7 +212,9 @@ export function PayTab({
                 >
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
-                  <option value="ended">Ended</option>
+                  <option value="ended" disabled>
+                    Ended
+                  </option>
                 </select>
               </Field>
               <button
@@ -214,6 +225,17 @@ export function PayTab({
               >
                 Save
               </button>
+              {e.status !== 'ended' && (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={isPending}
+                  title="End this assignment as of a last day"
+                  onClick={() => setEndTarget(e)}
+                >
+                  End…
+                </button>
+              )}
               {e.kind !== 'employer' && (
                 <button
                   type="button"
@@ -258,6 +280,20 @@ export function PayTab({
           </div>
         )}
       </section>
+
+      {endTarget && (
+        <EndEngagementModal
+          name={`${worker.firstName} ${worker.lastName}`.trim()}
+          companyName={endTarget.companyName}
+          busy={isPending}
+          onConfirm={({ lastDay, reason }) => {
+            const target = endTarget;
+            setEndTarget(null);
+            endEng(target, lastDay, reason);
+          }}
+          onCancel={() => setEndTarget(null)}
+        />
+      )}
     </div>
   );
 }

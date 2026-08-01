@@ -76,6 +76,23 @@ export const contractForEdit = (
 };
 export const WorkerStatusSchema = z.enum(['active', 'inactive', 'ended']);
 
+/** Same sanity bounds as a hire date (2000 → one year out); own wording. */
+const LastDaySchema = IsoDateSchema.refine((d) => hireDateRangeError(d) === null, {
+  message: 'Last day must be between 2000 and one year from now.',
+});
+
+/** End EVERY engagement — the contractor has left. */
+export const TerminateContractorSchema = z.object({
+  workerId: uuid(),
+  lastDay: LastDaySchema,
+  reason: z.string().max(500).optional(),
+});
+export type TerminateContractorInput = z.infer<typeof TerminateContractorSchema>;
+
+/** End ONE company assignment; the contractor stays on the roster. */
+export const EndAssignmentSchema = TerminateContractorSchema.extend({ companyId: uuid() });
+export type EndAssignmentInput = z.infer<typeof EndAssignmentSchema>;
+
 /**
  * Require a valid pay_basis whenever the contract is PHS (per hour / session);
  * a PHS engagement with no basis is unpayable (the engine refuses to guess).

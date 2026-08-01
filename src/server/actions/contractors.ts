@@ -11,8 +11,12 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
+  clearWorkerTools,
+  endEngagement,
+  fetchWorkerCompanyIds,
   insertWorkerWithLink,
   setWorkerLinkStatus,
+  setWorkerStatus,
   updateWorkerLink,
   updateWorkerProfile,
 } from '@/db/queries/workers';
@@ -25,10 +29,12 @@ import { getCurrentAdmin } from '@/server/auth/admin';
 import {
   AddContractorSchema,
   type ContractType,
+  EndAssignmentSchema,
   HireContractorSchema,
   type PayBasis,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
+  TerminateContractorSchema,
 } from '@/types/schemas/contractors';
 
 /** Quick-add a blank contractor and link them to the selected company. */
@@ -201,6 +207,13 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
   if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
     return { ok: false, error: 'No access to this company.' };
   }
+  // Reactivation only. Ending an engagement has to close rates and coverage
+  // targets too, so it goes through terminateContractor / endAssignment — a
+  // second path that writes status='ended' and nothing else is what left 6
+  // ended workers sitting on active links (#79).
+  if (!input.active) {
+    return { ok: false, error: 'Use Terminate or End assignment to end an engagement.' };
+  }
 
   try {
     const db = await createServerSupabase();
@@ -217,6 +230,113 @@ export async function setContractorLinkStatus(args: unknown): Promise<ActionResu
       ok: false,
       error: humanizeError(err, 'Status update failed.'),
     };
+  }
+}
+
+/**
+ * Terminate a contractor — they have left, so EVERY engagement ends as of
+ * `lastDay`, rates and coverage targets close, and stored tool credentials are
+ * wiped.
+ *
+ * Deliberately does NOT touch the portal login: access is kept until their
+ * final pay lands (owner decision), which is derived at sign-in rather than
+ * revoked here. Nor does it block or alter payment — time already worked is
+ * still payable, immediately via an off-cycle batch or on the next scheduled
+ * period. Ending an engagement is not the same as closing the books on it.
+ */
+export async function terminateContractor(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = TerminateContractorSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  try {
+    const db = await createServerSupabase();
+
+    // This ends links at EVERY company, so a company-scoped admin needs access
+    // to all of them — the per-company check the other actions do, widened to
+    // match the blast radius.
+    const companyIds = await fetchWorkerCompanyIds(db, input.workerId);
+    if (!admin.isOwner && companyIds.some((id) => !admin.companyIds.includes(id))) {
+      return {
+        ok: false,
+        error: 'This contractor is assigned to a company you cannot access — ask an owner.',
+      };
+    }
+
+    await endEngagement(db, {
+      workerId: input.workerId,
+      companyId: null,
+      lastDay: input.lastDay,
+    });
+    await setWorkerStatus(db, input.workerId, 'ended');
+    // Service client: worker_tools holds encrypted credentials and denies the
+    // admin role, same reason withdrawOffer reaches for it.
+    await clearWorkerTools(createServiceClient(), input.workerId);
+
+    await logEvent({
+      action: 'contractor.terminated',
+      entity: input.workerId,
+      detail: {
+        last_day: input.lastDay,
+        ...(input.reason ? { reason: input.reason } : {}),
+        companies: companyIds.length,
+        by: admin.email,
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Termination failed.') };
+  }
+}
+
+/**
+ * End ONE company assignment as of `lastDay`. The contractor stays on the
+ * roster: if this was their last active link they become `inactive` — between
+ * assignments, still willing to work — never `ended`. Only `terminateContractor`
+ * ends someone.
+ */
+export async function endAssignment(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = EndAssignmentSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const { remainingActive } = await endEngagement(db, {
+      workerId: input.workerId,
+      companyId: input.companyId,
+      lastDay: input.lastDay,
+    });
+    if (remainingActive === 0) await setWorkerStatus(db, input.workerId, 'inactive');
+
+    await logEvent({
+      companyId: input.companyId,
+      action: 'assignment.ended',
+      entity: input.workerId,
+      detail: {
+        last_day: input.lastDay,
+        ...(input.reason ? { reason: input.reason } : {}),
+        remaining_active: remainingActive,
+        by: admin.email,
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Ending the assignment failed.') };
   }
 }
 

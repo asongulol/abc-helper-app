@@ -20,7 +20,7 @@ import { clientAlias } from '@/lib/clients';
 import { fullName } from '@/lib/names';
 import type { RateRow } from '@/lib/pay/rates';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
-import { setContractorLinkStatus } from '@/server/actions/contractors';
+import { setContractorLinkStatus, terminateContractor } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
 
 // Modal/wizard chunks load on first open (rendered only behind state flags),
@@ -34,6 +34,10 @@ const BulkImportModal = dynamic(() => import('./BulkImportModal').then((m) => m.
 });
 const PullWiseRecipientsModal = dynamic(
   () => import('./PullWiseRecipientsModal').then((m) => m.PullWiseRecipientsModal),
+  { ssr: false },
+);
+const EndEngagementModal = dynamic(
+  () => import('./EndEngagementModal').then((m) => m.EndEngagementModal),
   { ssr: false },
 );
 
@@ -53,7 +57,8 @@ type Props = {
 
 type RowShape = RosterWorker & {
   _name: string;
-  _statusLabel: 'active' | 'inactive';
+  /** `inactive` = between assignments, still willing; `ended` = terminated. */
+  _statusLabel: 'active' | 'inactive' | 'ended';
 };
 
 /** Avatar fallback when no photo: initials of the first two words of the name. */
@@ -90,7 +95,7 @@ export function ContractorsClient({
   const [showBulk, setShowBulk] = useState(false);
   const [showPullWise, setShowPullWise] = useState(false);
   const [showAnnounce, setShowAnnounce] = useState(false);
-  const [deactivateTarget, setDeactivateTarget] = useState<RosterWorker | null>(null);
+  const [terminateTarget, setTerminateTarget] = useState<RosterWorker | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<RosterWorker | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RosterWorker | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -116,15 +121,38 @@ export function ContractorsClient({
         const shaped: RowShape = {
           ...updated,
           _name: fullName(updated),
-          _statusLabel: isActive(updated) ? 'active' : 'inactive',
+          _statusLabel: statusLabel(updated),
         };
         return shaped;
       }),
     );
   }
 
-  function handleDeactivate(worker: RosterWorker) {
-    setDeactivateTarget(worker);
+  function handleTerminate(worker: RosterWorker) {
+    setTerminateTarget(worker);
+  }
+
+  function runTerminate(worker: RosterWorker, lastDay: string, reason: string) {
+    const id = worker.workerId;
+    setBusyIds((s) => new Set([...s, id]));
+    startTransition(async () => {
+      const result = await terminateContractor({
+        workerId: id,
+        lastDay,
+        ...(reason ? { reason } : {}),
+      });
+      setBusyIds((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+      if (!result.ok) {
+        notify(result.error, { type: 'error' });
+        return;
+      }
+      notify('Contractor terminated.', { type: 'success' });
+      refreshRow({ ...worker, workerStatus: 'ended', linkStatus: 'ended' });
+    });
   }
 
   function handleReactivate(worker: RosterWorker) {
@@ -283,10 +311,10 @@ export function ContractorsClient({
               // top of the confirm dialog and burying its Cancel (#006).
               onClick={(e) => {
                 e.stopPropagation();
-                handleDeactivate(r);
+                handleTerminate(r);
               }}
             >
-              Deactivate
+              Terminate
             </button>
           ) : (
             <button
@@ -413,19 +441,16 @@ export function ContractorsClient({
         </Modal>
       )}
 
-      {deactivateTarget && (
-        <ConfirmDangerModal
-          title="Deactivate contractor"
-          message={`Deactivate ${fullName(deactivateTarget)}? They will be excluded from payroll calculations.`}
-          consequence="You can reactivate them at any time."
-          confirmLabel="Deactivate"
-          busy={busyIds.has(deactivateTarget.workerId)}
-          onConfirm={() => {
-            const target = deactivateTarget;
-            setDeactivateTarget(null);
-            toggleStatus(target, false);
+      {terminateTarget && (
+        <EndEngagementModal
+          name={fullName(terminateTarget)}
+          busy={busyIds.has(terminateTarget.workerId)}
+          onConfirm={({ lastDay, reason }) => {
+            const target = terminateTarget;
+            setTerminateTarget(null);
+            runTerminate(target, lastDay, reason);
           }}
-          onCancel={() => setDeactivateTarget(null)}
+          onCancel={() => setTerminateTarget(null)}
         />
       )}
 
@@ -481,10 +506,16 @@ function isActive(w: RosterWorker): boolean {
   return w.workerStatus === 'active' && w.linkStatus === 'active';
 }
 
+/** Terminated beats between-assignments: either status reading 'ended' means gone. */
+function statusLabel(w: RosterWorker): RowShape['_statusLabel'] {
+  if (w.workerStatus === 'ended' || w.linkStatus === 'ended') return 'ended';
+  return isActive(w) ? 'active' : 'inactive';
+}
+
 function buildRows(roster: RosterWorker[]): RowShape[] {
   return roster.map((w) => ({
     ...w,
     _name: fullName(w),
-    _statusLabel: isActive(w) ? ('active' as const) : ('inactive' as const),
+    _statusLabel: statusLabel(w),
   }));
 }

@@ -7,6 +7,7 @@ import type { RosterWorker } from '@/db/queries/workers';
 import { fullName as formatFullName } from '@/lib/names';
 import {
   assignWorkerCompany,
+  endAssignment,
   getWorkerCompanies,
   getWorkerPhotoUrl,
   saveWorkerCompanyLink,
@@ -221,6 +222,28 @@ export function useContractorProfile(
       }
       setEngagements((arr) => arr.filter((x) => x.companyId !== e.companyId));
       notify(`Removed ${e.companyName}.`, { type: 'success' });
+    });
+  };
+
+  /** End ONE assignment as of a last day (closes its rates + coverage targets).
+   *  The contractor stays on the roster — the server drops them to `inactive`
+   *  only if this was their last active link. */
+  const endEng = (e: WorkerEngagement, lastDay: string, reason: string) => {
+    startTransition(async () => {
+      const res = await endAssignment({
+        workerId: worker.workerId,
+        companyId: e.companyId,
+        lastDay,
+        ...(reason ? { reason } : {}),
+      });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      setEngagements((arr) =>
+        arr.map((x) => (x.companyId === e.companyId ? { ...x, status: 'ended' } : x)),
+      );
+      notify(`Ended the ${e.companyName} assignment.`, { type: 'success' });
     });
   };
 
@@ -460,6 +483,7 @@ export function useContractorProfile(
     updateEng,
     saveEng,
     removeEng,
+    endEng,
     assignTo,
     setAssignTo,
     handleAssign,

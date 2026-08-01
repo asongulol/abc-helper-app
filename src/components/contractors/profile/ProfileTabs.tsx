@@ -83,6 +83,7 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [],
           updateEng={p.updateEng}
           saveEng={p.saveEng}
           removeEng={p.removeEng}
+          endEng={p.endEng}
           assignTo={p.assignTo}
           setAssignTo={p.setAssignTo}
           handleAssign={p.handleAssign}
