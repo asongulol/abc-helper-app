@@ -271,8 +271,8 @@ export default async function OverviewPage() {
         <div className="card" style={{ marginBottom: 16 }}>
           <b>Coverage gaps — this period</b>
           <div className="sub" style={{ margin: '4px 0 10px' }}>
-            Active contractors whose tracked hours fall short of their expected hours (explicit
-            target, or their weekly hours × weeks in the period).
+            Active contractors whose tracked hours + PTO fall short of their expected hours
+            (explicit target, or their weekly hours × weeks in the period).
           </div>
           <div className="table-scroll">
             <table aria-label="Coverage gaps this period">
@@ -281,6 +281,9 @@ export default async function OverviewPage() {
                   <th scope="col">Contractor</th>
                   <th scope="col" style={{ textAlign: 'right' }}>
                     Worked
+                  </th>
+                  <th scope="col" style={{ textAlign: 'right' }}>
+                    PTO
                   </th>
                   <th scope="col" style={{ textAlign: 'right' }}>
                     Expected
@@ -296,6 +299,9 @@ export default async function OverviewPage() {
                   <tr key={g.workerId}>
                     <td>{g.workerName}</td>
                     <td style={{ textAlign: 'right' }}>{g.workedHours.toFixed(1)}h</td>
+                    <td style={{ textAlign: 'right' }}>
+                      {g.ptoHours > 0 ? `${g.ptoHours.toFixed(1)}h` : '—'}
+                    </td>
                     <td style={{ textAlign: 'right' }}>{g.expectedHours.toFixed(1)}h</td>
                     <td style={{ textAlign: 'right' }}>{Math.round(g.ratio * 100)}%</td>
                     <td>{g.kind === 'zero_time' ? 'No time logged' : 'Under expected'}</td>

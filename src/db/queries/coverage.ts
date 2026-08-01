@@ -10,6 +10,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import {
+  type CoverageActual,
   type CoverageExpectation,
   type CoverageGap,
   classifyCoverage,
@@ -51,9 +52,13 @@ const resolveTargetHours = (rows: TargetRow[], companyId: string, weeks: number)
 };
 
 /**
- * Expected hours per active contractor for the period: an effective explicit target
- * if one exists, otherwise weekly_hours × weeks. Workers with neither resolve to 0
- * (the classifier ignores them).
+ * Expected hours per active, time-tracked contractor for the period: an effective
+ * explicit target if one exists, otherwise weekly_hours × weeks. Workers with
+ * neither resolve to 0 (the classifier ignores them).
+ *
+ * Scope is narrower than the roster below: ended workers on stale-active links and
+ * anyone with no Hubstaff identity (administrators who never log time) are excluded
+ * — they can only ever produce a false zero_time gap.
  */
 export const fetchCoverageExpectations = async (
   db: Db,
@@ -63,9 +68,15 @@ export const fetchCoverageExpectations = async (
 ): Promise<CoverageExpectation[]> => {
   const { data: links, error } = await db
     .from('worker_companies')
-    .select('worker_id, weekly_hours, workers(first_name, last_name)')
+    .select('worker_id, weekly_hours, workers!inner(first_name, last_name, status)')
     .eq('company_id', companyId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    // A link left active on an ended worker is stale, not coverage.
+    .eq('workers.status', 'active')
+    // Coverage is measured from Hubstaff time, so a link with no Hubstaff identity
+    // can never register hours — admins and other untracked staff would sit in the
+    // gap list forever as zero_time. Not measurable → not a gap.
+    .or('hubstaff_user_id.not.is.null,hubstaff_name.not.is.null');
   if (error) throw new Error(`coverage roster: ${error.message}`);
 
   const active = (links ?? []).filter((l): l is typeof l & { worker_id: string } =>
@@ -104,18 +115,18 @@ export const fetchCoverageExpectations = async (
   });
 };
 
-/** Actual tracked hours per worker for the period (PTO excluded is upstream of time_entries). */
+/** Actual tracked hours + PTO per worker for the period — both count as coverage. */
 export const fetchActualHours = async (
   db: Db,
   companyId: string,
   workerIds: string[],
   periodStart: string,
   periodEnd: string,
-): Promise<{ workerId: string; workedHours: number }[]> => {
+): Promise<CoverageActual[]> => {
   if (workerIds.length === 0) return [];
   const { data, error } = await db
     .from('time_entries')
-    .select('worker_id, tracked_seconds')
+    .select('worker_id, tracked_seconds, pto_seconds')
     .eq('company_id', companyId)
     .in('worker_id', workerIds)
     .gte('work_date', periodStart)
@@ -123,17 +134,18 @@ export const fetchActualHours = async (
     .limit(100000);
   if (error) throw new Error(`coverage actuals: ${error.message}`);
 
-  const secByWorker = new Map<string, number>();
+  const secByWorker = new Map<string, { worked: number; pto: number }>();
   for (const r of data ?? []) {
     if (!r.worker_id) continue;
-    secByWorker.set(
-      r.worker_id,
-      (secByWorker.get(r.worker_id) ?? 0) + (Number(r.tracked_seconds) || 0),
-    );
+    const acc = secByWorker.get(r.worker_id) ?? { worked: 0, pto: 0 };
+    acc.worked += Number(r.tracked_seconds) || 0;
+    acc.pto += Number(r.pto_seconds) || 0;
+    secByWorker.set(r.worker_id, acc);
   }
-  return [...secByWorker.entries()].map(([workerId, sec]) => ({
+  return [...secByWorker.entries()].map(([workerId, s]) => ({
     workerId,
-    workedHours: sec / 3600,
+    workedHours: s.worked / 3600,
+    ptoHours: s.pto / 3600,
   }));
 };
 
@@ -159,9 +171,10 @@ export const fetchCoverageRoster = async (
 ): Promise<CoverageRosterRow[]> => {
   const { data: links, error } = await db
     .from('worker_companies')
-    .select('worker_id, weekly_hours, workers(first_name, last_name)')
+    .select('worker_id, weekly_hours, workers!inner(first_name, last_name, status)')
     .eq('company_id', companyId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .eq('workers.status', 'active');
   if (error) throw new Error(`coverage roster: ${error.message}`);
 
   const active = (links ?? []).filter((l): l is typeof l & { worker_id: string } =>
