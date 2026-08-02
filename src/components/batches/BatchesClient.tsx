@@ -28,6 +28,7 @@ import {
 import {
   type PeriodMatchRow,
   wiseAttributeVariance,
+  wiseCancelTransfer,
   wiseLinkTransfer,
   wiseMatch,
   wisePeriodMatches,
@@ -66,6 +67,8 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
   const [linking, setLinking] = useState('');
   /** The row whose link the operator is detaching (modal target). */
   const [unlinkFor, setUnlinkFor] = useState<PeriodMatchRow | null>(null);
+  /** The row whose still-live Wise draft is being cancelled (modal target). */
+  const [cancelFor, setCancelFor] = useState<PeriodMatchRow | null>(null);
   /** Raw "link this exact transfer" input, per payment: id + why. */
   const [byId, setById] = useState<Record<string, { transferId: string; reason: string }>>({});
   /** The row whose variance is being attributed, and to what. */
@@ -251,6 +254,33 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
     }
   };
 
+  /**
+   * Cancel the unfunded draft this row is holding.
+   *
+   * The step that unblocks everything else: while the draft is live the app
+   * refuses to unlink or re-match the row, because orphaning a fundable transfer
+   * is how a contractor gets paid twice. No money moves — the draft never had
+   * any.
+   */
+  const cancelDraft = async (row: PeriodMatchRow, reason: string) => {
+    setLinking(row.paymentId);
+    try {
+      const res = await wiseCancelTransfer(row.paymentId, reason || undefined);
+      if (!res.ok) {
+        notify(`Cancel failed: ${res.error}`, { type: 'error' });
+        return;
+      }
+      setCancelFor(null);
+      notify(
+        `Cancelled draft ${res.data.transferId} in Wise. Run Match to link the transfer that actually paid this row.`,
+        { type: 'success' },
+      );
+      await Promise.all([openPeriod(periodId), load()]);
+    } finally {
+      setLinking('');
+    }
+  };
+
   const runPoll = async () => {
     setBusy(true);
     try {
@@ -403,6 +433,17 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
                               >
                                 Unlink
                               </button>
+                              {u.cancellable && (
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  disabled={linking !== ''}
+                                  onClick={() => setCancelFor(u)}
+                                  title="Cancel this unfunded draft in Wise. It never held money — and while it is live, this row cannot be re-matched."
+                                >
+                                  Cancel draft in Wise
+                                </button>
+                              )}
                             </div>
                           )}
                           {u.transferId && !u.reason ? null : u.candidates.length === 0 ? (
@@ -756,6 +797,24 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
           </p>
         </div>
       </div>
+
+      {cancelFor && (
+        <ConfirmDangerModal
+          title={`Cancel draft #${cancelFor.transferId} in Wise?`}
+          message={`${cancelFor.workerName || 'This payment'} — ₱${cancelFor.netPhp.toLocaleString()}.`}
+          consequence={
+            'This draft has never held money — cancelling it moves nothing and takes nothing back. ' +
+            'It is the transfer this row is pointing at INSTEAD of the one that actually paid, and while it stays live in Wise it could still be funded and pay this contractor a second time. ' +
+            'After cancelling, run Match to link the real transfer.'
+          }
+          reasonLabel="Why (optional, saved on the payment)"
+          reasonPlaceholder="e.g. duplicate of the 21:54 batch"
+          confirmLabel="Cancel the draft"
+          busy={linking !== ''}
+          onConfirm={(reason) => cancelDraft(cancelFor, reason)}
+          onCancel={() => setCancelFor(null)}
+        />
+      )}
 
       {unlinkFor && (
         <ConfirmDangerModal

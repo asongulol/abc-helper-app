@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 // service.ts pulls in the Wise HTTP client, which validates env at import time.
 vi.mock('@/server/env', () => ({ env: { WISE_API_TOKEN: 'test-token' } }));
 
+import { isCancellable } from '@/lib/wise/types';
 import { isOutsideWindow } from '@/server/wise/service';
 
 /** 2026-07-01→15, paid by the end of the month. */
@@ -34,5 +35,23 @@ describe('isOutsideWindow — when a manual link has to say why', () => {
       false,
     );
     expect(isOutsideWindow('not a date', july)).toBe(false);
+  });
+});
+
+describe('isCancellable — what the cancel button may touch', () => {
+  it('only an in-flight draft', () => {
+    expect(isCancellable('incoming_payment_waiting')).toBe(true);
+    expect(isCancellable('processing')).toBe(true);
+    // Stalled, not sent — the operator should be able to clear it.
+    expect(isCancellable('waiting_recipient_input_to_proceed')).toBe(true);
+  });
+
+  it('never something that already paid, or is already dead', () => {
+    expect(isCancellable('outgoing_payment_sent')).toBe(false);
+    expect(isCancellable('completed')).toBe(false);
+    expect(isCancellable('cancelled')).toBe(false);
+    expect(isCancellable('bounced_back')).toBe(false);
+    expect(isCancellable(null)).toBe(false);
+    expect(isCancellable('')).toBe(false);
   });
 });
