@@ -41,6 +41,8 @@ import {
   servicePoll,
   serviceRecipients,
   serviceStatus,
+  serviceUnlinkTransfer,
+  type UnlinkTransferResult,
 } from '@/server/wise/service';
 import {
   type WiseBatchItem,
@@ -51,6 +53,7 @@ import {
   WiseLinkTransferSchema,
   WiseMatchSchema,
   WiseStatusSchema,
+  WiseUnlinkTransferSchema,
 } from '@/types/schemas/wise';
 
 export type WiseActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -339,6 +342,8 @@ export interface PeriodMatchRow {
   transferId: string | null;
   /** Why the matcher declined, for unmatched rows. */
   reason: string | null;
+  /** The operator's own record — every link/unlink reason, newest last. */
+  note: string | null;
   candidates: OrphanCandidate[];
 }
 
@@ -362,8 +367,17 @@ export async function wisePeriodMatches(
 
     // Only pay for the Wise pull when something in the period actually needs it.
     const suggestions = new Map<string, UnlinkedPayment>();
-    if (rows.some((r) => r.payoutMethod === 'wise' && !r.wiseTransferId)) {
+    const wiseRows = rows.filter((r) => r.payoutMethod === 'wise');
+    if (wiseRows.some((r) => !r.wiseTransferId)) {
       const res = await serviceMatch(db, { payPeriodId, dryRun: true });
+      for (const u of res.unlinked) suggestions.set(u.paymentId, u);
+    }
+    // A LINKED row can still be linked to a transfer that never paid — a
+    // cancelled ghost or an unfunded draft. Only the refresh pass looks at those,
+    // and without it the period reads as fully reconciled while the transfer that
+    // actually paid it sits unclaimed. Both passes pull a period-sized window.
+    if (wiseRows.some((r) => r.wiseTransferId)) {
+      const res = await serviceMatch(db, { payPeriodId, dryRun: true, refresh: true });
       for (const u of res.unlinked) suggestions.set(u.paymentId, u);
     }
 
@@ -377,7 +391,9 @@ export async function wisePeriodMatches(
           status: r.status,
           payoutMethod: r.payoutMethod,
           transferId: r.wiseTransferId,
-          reason: r.wiseTransferId ? null : (s?.reason ?? null),
+          // A reason on a LINKED row is the warning that its transfer never paid.
+          reason: s?.reason ?? null,
+          note: r.note,
           candidates: s?.candidates ?? [],
         };
       }),
@@ -390,23 +406,24 @@ export async function wisePeriodMatches(
 export async function wiseLinkTransfer(
   paymentId: string,
   transferId: string,
+  reason?: string,
 ): Promise<WiseActionResult<LinkTransferResult>> {
   try {
     await requireAdmin();
-    const parsed = WiseLinkTransferSchema.safeParse({ paymentId, transferId });
+    const parsed = WiseLinkTransferSchema.safeParse({ paymentId, transferId, reason });
     if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
 
     const db = createServiceClient();
     const { data: row, error } = await db
       .from('payments')
-      .select('id, net_php, wise_transfer_id')
+      .select('id, net_php, wise_transfer_id, note, pay_periods(period_start, pay_date)')
       .eq('id', parsed.data.paymentId)
       .maybeSingle();
     if (error) return fail(error.message);
     if (!row) return fail('Payment not found.');
     // Overwriting a stored id orphans the transfer it points at — the same
-    // hazard RP-09 guards on the draft path. Poll/refresh is the way to update
-    // an existing link.
+    // hazard RP-09 guards on the draft path. Unlink (with a reason) is the way
+    // to move a link now that it exists.
     if (row.wise_transfer_id) {
       return fail(`Already linked to transfer ${row.wise_transfer_id}. Unlink it first.`);
     }
@@ -416,6 +433,14 @@ export async function wiseLinkTransfer(
       parsed.data.paymentId,
       parsed.data.transferId,
       Number(row.net_php ?? 0),
+      {
+        reason: parsed.data.reason,
+        note: row.note,
+        window: {
+          periodStart: row.pay_periods?.period_start ?? null,
+          payDate: row.pay_periods?.pay_date ?? null,
+        },
+      },
     );
 
     void logEvent({
@@ -429,6 +454,55 @@ export async function wiseLinkTransfer(
         dbAmount: result.dbAmount,
         wiseAmount: result.wiseAmount,
         delta: result.delta,
+        outOfWindow: result.outOfWindow ?? false,
+        reason: parsed.data.reason ?? null,
+      },
+    });
+
+    return ok(result);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Admin: detach the Wise transfer a payment holds, with a reason.
+ *
+ * Clears the id, the dates, the lock and paid_at, and drops `reconciled` back to
+ * `sent` — the row stops claiming a transfer paid it. The reason is appended to
+ * the payment's note and to the audit trail, because after this write nothing
+ * else records which transfer it used to be.
+ */
+export async function wiseUnlinkTransfer(
+  paymentId: string,
+  reason: string,
+): Promise<WiseActionResult<UnlinkTransferResult>> {
+  try {
+    await requireAdmin();
+    const parsed = WiseUnlinkTransferSchema.safeParse({ paymentId, reason });
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
+
+    const db = createServiceClient();
+    const { data: row, error } = await db
+      .from('payments')
+      .select('id, wise_transfer_id, status, note')
+      .eq('id', parsed.data.paymentId)
+      .maybeSingle();
+    if (error) return fail(error.message);
+    if (!row) return fail('Payment not found.');
+
+    const result = await serviceUnlinkTransfer(db, row, parsed.data.reason);
+
+    void logEvent({
+      action: 'wise_match',
+      entity: 'payments',
+      detail: {
+        kind: 'manual_unlink',
+        paymentId: result.paymentId,
+        transferId: result.transferId,
+        wiseStatus: result.wiseStatus,
+        previousStatus: row.status,
+        reason: parsed.data.reason,
       },
     });
 

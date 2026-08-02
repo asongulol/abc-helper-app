@@ -48,6 +48,21 @@ describe('triageDraftRow (RP-09 — server-side double-draft guard)', () => {
     expect(triageDraftRow(row, { amountPhp: 8000 })).toEqual({ recipientId: 555, amountPhp: 8000 });
   });
 
+  it('SKIPS a row that is already paid, however it lost its transfer id', () => {
+    // Unlink clears wise_transfer_id to correct a wrong link. Without this the
+    // corrected row lands back in the draft pool and can be paid a second time.
+    expect(triageDraftRow({ ...row, status: 'sent' })).toEqual({ skip: 'already paid' });
+    expect(triageDraftRow({ ...row, status: 'reconciled' })).toEqual({ skip: 'already paid' });
+    expect(triageDraftRow({ ...row, paid_at: '2026-07-28T21:54:00Z' })).toEqual({
+      skip: 'already paid',
+    });
+    // A draft row with no paid_at is still draftable.
+    expect(triageDraftRow({ ...row, status: 'draft', paid_at: null })).toEqual({
+      recipientId: 555,
+      amountPhp: 12000,
+    });
+  });
+
   it('treats an absent wise_transfer_id field as undrafted', () => {
     expect(triageDraftRow({ net_php: 500, workers: { wise_recipient_id: 1 } })).toEqual({
       recipientId: 1,

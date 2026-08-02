@@ -71,8 +71,19 @@ export const WiseLinkTransferSchema = z.object({
   // Wise transfer ids are numeric; reject anything else before it reaches the
   // API path so a link can't be pointed at an arbitrary URL segment.
   transferId: z.string().regex(/^\d+$/, 'transferId must be a Wise transfer id'),
+  /** Why this transfer, in the operator's words. Required for a link the
+   *  matcher would never propose (outside the period's window). */
+  reason: z.string().trim().max(500).optional(),
 });
 export type WiseLinkTransferInput = z.infer<typeof WiseLinkTransferSchema>;
+
+export const WiseUnlinkTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  // Always required: an unlink erases the only record of which transfer paid
+  // this row, so the reason IS the record after it.
+  reason: z.string().trim().min(3, 'say why — this is the only record of it').max(500),
+});
+export type WiseUnlinkTransferInput = z.infer<typeof WiseUnlinkTransferSchema>;
 
 export const WiseStatusSchema = z.object({
   paymentIds: PaymentIdsSchema,

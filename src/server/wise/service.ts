@@ -1,11 +1,14 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  appendPaymentNote,
   applyMatchPatch,
+  clearPaymentLink,
   fetchClaimedTransferIds,
   fetchDraftPayments,
   fetchMatchPayments,
   fetchPollPayments,
+  findPaymentByTransferId,
   markPaymentSent,
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
@@ -170,6 +173,8 @@ export interface ServiceDraftResult {
 export interface DraftableRow {
   wise_transfer_id?: string | null;
   net_php: number | null;
+  status?: string | null;
+  paid_at?: string | null;
   workers?: { wise_recipient_id?: number | null } | null;
 }
 
@@ -182,12 +187,19 @@ export interface DraftableRow {
  * A row that already carries a `wise_transfer_id` is NEVER re-drafted: the
  * write-back overwrites the stored id, orphaning the first (still live)
  * transfer, and funding the batch then pays the contractor twice (RP-09).
+ *
+ * Nor is a row that is already paid. The id was the only thing standing between
+ * a paid row and a second draft, so unlinking one (to correct a wrong link) used
+ * to hand it straight back to the draft path.
  */
 export const triageDraftRow = (
   row: DraftableRow,
   override?: DraftOverride,
 ): { skip: string } | { recipientId: number; amountPhp: number } => {
   if (row.wise_transfer_id) return { skip: 'already drafted' };
+  if (row.paid_at || row.status === 'sent' || row.status === 'reconciled') {
+    return { skip: 'already paid' };
+  }
   const { recipientId, amountPhp } = resolveDraftRow(row, override);
   if (!recipientId) return { skip: 'no Wise recipient' };
   if (amountPhp <= 0) return { skip: 'no amount' };
@@ -887,6 +899,9 @@ export interface LinkTransferResult {
   /** wiseAmount − dbAmount, in pesos. Non-zero means the operator accepted a
    *  variance; the stored net is left alone either way. */
   delta: number;
+  /** The transfer left outside the window the matcher searches — the operator
+   *  asserted the link and gave a reason. */
+  outOfWindow?: boolean;
 }
 
 /**
@@ -906,16 +921,50 @@ export async function serviceLinkTransfer(
   paymentId: string,
   transferId: string,
   dbAmount: number,
+  opts: {
+    /** Operator's reason — required when the transfer sits outside the period's
+     *  window, where the automatic matcher would never have offered it. */
+    reason?: string | undefined;
+    note?: string | null | undefined;
+    window?: { periodStart: string | null; payDate: string | null } | undefined;
+  } = {},
 ): Promise<LinkTransferResult> {
+  // One transfer pays one row. The matcher drops claimed transfers before it
+  // indexes; the manual path had no such check, and unlink is what made a
+  // second claim reachable by hand.
+  const holder = await findPaymentByTransferId(db, String(transferId), paymentId);
+  if (holder) {
+    throw new Error(
+      `Transfer ${transferId} is already linked to ${holder.workerName || 'another payment'}. Unlink it there first.`,
+    );
+  }
+
   const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
   const status = (detail.status as string | null | undefined) ?? null;
   if (status === 'cancelled') {
     throw new Error(`Wise transfer ${transferId} is cancelled — it never paid anyone.`);
   }
+  if (status && !WISE_PAID_STATES.has(status)) {
+    throw new Error(
+      `Wise transfer ${transferId} is ${status} — it hasn't paid anyone yet, so it can't be the transfer that paid this row.`,
+    );
+  }
 
   const dates = wiseDatesFromRow(detail);
   const sentIso = bestSentDate(dates);
   const wiseAmount = Number(detail.targetValue ?? 0);
+
+  // Outside the window the matcher searches, the link is a claim only the
+  // operator can make — Zagado's 2024-08-16→31 was paid three days before the
+  // period opened. Allowed, but it has to say why, or the reason dies with the
+  // session it was decided in.
+  const outOfWindow = isOutsideWindow(sentIso ?? dates.created, opts.window);
+  const reason = opts.reason?.trim();
+  if (outOfWindow && !reason) {
+    throw new Error(
+      `Transfer ${transferId} was sent outside this period's payment window — add a reason to link it anyway.`,
+    );
+  }
 
   await applyMatchPatch(db, paymentId, {
     wise_transfer_id: String(transferId),
@@ -926,13 +975,81 @@ export async function serviceLinkTransfer(
       : {}),
   });
 
+  if (reason) {
+    await appendPaymentNote(db, paymentId, `Linked #${transferId}: ${reason}`, opts.note ?? null);
+  }
+
   return {
     transferId: String(transferId),
     wiseStatus: status,
     wiseAmount,
     dbAmount,
     delta: wiseAmount - dbAmount,
+    outOfWindow,
   };
+}
+
+/**
+ * Sent before the period opened, or later than a fortnight past its deadline.
+ *
+ * The boundary between "the matcher could have found this itself" and "only the
+ * operator can assert this" — outside it, a link needs a written reason. Unknown
+ * dates are treated as inside: a missing pay_date is not evidence of anything,
+ * and demanding a reason for it would just train people to type "n/a".
+ */
+export const isOutsideWindow = (
+  sentIso: string | null,
+  window?: { periodStart: string | null; payDate: string | null } | undefined,
+): boolean => {
+  if (!sentIso || !window?.periodStart || !window.payDate) return false;
+  const sent = new Date(sentIso).getTime();
+  if (Number.isNaN(sent)) return false;
+  const lo = new Date(`${window.periodStart}T00:00:00.000Z`).getTime();
+  const hi = new Date(`${window.payDate}T23:59:59.999Z`).getTime() + 14 * DAY_MS;
+  return sent < lo || sent > hi;
+};
+
+export interface UnlinkTransferResult {
+  paymentId: string;
+  transferId: string;
+  wiseStatus: string | null;
+}
+
+/**
+ * Detach the transfer a payment holds, with a reason.
+ *
+ * The counterpart `wiseLinkTransfer` has told operators to use since it shipped
+ * ("Already linked to transfer X. Unlink it first.") — a button nobody had built.
+ *
+ * Refuses while the linked transfer is an unfunded draft: that transfer is still
+ * live in Wise, and a row with no transfer id is draftable again, so unlinking it
+ * is the RP-09 double-pay route with extra steps. Cancel it in Wise first.
+ */
+export async function serviceUnlinkTransfer(
+  db: Db,
+  payment: { id: string; wise_transfer_id: string | null; status: string; note: string | null },
+  reason: string,
+): Promise<UnlinkTransferResult> {
+  const transferId = payment.wise_transfer_id;
+  if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
+
+  // A transfer we can't read is one we can't call live, so it can't block the
+  // unlink — but an in-flight draft we CAN read must.
+  const detail = await wiseRequestNullable<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const status = (detail?.status as string | null | undefined) ?? null;
+  if (status && WISE_IN_FLIGHT_STATES.has(status)) {
+    throw new Error(
+      `Transfer ${transferId} is ${status} — still live in Wise. Cancel it there first, or funding it later pays this row twice.`,
+    );
+  }
+
+  await clearPaymentLink(db, payment.id, {
+    note: `Unlinked #${transferId}: ${reason}`,
+    status: payment.status,
+    existingNote: payment.note,
+  });
+
+  return { paymentId: payment.id, transferId, wiseStatus: status };
 }
 
 // ─── read-only lookups ────────────────────────────────────────────────────────

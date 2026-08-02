@@ -31,6 +31,7 @@ import {
   wiseMatch,
   wisePeriodMatches,
   wisePoll,
+  wiseUnlinkTransfer,
 } from '@/server/actions/wise';
 
 interface BatchesClientProps {
@@ -52,6 +53,10 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
   const [rows, setRows] = useState<PeriodMatchRow[]>([]);
   const [rowsBusy, setRowsBusy] = useState(false);
   const [linking, setLinking] = useState('');
+  /** The row whose link the operator is detaching (modal target). */
+  const [unlinkFor, setUnlinkFor] = useState<PeriodMatchRow | null>(null);
+  /** Raw "link this exact transfer" input, per payment: id + why. */
+  const [byId, setById] = useState<Record<string, { transferId: string; reason: string }>>({});
 
   /** Read-only: shows the period's matches and suggestions, writes nothing. */
   const openPeriod = useCallback(
@@ -134,10 +139,10 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
   };
 
   /** Operator confirms one of the suggested transfers for one payment. */
-  const linkTransfer = async (paymentId: string, transferId: string) => {
+  const linkTransfer = async (paymentId: string, transferId: string, reason?: string) => {
     setLinking(paymentId);
     try {
-      const res = await wiseLinkTransfer(paymentId, transferId);
+      const res = await wiseLinkTransfer(paymentId, transferId, reason);
       if (!res.ok) {
         notify(`Link failed: ${res.error}`, { type: 'error' });
         return;
@@ -150,6 +155,30 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
             : ''),
         { type: off ? 'warn' : 'success' },
       );
+      await Promise.all([openPeriod(periodId), load()]);
+    } finally {
+      setLinking('');
+    }
+  };
+
+  /**
+   * Detach a link, with the reason that becomes its only record.
+   *
+   * The row loses its transfer id, dates, lock and paid_at, and a `reconciled`
+   * row drops back to `sent` — so the modal says exactly that before it runs.
+   */
+  const unlinkTransfer = async (row: PeriodMatchRow, reason: string) => {
+    setLinking(row.paymentId);
+    try {
+      const res = await wiseUnlinkTransfer(row.paymentId, reason);
+      if (!res.ok) {
+        notify(`Unlink failed: ${res.error}`, { type: 'error' });
+        return;
+      }
+      setUnlinkFor(null);
+      notify(`Unlinked transfer ${res.data.transferId}. Reason saved on the payment.`, {
+        type: 'success',
+      });
       await Promise.all([openPeriod(periodId), load()]);
     } finally {
       setLinking('');
@@ -277,11 +306,40 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                         </td>
                         <td data-label="Amount">₱{u.netPhp.toLocaleString()}</td>
                         <td data-label="Wise transfer">
-                          {u.transferId ? (
-                            <Badge tone="good" title="Already linked to this Wise transfer">
-                              ✓ #{u.transferId}
-                            </Badge>
-                          ) : u.candidates.length === 0 ? (
+                          {/* A linked row with a reason is linked to a transfer
+                              that never paid — warn, and offer the real one. */}
+                          {u.transferId && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                flexWrap: 'wrap',
+                                marginBottom: u.reason ? 6 : 0,
+                              }}
+                            >
+                              <Badge
+                                tone={u.reason ? 'warn' : 'good'}
+                                title={
+                                  u.reason
+                                    ? 'This transfer never paid — the link is not evidence of payment'
+                                    : 'Already linked to this Wise transfer'
+                                }
+                              >
+                                {u.reason ? '⚠' : '✓'} #{u.transferId}
+                              </Badge>
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={linking !== ''}
+                                onClick={() => setUnlinkFor(u)}
+                                title="Detach this transfer from this payment. Status-only — no money moves."
+                              >
+                                Unlink
+                              </button>
+                            </div>
+                          )}
+                          {u.transferId && !u.reason ? null : u.candidates.length === 0 ? (
                             <span className="muted" style={{ fontSize: 12 }}>
                               {u.payoutMethod === 'wise'
                                 ? 'No Wise transfer for this amount in the pulled history.'
@@ -320,14 +378,90 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                                   <button
                                     type="button"
                                     className="btn ghost sm"
-                                    disabled={linking !== ''}
+                                    disabled={linking !== '' || !!u.transferId}
                                     onClick={() => linkTransfer(u.paymentId, c.transfer_id)}
-                                    title="Record this transfer as the one that paid this row. No money moves and the payroll amount is not changed."
+                                    title={
+                                      u.transferId
+                                        ? 'Unlink the current transfer first — one transfer pays one row.'
+                                        : 'Record this transfer as the one that paid this row. No money moves and the payroll amount is not changed.'
+                                    }
                                   >
                                     {linking === u.paymentId ? 'Linking…' : 'Link'}
                                   </button>
                                 </div>
                               ))}
+                            </div>
+                          )}
+                          {/* Link ANY transfer: the matcher only ever offers what
+                              falls inside the period's window, and a payment sent
+                              early (or from a batch nobody recorded) never will. */}
+                          {!u.transferId && u.payoutMethod === 'wise' && (
+                            <div
+                              style={{
+                                display: 'flex',
+                                gap: 6,
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                marginTop: 6,
+                              }}
+                            >
+                              <input
+                                aria-label={`Wise transfer id for ${u.workerName}`}
+                                placeholder="transfer id"
+                                inputMode="numeric"
+                                style={{ width: 120 }}
+                                value={byId[u.paymentId]?.transferId ?? ''}
+                                onChange={(e) =>
+                                  setById((m) => ({
+                                    ...m,
+                                    [u.paymentId]: {
+                                      transferId: e.target.value.trim(),
+                                      reason: m[u.paymentId]?.reason ?? '',
+                                    },
+                                  }))
+                                }
+                              />
+                              <input
+                                aria-label={`Why this transfer for ${u.workerName}`}
+                                placeholder="why (needed if outside the window)"
+                                style={{ minWidth: 180, flex: 1 }}
+                                value={byId[u.paymentId]?.reason ?? ''}
+                                onChange={(e) =>
+                                  setById((m) => ({
+                                    ...m,
+                                    [u.paymentId]: {
+                                      transferId: m[u.paymentId]?.transferId ?? '',
+                                      reason: e.target.value,
+                                    },
+                                  }))
+                                }
+                              />
+                              <button
+                                type="button"
+                                className="btn ghost sm"
+                                disabled={
+                                  linking !== '' ||
+                                  !/^\d+$/.test(byId[u.paymentId]?.transferId ?? '')
+                                }
+                                onClick={() =>
+                                  linkTransfer(
+                                    u.paymentId,
+                                    byId[u.paymentId]?.transferId ?? '',
+                                    byId[u.paymentId]?.reason,
+                                  )
+                                }
+                                title="Link a transfer by its Wise id, including one the matcher would never suggest."
+                              >
+                                Link by ID
+                              </button>
+                            </div>
+                          )}
+                          {u.note && (
+                            <div
+                              className="muted"
+                              style={{ fontSize: 11, whiteSpace: 'pre-wrap', marginTop: 6 }}
+                            >
+                              {u.note}
                             </div>
                           )}
                         </td>
@@ -450,6 +584,23 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
           </p>
         </div>
       </div>
+
+      {unlinkFor && (
+        <ConfirmDangerModal
+          title={`Unlink transfer #${unlinkFor.transferId}?`}
+          message={`${unlinkFor.workerName || 'This payment'} — ₱${unlinkFor.netPhp.toLocaleString()}.`}
+          consequence={
+            'Clears the transfer id, the Wise dates, the reconcile lock and paid_at, and a reconciled row drops back to sent. ' +
+            'Status-only — no money moves, and nothing changes in Wise.'
+          }
+          reasonLabel="Why are you unlinking it?"
+          reasonPlaceholder="e.g. cancelled draft — the 14:10 batch actually paid this"
+          confirmLabel="Unlink"
+          busy={linking !== ''}
+          onConfirm={(reason) => unlinkTransfer(unlinkFor, reason)}
+          onCancel={() => setUnlinkFor(null)}
+        />
+      )}
 
       {confirmOpen && (
         <ConfirmDangerModal
