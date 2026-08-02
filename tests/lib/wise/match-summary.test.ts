@@ -10,6 +10,7 @@ const tally = (over: Partial<MatchTally> = {}): MatchTally => ({
   noTransfer: 0,
   dbWriteFailed: 0,
   unpaidLink: 0,
+  wrongPeriod: 0,
   ...over,
 });
 
@@ -23,6 +24,7 @@ describe('matchSummary', () => {
       'noTransfer',
       'dbWriteFailed',
       'unpaidLink',
+      'wrongPeriod',
     ] as const) {
       const s = matchSummary(tally({ scanned: 3, [reason]: 3 }));
       expect(s.tone).toBe('warn');

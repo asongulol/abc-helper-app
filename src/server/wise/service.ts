@@ -26,6 +26,7 @@ import {
   filterLive,
 } from '@/lib/wise/matcher';
 import { missingRecipientReason } from '@/lib/wise/recipient-miss';
+import { type PeriodWindow, referenceMatchesPeriod } from '@/lib/wise/reference';
 import type {
   MatchDecision,
   MatchResult,
@@ -48,6 +49,38 @@ import { wiseRequest, wiseRequestNullable } from './client';
 type Db = SupabaseClient<Database>;
 
 const DAY_MS = 86_400_000;
+
+/** Detail calls spent breaking one ambiguous row. Enough for a same-amount
+ *  cluster (the biggest seen is 5), small enough to stay cheap. */
+const MAX_REFERENCE_PROBES = 6;
+
+/** The period bounds a reference is judged against. */
+const periodWindow = (p: {
+  pay_periods?: {
+    period_start?: string | null;
+    period_end?: string | null;
+    pay_date?: string | null;
+  } | null;
+}): PeriodWindow => ({
+  periodStart: p.pay_periods?.period_start ?? null,
+  periodEnd: p.pay_periods?.period_end ?? null,
+  payDate: p.pay_periods?.pay_date ?? null,
+});
+
+/** The recipient index narrowed to ONE transfer, so decideMatch re-runs its own
+ *  window and amount rules against the candidate the reference named rather than
+ *  the caller hand-linking it. */
+const singleTransferIndex = (
+  index: Map<string, WiseTransfer[]>,
+  transferId: string,
+): Map<string, WiseTransfer[]> => {
+  const out = new Map<string, WiseTransfer[]>();
+  for (const [k, list] of index) {
+    const keep = list.filter((t) => String(t.id) === transferId);
+    if (keep.length > 0) out.set(k, keep);
+  }
+  return out;
+};
 
 // ─── profile id cache ─────────────────────────────────────────────────────────
 
@@ -96,17 +129,33 @@ async function mapLimit<T, R>(
  * loop already has the detail and should use wiseDatesFromRow() directly.
  */
 async function fetchWiseDates(listRow: WiseTransfer): Promise<WiseDates> {
+  return (await fetchWiseDetail(listRow)).dates;
+}
+
+/**
+ * Dates AND `details.reference` in one call. The reference is only returned by
+ * the detail endpoint, and this path already pays for that call — so the
+ * strongest signal available about which period a transfer paid costs nothing
+ * extra to read. See lib/wise/reference.ts.
+ */
+async function fetchWiseDetail(
+  listRow: WiseTransfer,
+): Promise<{ dates: WiseDates; reference: string | null }> {
   const dates = wiseDatesFromListRow(listRow);
+  let reference: string | null = null;
   try {
     const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${listRow.id}`);
     const d = wiseDatesFromRow(detail);
     dates.dateFunded = d.dateFunded;
     dates.dateSent = d.dateSent;
     if (!dates.created) dates.created = d.created;
+    const details = detail.details as { reference?: unknown } | null | undefined;
+    const raw = details?.reference ?? detail.reference;
+    reference = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
   } catch {
     // best-effort — keep created at minimum
   }
-  return dates;
+  return { dates, reference };
 }
 
 // ─── draft ────────────────────────────────────────────────────────────────────
@@ -649,13 +698,55 @@ export async function serviceMatch(
         // The service layer re-fetches the detail asynchronously below.
         return wiseDatesFromListRow(t);
       };
-      const d = decideMatch(m, recipIndex, getDates, windowDays, nowIso, taken);
+      let d = decideMatch(m, recipIndex, getDates, windowDays, nowIso, taken);
+
+      // AMBIGUITY BREAKER: the matcher refuses to guess between same-amount
+      // candidates, but their references usually say outright which period each
+      // one paid. A handful of extra detail calls, only on rows that are stuck.
+      if (d.result.outcome === 'ambiguous_exact') {
+        const named: string[] = [];
+        for (const id of d.result.candidate_transfer_ids.slice(0, MAX_REFERENCE_PROBES)) {
+          const t = idIndex.get(id);
+          if (!t) continue;
+          const { reference } = await fetchWiseDetail(t);
+          if (referenceMatchesPeriod(reference, periodWindow(m)) === true) named.push(id);
+        }
+        // Exactly one claiming this period resolves it; two still means guess.
+        if (named.length === 1) {
+          d = decideMatch(
+            m,
+            singleTransferIndex(recipIndex, named[0] as string),
+            getDates,
+            windowDays,
+            nowIso,
+            taken,
+          );
+        }
+      }
 
       // If the decision involves a transfer, fetch the real detail dates now.
       if (d.patch?.wise_transfer_id) {
         const t = idIndex.get(d.patch.wise_transfer_id);
         if (t) {
-          const realDates = await fetchWiseDates(t);
+          const { dates: realDates, reference } = await fetchWiseDetail(t);
+
+          // DUPLICATE GUARD: a transfer whose reference names a DIFFERENT period
+          // is the previous batch's, sitting in this period's window because the
+          // window is deliberately generous. Auto-linking it marks a period paid
+          // that nobody paid. Refuse and hand the operator the evidence.
+          if (referenceMatchesPeriod(reference, periodWindow(m)) === false) {
+            return {
+              result: {
+                payment_id: m.id,
+                worker_id: m.worker_id,
+                outcome: 'reference_names_other_period',
+                transfer_id: String(t.id),
+                reference: reference ?? '',
+                reason: `Wise transfer ${t.id} says "${reference}" — that is not this period. Link it by hand if it really paid this row.`,
+              },
+            };
+          }
+
           d.patch.wise_dates = realDates;
           // Re-evaluate paid_at / status from the real dates.
           const sentIso = bestSentDate(realDates);
@@ -762,6 +853,7 @@ export async function serviceMatch(
       case 'refresh_transfer_not_in_history':
       case 'refresh_transfer_dead':
       case 'refresh_transfer_unfunded':
+      case 'reference_names_other_period':
         unmatched++;
         break;
       default:

@@ -637,7 +637,8 @@ export function annotateOrphans(
       // Holding a dead or unfunded transfer is the case that needs suggestions
       // MOST: the real transfer is sitting right there, unclaimed.
       r.outcome === 'refresh_transfer_dead' ||
-      r.outcome === 'refresh_transfer_unfunded',
+      r.outcome === 'refresh_transfer_unfunded' ||
+      r.outcome === 'reference_names_other_period',
   ) as Extract<
     MatchResult,
     {
@@ -647,7 +648,8 @@ export function annotateOrphans(
         | 'no_recipient'
         | 'ambiguous_exact'
         | 'refresh_transfer_dead'
-        | 'refresh_transfer_unfunded';
+        | 'refresh_transfer_unfunded'
+        | 'reference_names_other_period';
     }
   >[];
 

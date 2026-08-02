@@ -330,6 +330,7 @@ export async function wiseMatch(_args: {
         'refresh_transfer_unfunded',
         'refresh_transfer_not_in_history',
       ),
+      wrongPeriod: count('reference_names_other_period'),
     });
   } catch (e) {
     return fail(e);
