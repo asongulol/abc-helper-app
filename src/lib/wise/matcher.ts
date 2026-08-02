@@ -534,14 +534,23 @@ export function annotateOrphans(
   const paymentById = new Map<string, MatcherPayment>();
   for (const p of allPayments) paymentById.set(p.id, p);
 
+  // Every row that ended without a transfer, including 'ambiguous_exact': the
+  // matcher refusing to choose is precisely when the operator needs the choices.
   const unmatchedResults = allResults.filter(
     (r) =>
       r.outcome === 'no_wise_transfer' ||
       r.outcome === 'no_wise_transfer_in_window' ||
-      r.outcome === 'no_recipient',
+      r.outcome === 'no_recipient' ||
+      r.outcome === 'ambiguous_exact',
   ) as Extract<
     MatchResult,
-    { outcome: 'no_wise_transfer' | 'no_wise_transfer_in_window' | 'no_recipient' }
+    {
+      outcome:
+        | 'no_wise_transfer'
+        | 'no_wise_transfer_in_window'
+        | 'no_recipient'
+        | 'ambiguous_exact';
+    }
   >[];
 
   const recipientName = (t: WiseTransfer): string | null =>

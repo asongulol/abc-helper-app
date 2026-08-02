@@ -22,9 +22,11 @@
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { fetchPeriodStatesForPayments, unpayablePeriodReason } from '@/db/queries/payroll';
+import { fetchPeriodPayments } from '@/db/queries/wise';
 import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
 import type { MatchOutcomeReport } from '@/lib/wise/match-summary';
 import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
+import type { OrphanCandidate, UnlinkedPayment } from '@/lib/wise/types';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
@@ -321,6 +323,65 @@ export async function wiseMatch(_args: {
  * the operator confirms those. Status-only; creates nothing in Wise and never
  * rewrites the payroll amount (a variance is recorded in the audit trail).
  */
+/** One payment in a period, with its transfer or the transfers it could be. */
+export interface PeriodMatchRow {
+  paymentId: string;
+  workerName: string;
+  netPhp: number;
+  status: string;
+  payoutMethod: string | null;
+  /** The linked Wise transfer, or null when the row is still unmatched. */
+  transferId: string | null;
+  /** Why the matcher declined, for unmatched rows. */
+  reason: string | null;
+  candidates: OrphanCandidate[];
+}
+
+/**
+ * Everything in one period, as the reconcile view shows it: who was paid, which
+ * Wise transfer paid them, and for the ones still unmatched, the transfers that
+ * could be it.
+ *
+ * READ-ONLY — the match runs in dry-run, so opening a period never links a
+ * transfer or restates an amount. Only the Match button writes.
+ */
+export async function wisePeriodMatches(
+  payPeriodId: string,
+): Promise<WiseActionResult<PeriodMatchRow[]>> {
+  try {
+    await requireAdmin();
+    if (!payPeriodId) return fail('No period selected.');
+
+    const db = createServiceClient();
+    const rows = await fetchPeriodPayments(db, payPeriodId);
+
+    // Only pay for the Wise pull when something in the period actually needs it.
+    const suggestions = new Map<string, UnlinkedPayment>();
+    if (rows.some((r) => r.payoutMethod === 'wise' && !r.wiseTransferId)) {
+      const res = await serviceMatch(db, { payPeriodId, dryRun: true });
+      for (const u of res.unlinked) suggestions.set(u.paymentId, u);
+    }
+
+    return ok(
+      rows.map((r): PeriodMatchRow => {
+        const s = suggestions.get(r.id);
+        return {
+          paymentId: r.id,
+          workerName: r.workerName,
+          netPhp: r.netPhp,
+          status: r.status,
+          payoutMethod: r.payoutMethod,
+          transferId: r.wiseTransferId,
+          reason: r.wiseTransferId ? null : (s?.reason ?? null),
+          candidates: s?.candidates ?? [],
+        };
+      }),
+    );
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 export async function wiseLinkTransfer(
   paymentId: string,
   transferId: string,

@@ -19,13 +19,19 @@ import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PeriodSummaryRow } from '@/db/queries/payroll';
 import { matchSummary } from '@/lib/wise/match-summary';
-import type { UnlinkedPayment } from '@/lib/wise/types';
+
 import {
   getReconcileOverview,
   type ReconcileOverview,
   reconcileAllPending,
 } from '@/server/actions/reconcile';
-import { wiseLinkTransfer, wiseMatch, wisePoll } from '@/server/actions/wise';
+import {
+  type PeriodMatchRow,
+  wiseLinkTransfer,
+  wiseMatch,
+  wisePeriodMatches,
+  wisePoll,
+} from '@/server/actions/wise';
 
 interface BatchesClientProps {
   companyId: string;
@@ -42,9 +48,31 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  /** Rows the last Match run declined, with the transfers that could be them. */
-  const [unlinked, setUnlinked] = useState<UnlinkedPayment[]>([]);
+  /** The open period's payments, each with its transfer or the ones it could be. */
+  const [rows, setRows] = useState<PeriodMatchRow[]>([]);
+  const [rowsBusy, setRowsBusy] = useState(false);
   const [linking, setLinking] = useState('');
+
+  /** Read-only: shows the period's matches and suggestions, writes nothing. */
+  const openPeriod = useCallback(
+    async (id: string) => {
+      setPeriodId(id);
+      setRows([]);
+      if (!id) return;
+      setRowsBusy(true);
+      try {
+        const res = await wisePeriodMatches(id);
+        if (!res.ok) {
+          notify(res.error, { type: 'error' });
+          return;
+        }
+        setRows(res.data);
+      } finally {
+        setRowsBusy(false);
+      }
+    },
+    [notify],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -99,8 +127,7 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
       }
       const { text, tone } = matchSummary(res.data);
       notify(text, { type: tone });
-      setUnlinked(res.data.unlinked);
-      await load();
+      await Promise.all([openPeriod(periodId), load()]);
     } finally {
       setBusy(false);
     }
@@ -123,8 +150,7 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
             : ''),
         { type: off ? 'warn' : 'success' },
       );
-      setUnlinked((cur) => cur.filter((u) => u.paymentId !== paymentId));
-      await load();
+      await Promise.all([openPeriod(periodId), load()]);
     } finally {
       setLinking('');
     }
@@ -160,14 +186,7 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
         <div className="row" style={{ alignItems: 'flex-end' }}>
           <div className="field">
             <label htmlFor={idBatch}>Batch (locked or paid)</label>
-            <select
-              id={idBatch}
-              value={periodId}
-              onChange={(e) => {
-                setPeriodId(e.target.value);
-                setUnlinked([]);
-              }}
-            >
+            <select id={idBatch} value={periodId} onChange={(e) => openPeriod(e.target.value)}>
               <option value="">Select…</option>
               {periods.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -231,30 +250,42 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                 the leftovers, with any Wise transfer that fits on amount — and
                 on the recipient's name where Wise gave us one. Suggestions
                 only: nothing is written until the operator picks one. */}
-            {unlinked.length > 0 && (
+            {rowsBusy && (
+              <div style={{ textAlign: 'center', padding: 24 }}>
+                <Spinner />
+              </div>
+            )}
+
+            {!rowsBusy && rows.length > 0 && (
               <div className="table-scroll" style={{ marginTop: 12 }}>
-                <table aria-label="Unlinked payments and candidate transfers">
+                <table aria-label="Payments in this period and their Wise transfers">
                   <thead>
                     <tr>
                       <th scope="col">Contractor</th>
                       <th scope="col">Amount</th>
-                      <th scope="col">Possible Wise transfers</th>
+                      <th scope="col">Wise transfer</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {unlinked.map((u) => (
+                    {rows.map((u) => (
                       <tr key={u.paymentId}>
                         <td className="card-title">
                           <b>{u.workerName || '—'}</b>
                           <div className="muted" style={{ fontSize: 11 }}>
-                            {u.reason}
+                            {u.reason ?? u.status}
                           </div>
                         </td>
                         <td data-label="Amount">₱{u.netPhp.toLocaleString()}</td>
-                        <td data-label="Possible Wise transfers">
-                          {u.candidates.length === 0 ? (
+                        <td data-label="Wise transfer">
+                          {u.transferId ? (
+                            <Badge tone="good" title="Already linked to this Wise transfer">
+                              ✓ #{u.transferId}
+                            </Badge>
+                          ) : u.candidates.length === 0 ? (
                             <span className="muted" style={{ fontSize: 12 }}>
-                              No Wise transfer for this amount in the pulled history.
+                              {u.payoutMethod === 'wise'
+                                ? 'No Wise transfer for this amount in the pulled history.'
+                                : `Paid by ${u.payoutMethod ?? 'another method'} — nothing to match.`}
                             </span>
                           ) : (
                             <div style={{ display: 'grid', gap: 6 }}>
@@ -393,8 +424,7 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                             type="button"
                             className="btn ghost sm"
                             onClick={() => {
-                              setPeriodId(p.id);
-                              setUnlinked([]);
+                              openPeriod(p.id);
                               // The per-period panel renders at the top of this
                               // card — bring it into view so the click is visible.
                               document
