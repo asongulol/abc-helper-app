@@ -7,11 +7,11 @@
  *
  * "Reconcile" here = finalize confirmed payments to status 'reconciled' and tag
  * the period "Paid · Wise OK". A payment is reconcilable when it is 'sent', has a
- * paid_at, and is either NON-Wise (nothing to match) or Wise WITH a matched
- * transfer id. Genuinely-unmatched Wise rows (sent, wise, no transfer) are left
- * 'sent' and flagged so they can be matched per-period. Status-only, reversible
- * (re-poll), no money moves. Company-scoped; the bulk action requires a single
- * company.
+ * paid_at, and is either NON-Wise (nothing to match) or a Wise row whose transfer
+ * Wise has CONFIRMED as paid (`wise_locked_at`) — see lib/wise/reconcilable.ts.
+ * Genuinely-unmatched Wise rows are left 'sent' and flagged so they can be
+ * matched per-period. Status-only, reversible (re-poll), no money moves.
+ * Company-scoped; the bulk action requires a single company.
  *
  * NOTE: ideally the two reads/writes below live in src/db/queries (ADR-0002/0003)
  * — that file is outside this cluster's owned set, so they're co-located here and
@@ -23,6 +23,7 @@ import { selectAll } from '@/db/queries/paging';
 import { fetchPeriodIdsForPayments, syncPeriodPaidState } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
+import { isReadyToReconcile, isUnconfirmedWiseLink } from '@/lib/wise/reconcilable';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -43,6 +44,11 @@ export interface ReconcileOverviewPeriod {
   readySent: number;
   /** Wise payment, sent, but with no matched transfer id (flagged). */
   unmatchedWise: number;
+  /** Rows holding a Wise transfer that was never confirmed as paid — a draft the
+   *  app created and could not fund, or a cancelled ghost. Counted whatever the
+   *  row's status, because the damage is done precisely when one of these is
+   *  already sitting behind a green "reconciled". */
+  unconfirmed: number;
   /** Not yet paid (draft/queued) — handle in Process & Pay. */
   drafts: number;
 }
@@ -82,7 +88,7 @@ export async function getReconcileOverview(
         db
           .from('payments')
           .select(
-            'status,payout_method,wise_transfer_id,paid_at,pay_periods(id,period_start,period_end,state)',
+            'status,payout_method,wise_transfer_id,wise_locked_at,paid_at,pay_periods(id,period_start,period_end,state)',
           )
           .eq('company_id', companyId)
           .order('id')
@@ -105,14 +111,15 @@ export async function getReconcileOverview(
           reconciled: 0,
           readySent: 0,
           unmatchedWise: 0,
+          unconfirmed: 0,
           drafts: 0,
         } satisfies ReconcileOverviewPeriod);
       g.total += 1;
+      if (isUnconfirmedWiseLink(p)) g.unconfirmed += 1;
       if (p.status === 'reconciled') g.reconciled += 1;
       else if (p.status === 'draft' || p.status === 'queued') g.drafts += 1;
       else if (p.status === 'sent') {
-        const ready = !!p.paid_at && (p.payout_method !== 'wise' || !!p.wise_transfer_id);
-        if (ready) g.readySent += 1;
+        if (isReadyToReconcile(p)) g.readySent += 1;
         else g.unmatchedWise += 1;
       }
       byP.set(pp.id, g);
@@ -152,14 +159,18 @@ export async function reconcileAllPending(
     const pendingPeriods = overview.ok ? overview.data.pendingPeriods : 0;
 
     // null payout_method counts as non-Wise (paid, nothing to match) — matches
-    // the JS readySent counter.
+    // the JS readySent counter. A Wise row needs its transfer CONFIRMED paid
+    // (wise_locked_at), not merely present: a drafted-but-unfunded transfer id
+    // used to be enough to stamp the row reconciled.
     const { data: upd, error } = await db
       .from('payments')
       .update({ status: 'reconciled' })
       .eq('company_id', companyId)
       .eq('status', 'sent')
       .not('paid_at', 'is', null)
-      .or('payout_method.is.null,payout_method.neq.wise,wise_transfer_id.not.is.null')
+      .or(
+        'payout_method.is.null,payout_method.neq.wise,and(wise_transfer_id.not.is.null,wise_locked_at.not.is.null)',
+      )
       .select('id');
     if (error) return { ok: false, error: error.message };
 
