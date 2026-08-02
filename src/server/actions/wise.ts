@@ -39,10 +39,12 @@ import type { AttributionRecord, AttributionTarget } from '@/server/wise/attribu
 import {
   type AttributionPayment,
   type AttributionResult,
+  type CancelTransferResult,
   explainMissingRecipient,
   type LinkTransferResult,
   serviceAttributeVariance,
   serviceBatch,
+  serviceCancelTransfer,
   serviceDraft,
   serviceFindTransfersByRecipient,
   serviceGetRecipient,
@@ -59,6 +61,7 @@ import {
   WiseAttributeSchema,
   type WiseBatchItem,
   WiseBatchSchema,
+  WiseCancelTransferSchema,
   WiseDraftSchema,
   WiseFindTransfersSchema,
   WiseGetRecipientSchema,
@@ -363,6 +366,9 @@ export interface PeriodMatchRow {
   delta: number | null;
   /** An attribution was applied to this row — so it can be undone. */
   attributed: boolean;
+  /** The linked transfer is an unfunded draft: still live in Wise, still
+   *  fundable, and blocking this row from being re-matched. */
+  cancellable: boolean;
   candidates: OrphanCandidate[];
 }
 
@@ -400,11 +406,13 @@ export async function wisePeriodMatches(
       rows.map((r) => r.id),
     );
     const deltas = new Map<string, number>();
+    const cancellable = new Set<string>();
     if (wiseRows.some((r) => r.wiseTransferId)) {
       const res = await serviceMatch(db, { payPeriodId, dryRun: true, refresh: true });
       for (const u of res.unlinked) suggestions.set(u.paymentId, u);
       for (const r of res.results) {
         if ('delta' in r && Math.abs(r.delta) >= 0.01) deltas.set(r.payment_id, r.delta);
+        if (r.outcome === 'refresh_transfer_unfunded') cancellable.add(r.payment_id);
       }
     }
 
@@ -423,6 +431,7 @@ export async function wisePeriodMatches(
           note: r.note,
           delta: deltas.get(r.id) ?? null,
           attributed: attributed.has(r.id),
+          cancellable: cancellable.has(r.id),
           candidates: s?.candidates ?? [],
         };
       }),
@@ -666,6 +675,53 @@ export async function wiseUndoAttribution(
       action: ATTRIBUTION_UNDO_ACTION,
       entity: parsed.data.paymentId,
       detail: { undid: last.id, target: rec.target, delta: -rec.delta },
+    });
+    revalidatePath('/batches');
+
+    return ok(result);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * OWNER-only: cancel the unfunded Wise transfer a payment is holding.
+ *
+ * Drafting is owner-gated, so undoing it is too. NOT a funding call (ADR-0007):
+ * it is the one direction that can only reduce money movement, and it is what
+ * unblocks a row the app otherwise refuses to touch — while the draft is live,
+ * unlink and re-match both stand down rather than orphan a fundable transfer.
+ */
+export async function wiseCancelTransfer(
+  paymentId: string,
+  reason?: string,
+): Promise<WiseActionResult<CancelTransferResult>> {
+  try {
+    await requireOwner();
+    const parsed = WiseCancelTransferSchema.safeParse({ paymentId, reason });
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
+
+    const db = createServiceClient();
+    const { data: row, error } = await db
+      .from('payments')
+      .select('id, company_id, wise_transfer_id, note')
+      .eq('id', parsed.data.paymentId)
+      .maybeSingle();
+    if (error) return fail(error.message);
+    if (!row) return fail('Payment not found.');
+
+    const result = await serviceCancelTransfer(db, row, parsed.data.reason);
+
+    void logEvent({
+      companyId: row.company_id,
+      action: 'wise_cancel',
+      entity: parsed.data.paymentId,
+      detail: {
+        transferId: result.transferId,
+        previousStatus: result.previousStatus,
+        status: result.status,
+        reason: parsed.data.reason ?? null,
+      },
     });
     revalidatePath('/batches');
 

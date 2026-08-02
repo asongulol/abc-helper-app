@@ -74,6 +74,18 @@ export const WISE_IN_FLIGHT_STATES = new Set([
 export const isDeadTransfer = (status: string): boolean =>
   !WISE_PAID_STATES.has(status) && !WISE_IN_FLIGHT_STATES.has(status);
 
+/**
+ * Can this transfer still be cancelled?
+ *
+ * Only one that has not moved money. Wise refuses anything else, but the check
+ * belongs here too: the error the operator should read is "this one already
+ * paid — cancelling it is not what you want", not a raw 422 from an API they
+ * cannot see. `waiting_recipient_input_to_proceed` is included deliberately —
+ * it is stalled, not sent.
+ */
+export const isCancellable = (status: string | null | undefined): boolean =>
+  !!status && WISE_IN_FLIGHT_STATES.has(status);
+
 // ---- match outcome strings ----------------------------------------
 
 export type MatchOutcome =

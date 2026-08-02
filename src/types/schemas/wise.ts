@@ -121,3 +121,10 @@ export const WiseUndoAttributionSchema = z.object({
   paymentId: z.string().uuid('paymentId must be a UUID'),
 });
 export type WiseUndoAttributionInput = z.infer<typeof WiseUndoAttributionSchema>;
+
+export const WiseCancelTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  /** Optional — cancelling is the safe direction, so it is not gated on prose. */
+  reason: z.string().trim().max(500).optional(),
+});
+export type WiseCancelTransferInput = z.infer<typeof WiseCancelTransferSchema>;

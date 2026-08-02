@@ -35,7 +35,7 @@ import type {
   WiseDates,
   WiseTransfer,
 } from '@/lib/wise/types';
-import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
+import { isCancellable, WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
 import {
   type AttributableRow,
@@ -1139,7 +1139,7 @@ export async function serviceUnlinkTransfer(
   const status = (detail?.status as string | null | undefined) ?? null;
   if (status && WISE_IN_FLIGHT_STATES.has(status)) {
     throw new Error(
-      `Transfer ${transferId} is ${status} — still live in Wise. Cancel it there first, or funding it later pays this row twice.`,
+      `Transfer ${transferId} is ${status} — an unfunded draft that is still live in Wise. Cancel it first ("Cancel draft in Wise"), or funding it later pays this row twice.`,
     );
   }
 
@@ -1484,4 +1484,61 @@ export async function serviceUndoAttribution(
     netPhp: plan.netPhp,
   });
   return { netPhp: plan.netPhp };
+}
+
+// ─── cancel a draft ───────────────────────────────────────────────────────────
+
+export interface CancelTransferResult {
+  transferId: string;
+  previousStatus: string;
+  status: string;
+}
+
+/**
+ * Cancel an unfunded Wise transfer the app is holding.
+ *
+ * The counterpart to drafting, and the step that unblocks everything else: while
+ * a draft is live the app refuses to unlink or re-match its row (orphaning a
+ * fundable transfer is the RP-09 double-pay route), so without a cancel button
+ * the only exit was the Wise UI.
+ *
+ * This is NOT a funding call and does not contradict ADR-0007 — it is the one
+ * direction that can only ever reduce money movement. Refuses anything that has
+ * already paid: `PUT /transfers/{id}/cancel` on a sent transfer is a no-op in
+ * Wise, and the operator needs to be told they are looking at real money, not
+ * handed a raw API error.
+ */
+export async function serviceCancelTransfer(
+  db: Db,
+  payment: { id: string; wise_transfer_id: string | null; note: string | null },
+  reason?: string,
+): Promise<CancelTransferResult> {
+  const transferId = payment.wise_transfer_id;
+  if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
+
+  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const previousStatus = String(detail.status ?? '');
+  if (WISE_PAID_STATES.has(previousStatus)) {
+    throw new Error(
+      `Transfer ${transferId} is ${previousStatus} — that money has already gone out. Nothing to cancel.`,
+    );
+  }
+  if (!isCancellable(previousStatus)) {
+    throw new Error(`Transfer ${transferId} is ${previousStatus} — it cannot be cancelled.`);
+  }
+
+  const cancelled = await wiseRequest<Record<string, unknown>>(
+    `/v1/transfers/${transferId}/cancel`,
+    { method: 'PUT' },
+  );
+  const status = String(cancelled.status ?? 'cancelled');
+
+  await appendPaymentNote(
+    db,
+    payment.id,
+    `Cancelled draft #${transferId}${reason ? `: ${reason}` : ''}`,
+    payment.note,
+  );
+
+  return { transferId, previousStatus, status };
 }
