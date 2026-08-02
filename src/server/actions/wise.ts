@@ -23,15 +23,18 @@ import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { fetchPeriodStatesForPayments, unpayablePeriodReason } from '@/db/queries/payroll';
 import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
+import type { MatchOutcomeReport } from '@/lib/wise/match-summary';
 import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
   explainMissingRecipient,
+  type LinkTransferResult,
   serviceBatch,
   serviceDraft,
   serviceFindTransfersByRecipient,
   serviceGetRecipient,
+  serviceLinkTransfer,
   serviceMatch,
   servicePoll,
   serviceRecipients,
@@ -43,6 +46,7 @@ import {
   WiseDraftSchema,
   WiseFindTransfersSchema,
   WiseGetRecipientSchema,
+  WiseLinkTransferSchema,
   WiseMatchSchema,
   WiseStatusSchema,
 } from '@/types/schemas/wise';
@@ -245,7 +249,7 @@ export async function wiseMatch(_args: {
   payPeriodId?: string;
   windowDays?: number;
   refresh?: boolean;
-}): Promise<WiseActionResult<{ matched: number; suggestions: unknown[] }>> {
+}): Promise<WiseActionResult<MatchOutcomeReport>> {
   try {
     await requireAdmin();
     const parsed = WiseMatchSchema.safeParse({
@@ -286,12 +290,83 @@ export async function wiseMatch(_args: {
       },
     });
 
+    // Return the whole tally, not just the two outcomes the UI used to show —
+    // `unmatched` lumps "no recipient on file" (fix the profile) together with
+    // "no transfer found" (check Wise), and ambiguous / db-write-failed rows had
+    // no representation at all, so a run where nothing linked still read as a
+    // success. See matchSummary.
+    const count = (...outcomes: string[]): number =>
+      result.results.filter((r) => outcomes.includes(r.outcome)).length;
+
     return ok({
+      unlinked: result.unlinked,
+      scanned: result.scanned,
       matched: result.matched,
-      suggestions: result.results.filter(
-        (r) => r.outcome === 'no_wise_transfer' || r.outcome === 'no_wise_transfer_in_window',
-      ),
+      variances: result.variances,
+      ambiguous: result.ambiguous,
+      noRecipient: count('no_recipient'),
+      noTransfer: count('no_wise_transfer', 'no_wise_transfer_in_window'),
+      dbWriteFailed: count('db_write_failed'),
     });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Admin: attach one Wise transfer to one payment, by operator decision.
+ *
+ * The counterpart to wiseMatch's suggestions — the matcher keys on recipient id
+ * and cannot claim a transfer sent to an account the profile doesn't hold, so
+ * the operator confirms those. Status-only; creates nothing in Wise and never
+ * rewrites the payroll amount (a variance is recorded in the audit trail).
+ */
+export async function wiseLinkTransfer(
+  paymentId: string,
+  transferId: string,
+): Promise<WiseActionResult<LinkTransferResult>> {
+  try {
+    await requireAdmin();
+    const parsed = WiseLinkTransferSchema.safeParse({ paymentId, transferId });
+    if (!parsed.success) return fail(parsed.error.issues[0]?.message ?? 'Invalid input');
+
+    const db = createServiceClient();
+    const { data: row, error } = await db
+      .from('payments')
+      .select('id, net_php, wise_transfer_id')
+      .eq('id', parsed.data.paymentId)
+      .maybeSingle();
+    if (error) return fail(error.message);
+    if (!row) return fail('Payment not found.');
+    // Overwriting a stored id orphans the transfer it points at — the same
+    // hazard RP-09 guards on the draft path. Poll/refresh is the way to update
+    // an existing link.
+    if (row.wise_transfer_id) {
+      return fail(`Already linked to transfer ${row.wise_transfer_id}. Unlink it first.`);
+    }
+
+    const result = await serviceLinkTransfer(
+      db,
+      parsed.data.paymentId,
+      parsed.data.transferId,
+      Number(row.net_php ?? 0),
+    );
+
+    void logEvent({
+      action: 'wise_match',
+      entity: 'payments',
+      detail: {
+        kind: 'manual_link',
+        paymentId: parsed.data.paymentId,
+        transferId: result.transferId,
+        wiseStatus: result.wiseStatus,
+        dbAmount: result.dbAmount,
+        wiseAmount: result.wiseAmount,
+        delta: result.delta,
+      },
+    });
+
+    return ok(result);
   } catch (e) {
     return fail(e);
   }

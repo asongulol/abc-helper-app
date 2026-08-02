@@ -43,6 +43,8 @@ export interface MatcherPayment {
    *  window when the batch was actually sent on a different day than the
    *  period's scheduled pay_date. */
   paid_at?: string | null;
+  /** Contractor's full name, for the name axis of the orphan sweep. */
+  worker_name?: string | null;
   workers?: WorkerRecipientInfo | null;
   pay_periods?: {
     pay_date?: string | null;
@@ -85,6 +87,9 @@ export interface MatchResultBase {
 export interface MatchResultNoRecipient extends MatchResultBase {
   outcome: 'no_recipient';
   reason: string;
+  /** No recipient id on file is exactly when a name+amount sweep earns its
+   *  keep — the transfer is in the history, we just have no key for it. */
+  candidate_orphan_transfers?: OrphanCandidate[];
 }
 
 export interface MatchResultNoTransfer extends MatchResultBase {
@@ -149,6 +154,26 @@ export interface OrphanCandidate {
   wise_status: string | null;
   shared_with_n_payments: number;
   ambiguous: boolean;
+  /** Recipient's account-holder name, resolved from targetAccount. Null when
+   *  the recipient list didn't cover it (deleted recipient, other profile). */
+  recipient_name: string | null;
+  /** That name is the contractor's, by the same keys the roster matches on. */
+  name_matches: boolean;
+}
+
+/**
+ * One payment the matcher could not link, with the transfers that could be it.
+ * This is what the operator acts on — the counts alone say "18 unmatched" and
+ * leave them with nowhere to go.
+ */
+export interface UnlinkedPayment {
+  paymentId: string;
+  workerName: string;
+  netPhp: number;
+  outcome: MatchOutcome;
+  /** Why the automatic match declined — shown verbatim. */
+  reason: string;
+  candidates: OrphanCandidate[];
 }
 
 /** What the pure matcher returns for a single payment (no DB side-effects). */

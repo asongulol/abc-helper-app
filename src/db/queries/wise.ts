@@ -43,6 +43,9 @@ export interface MatchPayment {
     wise_recipient_id: number | null;
     wise_recipient_uuid: string | null;
     wise_recipients: Json | null;
+    first_name: string;
+    middle_name: string | null;
+    last_name: string;
   } | null;
   pay_periods: {
     pay_date: string | null;
@@ -139,7 +142,7 @@ export const fetchMatchPayments = async (
   let q = db
     .from('payments')
     .select(
-      'id,worker_id,pay_period_id,wise_transfer_id,status,net_php,original_net_php,payout_method,paid_at,workers(wise_recipient_id,wise_recipient_uuid,wise_recipients),pay_periods(pay_date,period_start,period_end,state)',
+      'id,worker_id,pay_period_id,wise_transfer_id,status,net_php,original_net_php,payout_method,paid_at,workers(wise_recipient_id,wise_recipient_uuid,wise_recipients,first_name,middle_name,last_name),pay_periods(pay_date,period_start,period_end,state)',
     )
     .eq('payout_method', 'wise');
 
@@ -172,6 +175,9 @@ export const fetchMatchPayments = async (
             wise_recipient_id: w.wise_recipient_id ?? null,
             wise_recipient_uuid: w.wise_recipient_uuid ?? null,
             wise_recipients: w.wise_recipients ?? null,
+            first_name: w.first_name,
+            middle_name: w.middle_name ?? null,
+            last_name: w.last_name,
           }
         : null,
       pay_periods: pp

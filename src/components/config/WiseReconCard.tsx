@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react';
 import { Badge, Spinner, useToast } from '@/components/ui';
+import { matchSummary } from '@/lib/wise/match-summary';
 import { wiseMatch, wisePoll } from '@/server/actions/wise';
 
 type PendingAction = 'backfill' | 'scan' | null;
@@ -23,9 +24,8 @@ export const WiseReconCard = () => {
       try {
         const res = await wiseMatch({});
         if (res.ok) {
-          toast.notify(`Matched ${res.data.matched} payment(s).`, {
-            type: 'success',
-          });
+          const { text, tone } = matchSummary(res.data);
+          toast.notify(text, { type: tone });
         } else {
           toast.notify(res.error, { type: 'error' });
         }
