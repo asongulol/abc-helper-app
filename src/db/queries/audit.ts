@@ -192,3 +192,48 @@ export const getAuditLogForExport = async (
   if (error) throw new Error(`getAuditLogForExport: ${error.message}`);
   return (data ?? []).map(mapRow);
 };
+
+/** The audit action a reconcile variance attribution writes. */
+export const ATTRIBUTION_ACTION = 'wise_attribute';
+
+/** Its reversal. A separate action so `lastAttribution` keeps returning the
+ *  attribution itself — an undo is not a thing you can undo. */
+export const ATTRIBUTION_UNDO_ACTION = 'wise_attribute_undo';
+
+/** Which of these payments carry an attribution — one query for the period. */
+export const paymentsWithAttribution = async (
+  db: Db,
+  paymentIds: string[],
+): Promise<Set<string>> => {
+  if (paymentIds.length === 0) return new Set();
+  const { data, error } = await db
+    .from('audit_log')
+    .select('entity')
+    .eq('action', ATTRIBUTION_ACTION)
+    .in('entity', paymentIds);
+  if (error) throw new Error(`paymentsWithAttribution: ${error.message}`);
+  return new Set((data ?? []).map((r) => r.entity).filter((e): e is string => !!e));
+};
+
+/**
+ * The most recent attribution on one payment — everything an undo needs.
+ *
+ * Kept in audit_log rather than a column on payments: it is a decision with an
+ * author and a time, which is exactly what the audit trail is for, and it means
+ * undo reads the same record a human reads.
+ */
+export const lastAttribution = async (
+  db: Db,
+  paymentId: string,
+): Promise<{ id: string; detail: Json } | null> => {
+  const { data, error } = await db
+    .from('audit_log')
+    .select('id,detail')
+    .eq('action', ATTRIBUTION_ACTION)
+    .eq('entity', paymentId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`lastAttribution: ${error.message}`);
+  const row = data?.[0];
+  return row ? { id: row.id, detail: row.detail as Json } : null;
+};

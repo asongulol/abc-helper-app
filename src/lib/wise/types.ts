@@ -65,6 +65,15 @@ export const WISE_IN_FLIGHT_STATES = new Set([
   'waiting_recipient_input_to_proceed',
 ]);
 
+/**
+ * A transfer that can never pay anybody: cancelled, refunded, bounced back —
+ * anything neither terminal-success nor still moving. Derived rather than
+ * listed so an unknown Wise status lands on the safe side (dead, re-matchable)
+ * instead of silently counting as payment evidence.
+ */
+export const isDeadTransfer = (status: string): boolean =>
+  !WISE_PAID_STATES.has(status) && !WISE_IN_FLIGHT_STATES.has(status);
+
 // ---- match outcome strings ----------------------------------------
 
 export type MatchOutcome =
@@ -78,7 +87,10 @@ export type MatchOutcome =
   | 'matched_with_variance'
   | 'db_write_failed'
   | 'refreshed_clean'
-  | 'refresh_transfer_not_in_history';
+  | 'refresh_transfer_not_in_history'
+  | 'refresh_transfer_dead'
+  | 'refresh_transfer_unfunded'
+  | 'reference_names_other_period';
 
 export interface MatchResultBase {
   payment_id: string;
@@ -142,6 +154,31 @@ export interface MatchResultRefreshNotFound extends MatchResultBase {
   reason: string;
 }
 
+/**
+ * The row holds a transfer that never paid: a cancelled ghost
+ * (`refresh_transfer_dead`) or a draft still waiting for funds
+ * (`refresh_transfer_unfunded`). The link is not payment evidence.
+ */
+export interface MatchResultRefreshNotPaid extends MatchResultBase {
+  outcome: 'refresh_transfer_dead' | 'refresh_transfer_unfunded';
+  transfer_id: string;
+  wise_status: string;
+  reason: string;
+  candidate_orphan_transfers?: OrphanCandidate[];
+}
+
+/**
+ * The transfer that fit by amount and date says, in its own reference, that it
+ * paid a different period. Not linked — see lib/wise/reference.ts.
+ */
+export interface MatchResultReferenceMismatch extends MatchResultBase {
+  outcome: 'reference_names_other_period';
+  transfer_id: string;
+  reference: string;
+  reason: string;
+  candidate_orphan_transfers?: OrphanCandidate[];
+}
+
 export type MatchResult =
   | MatchResultNoRecipient
   | MatchResultNoTransfer
@@ -149,7 +186,9 @@ export type MatchResult =
   | MatchResultSuccess
   | MatchResultVariance
   | MatchResultDbFailed
-  | MatchResultRefreshNotFound;
+  | MatchResultRefreshNotFound
+  | MatchResultRefreshNotPaid
+  | MatchResultReferenceMismatch;
 
 export interface OrphanCandidate {
   transfer_id: string;

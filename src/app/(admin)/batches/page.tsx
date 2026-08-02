@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { BatchesClient } from '@/components/batches/BatchesClient';
 import { createServerSupabase } from '@/db/clients/server';
+import { listClients } from '@/db/queries/config';
 import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
@@ -34,6 +35,11 @@ export default async function BatchesPage() {
   const allPeriods = await fetchPeriodSummaries(db, companyId);
   // Dropdown = ALL locked + paid batches (legacy: reconcileOnly period list).
   const periods = allPeriods.filter((p) => p.state === 'locked' || p.state === 'paid');
+  // For attributing a reconcile variance to the client it belongs to.
+  const clients = (await listClients(db, { activeOnly: true })).map((c) => ({
+    id: c.id,
+    name: c.name,
+  }));
 
-  return <BatchesClient companyId={companyId} periods={periods} />;
+  return <BatchesClient companyId={companyId} periods={periods} clients={clients} />;
 }

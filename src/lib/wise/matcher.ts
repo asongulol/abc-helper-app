@@ -20,7 +20,7 @@ import type {
   WiseDates,
   WiseTransfer,
 } from './types';
-import { WISE_PAID_STATES } from './types';
+import { isDeadTransfer, WISE_PAID_STATES } from './types';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -229,7 +229,13 @@ export function buildTransferIdIndex(transfers: WiseTransfer[]): Map<string, Wis
  * with both a `cancelled` ghost AND the real `outgoing_payment_sent` transfer for
  * the same recipient+amount. Including the ghosts would make every row look
  * "ambiguous" (2 candidates per recipient).
- * Confirmed via live API probe on the May 2026 batch: 13 sent + 12 cancelled.
+ *
+ * Live probe of the 2026-05-29 batch: 82 transfers to 14 recipients — five
+ * batches created, 68 cancelled, 14 sent. Ghosts outnumber real sends 5:1.
+ *
+ * This keeps ghosts out of the CANDIDATE pool only. A ghost a row already holds
+ * still has to be findable by id, or the row's dead link is undiagnosable —
+ * index by id from the FULL list, not this one. See `decideRefresh`.
  */
 export function filterLive(transfers: WiseTransfer[]): WiseTransfer[] {
   return transfers.filter((t) => t.status !== 'cancelled');
@@ -269,6 +275,33 @@ export function decideRefresh(
     };
   }
 
+  // A transfer that never reached a paid state is not payment evidence, however
+  // sure the row is that it was paid. Both halves of this used to be blessed as
+  // `refreshed_clean`, which is how 29 prod rows (₱413,770.03) ended up pointing
+  // at transfers that never sent while the real ones stayed unclaimed:
+  //   - 2026-05-01→15: linked to the 04:48 batch, every transfer `cancelled`;
+  //     the payroll actually left at 14:10 on a different batch.
+  //   - 2026-07-01→15: linked to the 21:56 batch, still `incoming_payment_waiting`;
+  //     the payroll actually left at 21:54.
+  // The app drafts a transfer and writes its id on the row, but can never fund it
+  // (ADR-0007) — so an unfunded draft on a row is the NORMAL state, not proof.
+  if (!WISE_PAID_STATES.has(t.status)) {
+    const dead = isDeadTransfer(t.status);
+    return {
+      patch: { wise_dates: dates },
+      result: {
+        payment_id: p.id,
+        worker_id: p.worker_id,
+        outcome: dead ? 'refresh_transfer_dead' : 'refresh_transfer_unfunded',
+        transfer_id: String(t.id),
+        wise_status: t.status,
+        reason: dead
+          ? `Linked transfer ${t.id} is ${t.status} — it never paid this row. Re-matching against the transfers that did.`
+          : `Linked transfer ${t.id} is ${t.status} — an unfunded draft, not a payment. Cancel it in Wise if the row was paid by a different transfer.`,
+      },
+    };
+  }
+
   const dbCentavos = paymentCentavos(p);
   const wiseCentavos = transferCentavos(t);
   const exact = Math.abs(wiseCentavos - dbCentavos) <= TOLERANCE_CENTAVOS;
@@ -276,30 +309,18 @@ export function decideRefresh(
   const patch: PaymentPatch = { wise_dates: dates };
 
   const sentIso = dates.dateSent ?? dates.dateFunded ?? dates.created ?? null;
-  const wiseTerminal = WISE_PAID_STATES.has(t.status);
 
-  if (sentIso && wiseTerminal) {
+  if (sentIso) {
     patch.paid_at = sentIso;
     patch.status = 'sent';
     patch.wise_locked_at = nowIso;
-  } else if (p.status === 'sent') {
-    // The row was ALREADY recorded as sent (CSV import / manual / a prior poll)
-    // and we've re-found its non-cancelled transfer in Wise. Lock it even though
-    // the live API status isn't terminal: some batch-uploaded transfers keep
-    // reporting a non-terminal status long after the money actually went out
-    // (e.g. the 2026-05-29 batch showed "in progress" though the payroll was
-    // paid). We trust the recorded 'sent' here.
-    patch.wise_locked_at = nowIso;
   }
 
-  // Variance auto-override on the refresh path: always treats the existing link
-  // as unambiguous, so apply the override if amount differs and we haven't
-  // already overridden (don't overwrite a previous original_net_php on re-run).
-  if (!exact && p.original_net_php == null) {
-    patch.original_net_php = Number(p.net_php ?? 0);
-    patch.net_php = Number(t.targetValue ?? t.targetAmount ?? 0);
-  }
-
+  // NO amount override. A gap between the payroll net and what Wise sent is a
+  // fact about the payment, not a correction to the payroll: restating net_php
+  // from the transfer rewrote the record to agree with the bank and left no
+  // trace of why they differed. The operator attributes the difference instead
+  // (server/wise/attribution.ts), which explains it in the row's own components.
   const result: MatchResult = exact
     ? {
         payment_id: p.id,
@@ -313,14 +334,14 @@ export function decideRefresh(
     : {
         payment_id: p.id,
         worker_id: p.worker_id,
-        outcome: 'matched_with_variance_overridden',
+        outcome: 'matched_with_variance',
         transfer_id: String(t.id),
         db_amount: Number(p.net_php ?? 0),
         wise_amount: Number(t.targetValue ?? t.targetAmount ?? 0),
         delta: Number(t.targetValue ?? t.targetAmount ?? 0) - Number(p.net_php ?? 0),
         wise_status: t.status,
         wise_dates: dates,
-        amount_overridden: p.original_net_php == null,
+        amount_overridden: false,
       };
 
   return { patch, result };
@@ -523,7 +544,6 @@ export function decideMatch(
   );
   const t = ranked[0] as WiseTransfer;
   const wiseAmt = Number(t.targetValue ?? t.targetAmount ?? 0);
-  const isUnambiguous = inWindow.length === 1;
   const dates = getDates(t);
 
   const patch: PaymentPatch = {
@@ -531,14 +551,11 @@ export function decideMatch(
     wise_dates: dates,
   };
 
-  // ONLY auto-override the amount when this is unambiguous AND the row doesn't
-  // already have an override stored (don't overwrite a previous original_net_php
-  // on a re-run).
-  if (isUnambiguous && p.original_net_php == null) {
-    patch.original_net_php = Number(p.net_php ?? 0);
-    patch.net_php = wiseAmt;
-  }
-
+  // The link is the matcher's business; the amount is not. Auto-overriding
+  // net_php here restated the payroll from the bank statement — silently, on the
+  // strength of one candidate being in the window — and buried the difference in
+  // original_net_php where nothing shows it. The row now keeps its own number and
+  // the operator attributes the gap (server/wise/attribution.ts).
   const sentIso = dates.dateSent ?? dates.dateFunded ?? dates.created ?? null;
   if (sentIso && WISE_PAID_STATES.has(t.status)) {
     patch.paid_at = sentIso;
@@ -551,7 +568,7 @@ export function decideMatch(
     result: {
       payment_id: p.id,
       worker_id: p.worker_id,
-      outcome: isUnambiguous ? 'matched_with_variance_overridden' : 'matched_with_variance',
+      outcome: 'matched_with_variance',
       transfer_id: String(t.id),
       db_amount: Number(p.net_php ?? 0),
       wise_amount: wiseAmt,
@@ -559,7 +576,7 @@ export function decideMatch(
       wise_status: t.status,
       wise_dates: dates,
       other_candidates: ranked.length - 1,
-      amount_overridden: isUnambiguous && p.original_net_php == null,
+      amount_overridden: false,
     },
   };
 }
@@ -616,7 +633,12 @@ export function annotateOrphans(
       r.outcome === 'no_wise_transfer' ||
       r.outcome === 'no_wise_transfer_in_window' ||
       r.outcome === 'no_recipient' ||
-      r.outcome === 'ambiguous_exact',
+      r.outcome === 'ambiguous_exact' ||
+      // Holding a dead or unfunded transfer is the case that needs suggestions
+      // MOST: the real transfer is sitting right there, unclaimed.
+      r.outcome === 'refresh_transfer_dead' ||
+      r.outcome === 'refresh_transfer_unfunded' ||
+      r.outcome === 'reference_names_other_period',
   ) as Extract<
     MatchResult,
     {
@@ -624,7 +646,10 @@ export function annotateOrphans(
         | 'no_wise_transfer'
         | 'no_wise_transfer_in_window'
         | 'no_recipient'
-        | 'ambiguous_exact';
+        | 'ambiguous_exact'
+        | 'refresh_transfer_dead'
+        | 'refresh_transfer_unfunded'
+        | 'reference_names_other_period';
     }
   >[];
 

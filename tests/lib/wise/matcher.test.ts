@@ -11,7 +11,7 @@
  *  multi-candidate closest-date   → 'multiple exact-amount candidates — closest pay_date wins'
  *  ghost cancelled excluded       → 'cancelled transfers are excluded before indexing'
  *  recipient-history union        → 'historical recipient id in wise_recipients matched'
- *  variance auto-override         → 'unambiguous variance auto-overrides net_php'
+ *  variance never overrides       → 'a variance links the transfer and leaves net_php alone'
  *  orphan suggestion output       → 'orphan transfer is suggested for unmatched payment'
  *  true tie ambiguous             → 'true tie in exact-amount multi-candidate → ambiguous_exact'
  *  refresh fast-path              → 'refresh path re-applies dates without re-matching'
@@ -400,8 +400,8 @@ describe('decideMatch — exact match', () => {
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', netPhp, 999);
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    // single in-window candidate with amount outside tolerance → unambiguous variance
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
+    // single in-window candidate with amount outside tolerance → variance
+    expect(d.result.outcome).toBe('matched_with_variance');
   });
 });
 
@@ -463,28 +463,34 @@ describe('decideMatch — multiple exact-amount candidates', () => {
 // ─── decideMatch — variance paths ─────────────────────────────────────────────
 
 describe('decideMatch — variance', () => {
-  it('unambiguous variance auto-overrides net_php and sets original_net_php', () => {
-    // Only one transfer in window, amount outside ±₱1 → auto-override.
-    const netPhp = 20000;
-    const wisePhp = 19500; // ₱500 difference
-    const t = makeTransfer(1, 999, wisePhp, 0);
-    const idx = buildRecipientIndex([t]);
-    const p = makePayment('p1', netPhp, 999);
-    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
-    expect(d.patch?.original_net_php).toBe(netPhp);
-    expect(d.patch?.net_php).toBe(wisePhp);
-  });
-
-  it('does NOT re-override when original_net_php already set (idempotent)', () => {
+  it('a variance links the transfer and leaves net_php alone', () => {
+    // One transfer in window, ₱500 short of the payroll net. This used to
+    // restate net_php to the Wise figure and stash the payroll number in
+    // original_net_php — the record rewritten to agree with the bank, with
+    // nothing saying why. The operator attributes the gap instead.
     const netPhp = 20000;
     const wisePhp = 19500;
     const t = makeTransfer(1, 999, wisePhp, 0);
     const idx = buildRecipientIndex([t]);
-    // Payment already has original_net_php set from a prior run.
+    const p = makePayment('p1', netPhp, 999);
+    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_with_variance');
+    expect(d.patch?.wise_transfer_id).toBe('1');
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.net_php).toBeUndefined();
+    expect('amount_overridden' in d.result && d.result.amount_overridden).toBe(false);
+  });
+
+  it('leaves a row that a previous run already restated alone', () => {
+    const netPhp = 20000;
+    const wisePhp = 19500;
+    const t = makeTransfer(1, 999, wisePhp, 0);
+    const idx = buildRecipientIndex([t]);
+    // Payment already has original_net_php set from a run before the override
+    // was removed. Its net now equals the transfer, so it matches exactly.
     const p = makePayment('p1', wisePhp, 999, { originalNetPhp: netPhp });
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_exact'); // wisePhp == net_php now
+    expect(d.result.outcome).toBe('matched_exact');
     expect(d.patch?.original_net_php).toBeUndefined();
   });
 
@@ -638,22 +644,21 @@ describe('decideRefresh', () => {
     expect(d.patch).toBeUndefined();
   });
 
-  it('refresh variance auto-override preserves original_net_php (first run)', () => {
+  it('refresh reports the variance and leaves the payroll amount alone', () => {
     const t = makeTransfer(99, 999, 19000, 0); // ₱19,000 — stored is ₱20,000
     const idIndex = buildTransferIdIndex([t]);
-    const p = makePayment('p1', 20000, 999, {
-      wiseTransferId: '99',
-      originalNetPhp: null, // first run — not yet overridden
-    });
+    const p = makePayment('p1', 20000, 999, { wiseTransferId: '99', originalNetPhp: null });
     const dates: WiseDates = {
       created: NOW_ISO,
       dateFunded: null,
       dateSent: null,
     };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
-    expect(d.patch?.original_net_php).toBe(20000);
-    expect(d.patch?.net_php).toBe(19000);
+    expect(d.result.outcome).toBe('matched_with_variance');
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.net_php).toBeUndefined();
+    // The gap is reported so the operator can attribute it.
+    expect('delta' in d.result && d.result.delta).toBe(-1000);
   });
 
   it('refresh variance does NOT re-override when original_net_php already set', () => {
@@ -675,24 +680,38 @@ describe('decideRefresh', () => {
     expect(d.patch?.original_net_php).toBeUndefined();
   });
 
-  it('refresh locks already-sent row even with non-terminal Wise status (2026-05-29 batch)', () => {
-    // "In progress" in Wise despite money having already gone out (batch quirk).
-    const t = makeTransfer(99, 999, 20000, 0, 'processing'); // not terminal
+  it('unfunded draft is never blessed, even on a row already recorded as sent', () => {
+    // The 2026-07-28 shape: the app's own draft sits `incoming_payment_waiting`
+    // while the money left on a different transfer. Trusting the recorded 'sent'
+    // here is what locked 15 rows onto transfers that never paid.
+    const t = makeTransfer(99, 999, 20000, 0, 'incoming_payment_waiting');
     const idIndex = buildTransferIdIndex([t]);
     const p = makePayment('p1', 20000, 999, {
       wiseTransferId: '99',
-      status: 'sent', // recorded as sent by CSV import / prior poll
+      status: 'sent', // recorded as sent by CSV import / manual mark-paid
     });
-    const dates: WiseDates = {
-      created: NOW_ISO,
-      dateFunded: null,
-      dateSent: null,
-    };
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
-    // Should still lock (trusted recorded 'sent').
-    expect(d.patch?.wise_locked_at).toBe(NOW_ISO);
-    // Should NOT set status or paid_at (not terminal in Wise).
+    expect(d.result.outcome).toBe('refresh_transfer_unfunded');
+    expect(d.patch?.wise_locked_at).toBeUndefined();
     expect(d.patch?.status).toBeUndefined();
+    expect(d.patch?.paid_at).toBeUndefined();
+  });
+
+  it('cancelled ghost link reports dead, and never rewrites net_php from it', () => {
+    // The 2026-05-29 shape: linked to a cancelled draft whose amount also differs.
+    const t = makeTransfer(99, 999, 31290, 0, 'cancelled');
+    const idIndex = buildTransferIdIndex([t]);
+    const p = makePayment('p1', 36290, 999, { wiseTransferId: '99', status: 'sent' });
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
+    const d = decideRefresh(p, idIndex, dates, NOW_ISO);
+    expect(d.result.outcome).toBe('refresh_transfer_dead');
+    // The variance auto-override must not fire — a ghost's amount is not the truth.
+    expect(d.patch?.net_php).toBeUndefined();
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.wise_locked_at).toBeUndefined();
   });
 });
 

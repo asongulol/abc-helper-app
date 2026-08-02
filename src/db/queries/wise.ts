@@ -61,6 +61,8 @@ export interface DraftPayment {
   worker_id: string;
   net_php: number | null;
   wise_transfer_id: string | null;
+  status: string;
+  paid_at: string | null;
   workers: {
     wise_recipient_id: number | null;
     wise_recipient_uuid: string | null;
@@ -225,6 +227,8 @@ export interface PeriodPaymentRow {
   payoutMethod: string | null;
   wiseTransferId: string | null;
   paidAt: string | null;
+  /** Operator's own record of why this row is linked the way it is. */
+  note: string | null;
 }
 
 /**
@@ -239,7 +243,7 @@ export const fetchPeriodPayments = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id,net_php,status,payout_method,wise_transfer_id,paid_at,workers(first_name,middle_name,last_name)',
+      'id,net_php,status,payout_method,wise_transfer_id,paid_at,note,workers(first_name,middle_name,last_name)',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments (period): ${error.message}`);
@@ -256,6 +260,7 @@ export const fetchPeriodPayments = async (
       payoutMethod: p.payout_method,
       wiseTransferId: p.wise_transfer_id,
       paidAt: p.paid_at ?? null,
+      note: p.note ?? null,
     }))
     .sort((a, b) => a.workerName.localeCompare(b.workerName));
 };
@@ -305,6 +310,74 @@ export const applyMatchPatch = async (
   if (error) throw new Error(`applyMatchPatch(${paymentId}): ${error.message}`);
 };
 
+/**
+ * Detach the Wise transfer a payment holds and record why.
+ *
+ * Clears every field the link wrote — id, dates, lock, paid_at — and drops
+ * `reconciled` back to `sent`, because "reconciled" is a claim about a transfer
+ * that no longer belongs to this row. The reason is appended to `note` rather
+ * than replacing it: rows carry provenance ("Historical import…") that outlives
+ * any one link.
+ */
+export const clearPaymentLink = async (
+  db: Db,
+  paymentId: string,
+  opts: { note: string; status: string; existingNote: string | null },
+): Promise<void> => {
+  const note = [opts.existingNote?.trim(), opts.note].filter(Boolean).join('\n');
+  const { error } = await db
+    .from('payments')
+    .update({
+      wise_transfer_id: null,
+      wise_dates: null,
+      wise_locked_at: null,
+      paid_at: null,
+      note,
+      ...(opts.status === 'reconciled' ? { status: 'sent' } : {}),
+    })
+    .eq('id', paymentId);
+  if (error) throw new Error(`clearPaymentLink(${paymentId}): ${error.message}`);
+};
+
+/** Append one line to a payment's note, keeping what is already there. */
+export const appendPaymentNote = async (
+  db: Db,
+  paymentId: string,
+  line: string,
+  existingNote: string | null,
+): Promise<void> => {
+  const { error } = await db
+    .from('payments')
+    .update({ note: [existingNote?.trim(), line].filter(Boolean).join('\n') })
+    .eq('id', paymentId);
+  if (error) throw new Error(`appendPaymentNote(${paymentId}): ${error.message}`);
+};
+
+/**
+ * The payment already holding this transfer, if any. One transfer pays one row —
+ * the discovery path has enforced that since the 36 double-links, but the manual
+ * link path only became able to break it once unlink existed.
+ */
+export const findPaymentByTransferId = async (
+  db: Db,
+  transferId: string,
+  exceptPaymentId: string,
+): Promise<{ id: string; workerName: string } | null> => {
+  const { data, error } = await db
+    .from('payments')
+    .select('id,workers(first_name,last_name)')
+    .eq('wise_transfer_id', transferId)
+    .neq('id', exceptPaymentId)
+    .limit(1);
+  if (error) throw new Error(`findPaymentByTransferId: ${error.message}`);
+  const row = data?.[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    workerName: [row.workers?.first_name, row.workers?.last_name].filter(Boolean).join(' ').trim(),
+  };
+};
+
 // ─── draft queries ─────────────────────────────────────────────────────────────
 
 /**
@@ -316,7 +389,7 @@ export const fetchDraftPayments = async (db: Db, paymentIds: string[]): Promise<
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, net_php, wise_transfer_id, workers(wise_recipient_id, wise_recipient_uuid, first_name, last_name)',
+      'id, worker_id, net_php, wise_transfer_id, status, paid_at, workers(wise_recipient_id, wise_recipient_uuid, first_name, last_name)',
     )
     .in('id', paymentIds);
   if (error) throw new Error(`payments (draft): ${error.message}`);
@@ -328,6 +401,8 @@ export const fetchDraftPayments = async (db: Db, paymentIds: string[]): Promise<
       worker_id: row.worker_id,
       net_php: row.net_php,
       wise_transfer_id: row.wise_transfer_id,
+      status: row.status,
+      paid_at: row.paid_at ?? null,
       workers: w
         ? {
             wise_recipient_id: w.wise_recipient_id ?? null,

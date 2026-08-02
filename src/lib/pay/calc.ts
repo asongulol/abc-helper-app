@@ -32,6 +32,12 @@ export type MiscItem = {
   label?: string;
   amount?: number | string | null;
   hours?: number | string | null;
+  /** Client this line is billed to (companies.id), when the operator attributed
+   *  it to one. Queryable data rather than prose inside `label`. */
+  companyId?: string | null;
+  /** Where the line came from. 'reconcile' = attributed to explain the gap
+   *  between the payroll net and what Wise actually sent. */
+  source?: string | null;
 };
 
 /**

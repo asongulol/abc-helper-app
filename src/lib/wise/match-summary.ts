@@ -28,6 +28,12 @@ export interface MatchTally {
   noTransfer: number;
   /** Matched, but the write back to payments failed. */
   dbWriteFailed: number;
+  /** Row holds a transfer that never paid: a cancelled ghost, an unfunded draft,
+   *  or an id missing from the pulled history. The link is not evidence. */
+  unpaidLink: number;
+  /** The transfer that fit says, in its own reference, that it paid a different
+   *  period — the previous batch sitting in this period's window. */
+  wrongPeriod: number;
 }
 
 /** What wiseMatch hands back: the tally plus the rows to act on. */
@@ -54,6 +60,8 @@ export const matchSummary = (t: MatchTally): MatchSummary => {
     [t.noRecipient, 'with no Wise recipient on file'],
     [t.noTransfer, 'with no Wise transfer near the payment date'],
     [t.dbWriteFailed, 'that failed to save'],
+    [t.unpaidLink, 'holding a transfer that never paid (the real one is likely unclaimed)'],
+    [t.wrongPeriod, 'whose only candidate names a different period in Wise'],
   ]
     .filter(([n]) => (n as number) > 0)
     .map(([n, why]) => `${n} ${why}`)
