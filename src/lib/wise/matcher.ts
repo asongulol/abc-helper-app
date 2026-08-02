@@ -20,7 +20,7 @@ import type {
   WiseDates,
   WiseTransfer,
 } from './types';
-import { WISE_PAID_STATES } from './types';
+import { isDeadTransfer, WISE_PAID_STATES } from './types';
 
 // ─── constants ────────────────────────────────────────────────────────────────
 
@@ -229,7 +229,13 @@ export function buildTransferIdIndex(transfers: WiseTransfer[]): Map<string, Wis
  * with both a `cancelled` ghost AND the real `outgoing_payment_sent` transfer for
  * the same recipient+amount. Including the ghosts would make every row look
  * "ambiguous" (2 candidates per recipient).
- * Confirmed via live API probe on the May 2026 batch: 13 sent + 12 cancelled.
+ *
+ * Live probe of the 2026-05-29 batch: 82 transfers to 14 recipients — five
+ * batches created, 68 cancelled, 14 sent. Ghosts outnumber real sends 5:1.
+ *
+ * This keeps ghosts out of the CANDIDATE pool only. A ghost a row already holds
+ * still has to be findable by id, or the row's dead link is undiagnosable —
+ * index by id from the FULL list, not this one. See `decideRefresh`.
  */
 export function filterLive(transfers: WiseTransfer[]): WiseTransfer[] {
   return transfers.filter((t) => t.status !== 'cancelled');
@@ -269,6 +275,33 @@ export function decideRefresh(
     };
   }
 
+  // A transfer that never reached a paid state is not payment evidence, however
+  // sure the row is that it was paid. Both halves of this used to be blessed as
+  // `refreshed_clean`, which is how 29 prod rows (₱413,770.03) ended up pointing
+  // at transfers that never sent while the real ones stayed unclaimed:
+  //   - 2026-05-01→15: linked to the 04:48 batch, every transfer `cancelled`;
+  //     the payroll actually left at 14:10 on a different batch.
+  //   - 2026-07-01→15: linked to the 21:56 batch, still `incoming_payment_waiting`;
+  //     the payroll actually left at 21:54.
+  // The app drafts a transfer and writes its id on the row, but can never fund it
+  // (ADR-0007) — so an unfunded draft on a row is the NORMAL state, not proof.
+  if (!WISE_PAID_STATES.has(t.status)) {
+    const dead = isDeadTransfer(t.status);
+    return {
+      patch: { wise_dates: dates },
+      result: {
+        payment_id: p.id,
+        worker_id: p.worker_id,
+        outcome: dead ? 'refresh_transfer_dead' : 'refresh_transfer_unfunded',
+        transfer_id: String(t.id),
+        wise_status: t.status,
+        reason: dead
+          ? `Linked transfer ${t.id} is ${t.status} — it never paid this row. Re-matching against the transfers that did.`
+          : `Linked transfer ${t.id} is ${t.status} — an unfunded draft, not a payment. Cancel it in Wise if the row was paid by a different transfer.`,
+      },
+    };
+  }
+
   const dbCentavos = paymentCentavos(p);
   const wiseCentavos = transferCentavos(t);
   const exact = Math.abs(wiseCentavos - dbCentavos) <= TOLERANCE_CENTAVOS;
@@ -276,19 +309,10 @@ export function decideRefresh(
   const patch: PaymentPatch = { wise_dates: dates };
 
   const sentIso = dates.dateSent ?? dates.dateFunded ?? dates.created ?? null;
-  const wiseTerminal = WISE_PAID_STATES.has(t.status);
 
-  if (sentIso && wiseTerminal) {
+  if (sentIso) {
     patch.paid_at = sentIso;
     patch.status = 'sent';
-    patch.wise_locked_at = nowIso;
-  } else if (p.status === 'sent') {
-    // The row was ALREADY recorded as sent (CSV import / manual / a prior poll)
-    // and we've re-found its non-cancelled transfer in Wise. Lock it even though
-    // the live API status isn't terminal: some batch-uploaded transfers keep
-    // reporting a non-terminal status long after the money actually went out
-    // (e.g. the 2026-05-29 batch showed "in progress" though the payroll was
-    // paid). We trust the recorded 'sent' here.
     patch.wise_locked_at = nowIso;
   }
 
@@ -616,7 +640,11 @@ export function annotateOrphans(
       r.outcome === 'no_wise_transfer' ||
       r.outcome === 'no_wise_transfer_in_window' ||
       r.outcome === 'no_recipient' ||
-      r.outcome === 'ambiguous_exact',
+      r.outcome === 'ambiguous_exact' ||
+      // Holding a dead or unfunded transfer is the case that needs suggestions
+      // MOST: the real transfer is sitting right there, unclaimed.
+      r.outcome === 'refresh_transfer_dead' ||
+      r.outcome === 'refresh_transfer_unfunded',
   ) as Extract<
     MatchResult,
     {
@@ -624,7 +652,9 @@ export function annotateOrphans(
         | 'no_wise_transfer'
         | 'no_wise_transfer_in_window'
         | 'no_recipient'
-        | 'ambiguous_exact';
+        | 'ambiguous_exact'
+        | 'refresh_transfer_dead'
+        | 'refresh_transfer_unfunded';
     }
   >[];
 

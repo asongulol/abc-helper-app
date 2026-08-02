@@ -675,24 +675,38 @@ describe('decideRefresh', () => {
     expect(d.patch?.original_net_php).toBeUndefined();
   });
 
-  it('refresh locks already-sent row even with non-terminal Wise status (2026-05-29 batch)', () => {
-    // "In progress" in Wise despite money having already gone out (batch quirk).
-    const t = makeTransfer(99, 999, 20000, 0, 'processing'); // not terminal
+  it('unfunded draft is never blessed, even on a row already recorded as sent', () => {
+    // The 2026-07-28 shape: the app's own draft sits `incoming_payment_waiting`
+    // while the money left on a different transfer. Trusting the recorded 'sent'
+    // here is what locked 15 rows onto transfers that never paid.
+    const t = makeTransfer(99, 999, 20000, 0, 'incoming_payment_waiting');
     const idIndex = buildTransferIdIndex([t]);
     const p = makePayment('p1', 20000, 999, {
       wiseTransferId: '99',
-      status: 'sent', // recorded as sent by CSV import / prior poll
+      status: 'sent', // recorded as sent by CSV import / manual mark-paid
     });
-    const dates: WiseDates = {
-      created: NOW_ISO,
-      dateFunded: null,
-      dateSent: null,
-    };
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
-    // Should still lock (trusted recorded 'sent').
-    expect(d.patch?.wise_locked_at).toBe(NOW_ISO);
-    // Should NOT set status or paid_at (not terminal in Wise).
+    expect(d.result.outcome).toBe('refresh_transfer_unfunded');
+    expect(d.patch?.wise_locked_at).toBeUndefined();
     expect(d.patch?.status).toBeUndefined();
+    expect(d.patch?.paid_at).toBeUndefined();
+  });
+
+  it('cancelled ghost link reports dead, and never rewrites net_php from it', () => {
+    // The 2026-05-29 shape: linked to a cancelled draft whose amount also differs.
+    const t = makeTransfer(99, 999, 31290, 0, 'cancelled');
+    const idIndex = buildTransferIdIndex([t]);
+    const p = makePayment('p1', 36290, 999, { wiseTransferId: '99', status: 'sent' });
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
+    const d = decideRefresh(p, idIndex, dates, NOW_ISO);
+    expect(d.result.outcome).toBe('refresh_transfer_dead');
+    // The variance auto-override must not fire — a ghost's amount is not the truth.
+    expect(d.patch?.net_php).toBeUndefined();
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.wise_locked_at).toBeUndefined();
   });
 });
 

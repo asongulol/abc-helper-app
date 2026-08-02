@@ -9,6 +9,7 @@ const tally = (over: Partial<MatchTally> = {}): MatchTally => ({
   noRecipient: 0,
   noTransfer: 0,
   dbWriteFailed: 0,
+  unpaidLink: 0,
   ...over,
 });
 
@@ -16,7 +17,13 @@ describe('matchSummary', () => {
   it('never calls a zero-link run a success', () => {
     // The bug: these all rendered as green "Matched 0 transfer(s)." and the
     // operator read that as "it worked".
-    for (const reason of ['ambiguous', 'noRecipient', 'noTransfer', 'dbWriteFailed'] as const) {
+    for (const reason of [
+      'ambiguous',
+      'noRecipient',
+      'noTransfer',
+      'dbWriteFailed',
+      'unpaidLink',
+    ] as const) {
       const s = matchSummary(tally({ scanned: 3, [reason]: 3 }));
       expect(s.tone).toBe('warn');
       expect(s.text).toContain('3');

@@ -309,6 +309,11 @@ export async function wiseMatch(_args: {
       noRecipient: count('no_recipient'),
       noTransfer: count('no_wise_transfer', 'no_wise_transfer_in_window'),
       dbWriteFailed: count('db_write_failed'),
+      unpaidLink: count(
+        'refresh_transfer_dead',
+        'refresh_transfer_unfunded',
+        'refresh_transfer_not_in_history',
+      ),
     });
   } catch (e) {
     return fail(e);

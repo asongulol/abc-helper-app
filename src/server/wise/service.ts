@@ -574,7 +574,10 @@ export async function serviceMatch(
   const claimed = await fetchClaimedTransferIds(db);
   const unclaimed = liveTransfers.filter((t) => !claimed.has(String(t.id)));
   const recipIndex = buildRecipientIndex(unclaimed);
-  const idIndex = buildTransferIdIndex(liveTransfers);
+  // Cancelled ghosts included on purpose: a row linked to one has to be able to
+  // find it, or its dead link reports as "not in the history window" and looks
+  // like a paging problem instead of the ghost it is.
+  const idIndex = buildTransferIdIndex(wiseTransfers);
 
   // 6. Match each payment.
   const nowIso = new Date().toISOString();
@@ -619,6 +622,38 @@ export async function serviceMatch(
         : null,
     };
 
+    // DISCOVERY PATH: fetch dates lazily only for the winning transfer.
+    const discover = async (m: typeof mp): Promise<MatchDecision> => {
+      const getDates = (t: WiseTransfer): WiseDates => {
+        // For the sync pure matcher call, return list-row dates (no network).
+        // The service layer re-fetches the detail asynchronously below.
+        return wiseDatesFromListRow(t);
+      };
+      const d = decideMatch(m, recipIndex, getDates, windowDays, nowIso, taken);
+
+      // If the decision involves a transfer, fetch the real detail dates now.
+      if (d.patch?.wise_transfer_id) {
+        const t = idIndex.get(d.patch.wise_transfer_id);
+        if (t) {
+          const realDates = await fetchWiseDates(t);
+          d.patch.wise_dates = realDates;
+          // Re-evaluate paid_at / status from the real dates.
+          const sentIso = bestSentDate(realDates);
+          if (sentIso && WISE_PAID_STATES.has(t.status)) {
+            d.patch.paid_at = sentIso;
+            d.patch.status = 'sent';
+            d.patch.wise_locked_at = nowIso;
+          }
+          // Propagate updated dates to result for the response body.
+          const r = d.result;
+          if ('wise_dates' in r) {
+            (r as unknown as { wise_dates: WiseDates }).wise_dates = realDates;
+          }
+        }
+      }
+      return d;
+    };
+
     let decision: MatchDecision;
     if (refresh && p.wise_transfer_id) {
       // REFRESH FAST PATH: fetch detail dates from Wise for the stored transfer.
@@ -627,36 +662,18 @@ export async function serviceMatch(
         ? await fetchWiseDates(storedT)
         : { created: null, dateFunded: null, dateSent: null };
       decision = decideRefresh(mp, idIndex, dates, nowIso);
-    } else {
-      // DISCOVERY PATH: fetch dates lazily only for the winning transfer.
-      const getDates = (t: WiseTransfer): WiseDates => {
-        // For the sync pure matcher call, return list-row dates (no network).
-        // The service layer re-fetches the detail asynchronously below.
-        return wiseDatesFromListRow(t);
-      };
-      decision = decideMatch(mp, recipIndex, getDates, windowDays, nowIso, taken);
 
-      // If the decision involves a transfer, fetch the real detail dates now.
-      if (decision.patch?.wise_transfer_id) {
-        const tid = decision.patch.wise_transfer_id;
-        const t = idIndex.get(tid);
-        if (t) {
-          const realDates = await fetchWiseDates(t);
-          decision.patch.wise_dates = realDates;
-          // Re-evaluate paid_at / status from the real dates.
-          const sentIso = bestSentDate(realDates);
-          if (sentIso && WISE_PAID_STATES.has(t.status)) {
-            decision.patch.paid_at = sentIso;
-            decision.patch.status = 'sent';
-            decision.patch.wise_locked_at = nowIso;
-          }
-          // Propagate updated dates to result for the response body.
-          const r = decision.result;
-          if ('wise_dates' in r) {
-            (r as unknown as { wise_dates: WiseDates }).wise_dates = realDates;
-          }
-        }
+      // The stored transfer is cancelled/refunded — it paid nobody, so the row is
+      // effectively unlinked and the transfer that DID pay it is still sitting
+      // unclaimed. Re-run discovery here rather than making the operator unlink by
+      // hand first. An unfunded draft is left alone deliberately: it is still live
+      // in Wise, and orphaning it is the RP-09 double-pay route.
+      if (decision.result.outcome === 'refresh_transfer_dead') {
+        const relinked = await discover({ ...mp, wise_transfer_id: null });
+        if (relinked.patch?.wise_transfer_id) decision = relinked;
       }
+    } else {
+      decision = await discover(mp);
     }
 
     const { patch, result } = decision;
@@ -665,7 +682,12 @@ export async function serviceMatch(
     // its outcome happens to be one of a named few. Listing by outcome dropped
     // ambiguous_exact rows out of the UI entirely: the period counted them as
     // unmatched and then showed nothing to act on.
-    if (patch?.wise_transfer_id || p.wise_transfer_id) linkedPaymentIds.add(p.id);
+    // A link to a transfer that never paid is not a link. Counting it as one is
+    // what hid 29 ghost-linked rows: they were "linked", so the period looked
+    // fully reconciled and they never appeared in the list of rows to act on.
+    const deadLink =
+      result.outcome === 'refresh_transfer_dead' || result.outcome === 'refresh_transfer_unfunded';
+    if (patch?.wise_transfer_id || (p.wise_transfer_id && !deadLink)) linkedPaymentIds.add(p.id);
     if (dryRun && patch?.wise_transfer_id) proposed.set(p.id, patch.wise_transfer_id);
     // Claim it for the rest of the run — in a dry run too, or the read-only view
     // would offer one transfer to two rows and both would look linkable.
@@ -718,6 +740,8 @@ export async function serviceMatch(
       case 'no_wise_transfer':
       case 'no_wise_transfer_in_window':
       case 'refresh_transfer_not_in_history':
+      case 'refresh_transfer_dead':
+      case 'refresh_transfer_unfunded':
         unmatched++;
         break;
       default:
