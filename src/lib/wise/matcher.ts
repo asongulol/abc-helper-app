@@ -316,14 +316,11 @@ export function decideRefresh(
     patch.wise_locked_at = nowIso;
   }
 
-  // Variance auto-override on the refresh path: always treats the existing link
-  // as unambiguous, so apply the override if amount differs and we haven't
-  // already overridden (don't overwrite a previous original_net_php on re-run).
-  if (!exact && p.original_net_php == null) {
-    patch.original_net_php = Number(p.net_php ?? 0);
-    patch.net_php = Number(t.targetValue ?? t.targetAmount ?? 0);
-  }
-
+  // NO amount override. A gap between the payroll net and what Wise sent is a
+  // fact about the payment, not a correction to the payroll: restating net_php
+  // from the transfer rewrote the record to agree with the bank and left no
+  // trace of why they differed. The operator attributes the difference instead
+  // (server/wise/attribution.ts), which explains it in the row's own components.
   const result: MatchResult = exact
     ? {
         payment_id: p.id,
@@ -337,14 +334,14 @@ export function decideRefresh(
     : {
         payment_id: p.id,
         worker_id: p.worker_id,
-        outcome: 'matched_with_variance_overridden',
+        outcome: 'matched_with_variance',
         transfer_id: String(t.id),
         db_amount: Number(p.net_php ?? 0),
         wise_amount: Number(t.targetValue ?? t.targetAmount ?? 0),
         delta: Number(t.targetValue ?? t.targetAmount ?? 0) - Number(p.net_php ?? 0),
         wise_status: t.status,
         wise_dates: dates,
-        amount_overridden: p.original_net_php == null,
+        amount_overridden: false,
       };
 
   return { patch, result };
@@ -547,7 +544,6 @@ export function decideMatch(
   );
   const t = ranked[0] as WiseTransfer;
   const wiseAmt = Number(t.targetValue ?? t.targetAmount ?? 0);
-  const isUnambiguous = inWindow.length === 1;
   const dates = getDates(t);
 
   const patch: PaymentPatch = {
@@ -555,14 +551,11 @@ export function decideMatch(
     wise_dates: dates,
   };
 
-  // ONLY auto-override the amount when this is unambiguous AND the row doesn't
-  // already have an override stored (don't overwrite a previous original_net_php
-  // on a re-run).
-  if (isUnambiguous && p.original_net_php == null) {
-    patch.original_net_php = Number(p.net_php ?? 0);
-    patch.net_php = wiseAmt;
-  }
-
+  // The link is the matcher's business; the amount is not. Auto-overriding
+  // net_php here restated the payroll from the bank statement — silently, on the
+  // strength of one candidate being in the window — and buried the difference in
+  // original_net_php where nothing shows it. The row now keeps its own number and
+  // the operator attributes the gap (server/wise/attribution.ts).
   const sentIso = dates.dateSent ?? dates.dateFunded ?? dates.created ?? null;
   if (sentIso && WISE_PAID_STATES.has(t.status)) {
     patch.paid_at = sentIso;
@@ -575,7 +568,7 @@ export function decideMatch(
     result: {
       payment_id: p.id,
       worker_id: p.worker_id,
-      outcome: isUnambiguous ? 'matched_with_variance_overridden' : 'matched_with_variance',
+      outcome: 'matched_with_variance',
       transfer_id: String(t.id),
       db_amount: Number(p.net_php ?? 0),
       wise_amount: wiseAmt,
@@ -583,7 +576,7 @@ export function decideMatch(
       wise_status: t.status,
       wise_dates: dates,
       other_candidates: ranked.length - 1,
-      amount_overridden: isUnambiguous && p.original_net_php == null,
+      amount_overridden: false,
     },
   };
 }

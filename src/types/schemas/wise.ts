@@ -103,3 +103,21 @@ export const WiseFindTransfersSchema = z.object({
   toIso: z.string().optional(),
 });
 export type WiseFindTransfersInput = z.infer<typeof WiseFindTransfersSchema>;
+
+export const WiseAttributeSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  /** Where the difference belongs. NOTE: no amount — the server reads it from
+   *  the linked transfer, so this control can only close the gap it opened. */
+  target: z.enum(['misc', 'health_allowance', 'thirteenth_month']),
+  /** Free-text label for the misc line ("123 BT Bookkeeping"). */
+  label: z.string().trim().max(120).optional(),
+  /** Client the line is billed to (companies.id). Misc only — HA and 13th month
+   *  are single columns with nowhere to hang it. */
+  companyId: uuid().optional(),
+});
+export type WiseAttributeInput = z.infer<typeof WiseAttributeSchema>;
+
+export const WiseUndoAttributionSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+});
+export type WiseUndoAttributionInput = z.infer<typeof WiseUndoAttributionSchema>;

@@ -1,5 +1,6 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { updatePaymentRow } from '@/db/queries/payroll';
 import {
   appendPaymentNote,
   applyMatchPatch,
@@ -35,6 +36,13 @@ import type {
 } from '@/lib/wise/types';
 import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
+import {
+  type AttributableRow,
+  type AttributionRecord,
+  type AttributionTarget,
+  planAttribution,
+  planUndo,
+} from './attribution';
 import { wiseRequest, wiseRequestNullable } from './client';
 
 type Db = SupabaseClient<Database>;
@@ -1305,4 +1313,83 @@ export async function serviceFindTransfersByRecipient(
       reference: null,
     })),
   };
+}
+
+// ─── variance attribution ─────────────────────────────────────────────────────
+
+/** The payment columns an attribution reads and writes. */
+export interface AttributionPayment extends AttributableRow {
+  id: string;
+  net_php: number | null;
+  wise_transfer_id: string | null;
+}
+
+export interface AttributionResult {
+  delta: number;
+  netPhp: number;
+  wiseAmount: number;
+  prevValue: number | null;
+  label: string | null;
+}
+
+/**
+ * Explain the gap between what payroll says and what Wise sent, by putting it
+ * somewhere on the row.
+ *
+ * The delta is read from the transfer, never from the caller — the control can
+ * only ever close the gap it was opened for, which is what makes it safe to run
+ * on a locked or paid period where the ordinary editor refuses.
+ */
+export async function serviceAttributeVariance(
+  db: Db,
+  payment: AttributionPayment,
+  opts: { target: AttributionTarget; label?: string | undefined; companyId?: string | undefined },
+): Promise<AttributionResult> {
+  if (!payment.wise_transfer_id) {
+    throw new Error('Link the Wise transfer first — there is no variance until there is a link.');
+  }
+
+  const detail = await wiseRequest<Record<string, unknown>>(
+    `/v1/transfers/${payment.wise_transfer_id}`,
+  );
+  const wiseAmount = Number(detail.targetValue ?? 0);
+  const delta = wiseAmount - Number(payment.net_php ?? 0);
+
+  const plan = planAttribution(payment, {
+    delta,
+    target: opts.target,
+    ...(opts.label !== undefined ? { label: opts.label } : {}),
+    ...(opts.companyId !== undefined ? { companyId: opts.companyId } : {}),
+  });
+
+  await updatePaymentRow(db, payment.id, {
+    ...(plan.haPhp !== undefined ? { haPhp: plan.haPhp } : {}),
+    ...(plan.t13Php !== undefined ? { t13Php: plan.t13Php } : {}),
+    ...(plan.miscItems !== undefined ? { miscItems: plan.miscItems } : {}),
+    netPhp: plan.netPhp,
+  });
+
+  return {
+    delta,
+    netPhp: plan.netPhp,
+    wiseAmount,
+    prevValue: plan.prevValue,
+    label: plan.item?.label ?? null,
+  };
+}
+
+/** Reverse the last attribution on a payment — see `planUndo`. */
+export async function serviceUndoAttribution(
+  db: Db,
+  payment: AttributionPayment,
+  record: AttributionRecord,
+): Promise<{ netPhp: number }> {
+  const plan = planUndo(payment, record);
+  await updatePaymentRow(db, payment.id, {
+    ...(plan.haPhp !== undefined ? { haPhp: plan.haPhp } : {}),
+    ...(plan.t13Php !== undefined ? { t13Php: plan.t13Php } : {}),
+    ...(plan.miscItems !== undefined ? { miscItems: plan.miscItems } : {}),
+    netPhp: plan.netPhp,
+  });
+  return { netPhp: plan.netPhp };
 }
