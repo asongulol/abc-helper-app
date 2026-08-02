@@ -737,7 +737,14 @@ export async function serviceMatch(
   if (needsFallback) {
     try {
       const { recipients } = await serviceRecipients(profileId);
-      recipientNames = new Map(recipients.map((r) => [String(r.id), r.name]));
+      const names = new Map(recipients.map((r) => [String(r.id), r.name] as [string, string]));
+      // ponytail: one GET per since-deleted recipient (9 across all of 2024–2026),
+      // so no caching or paging. Batch it if the recipient list ever churns hard.
+      const extra = await mapLimit(unknownTargetAccounts(liveTransfers, names), 8, (id) =>
+        serviceGetRecipient(Number(id)).catch(() => null),
+      );
+      for (const r of extra) if (r?.name) names.set(String(r.id), r.name);
+      recipientNames = names;
     } catch {
       // Names are an enhancement — fall back to the amount-only sweep.
       recipientNames = undefined;
@@ -780,6 +787,23 @@ export async function serviceMatch(
     results: allResults,
   };
 }
+
+/**
+ * Target accounts in the pulled transfers that the recipient list can't name.
+ *
+ * GET /v1/accounts?profile= returns ACTIVE recipients only, so a transfer sent to a
+ * since-deleted recipient comes back nameless — and that is exactly the case the
+ * orphan sweep exists for (recipient re-created, second account, paid via Wisetag).
+ * Nameless, it has only the date window to go on, so a transfer sent later in the
+ * legal pay window stays invisible while the row reports "no Wise transfer".
+ * GET /v1/accounts/{id} still resolves a deleted recipient, so fetch those by id.
+ */
+export const unknownTargetAccounts = (
+  transfers: WiseTransfer[],
+  known: Map<string, string>,
+): string[] => [
+  ...new Set(transfers.map((t) => String(t.targetAccount ?? '')).filter((a) => a && !known.has(a))),
+];
 
 // ─── manual link ──────────────────────────────────────────────────────────────
 

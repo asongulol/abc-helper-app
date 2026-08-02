@@ -559,6 +559,28 @@ export function annotateOrphans(
   const fitsPayment = (t: WiseTransfer, p: MatcherPayment): boolean =>
     isWithinTolerance(p, t) && (isInWindow(t, matchWindow(p, windowDays)) || nameMatches(t, p));
 
+  /**
+   * How far the transfer sits from the period's LEGAL send window
+   * [period_end, pay_date] — 0 while inside it.
+   *
+   * A name hit deliberately ignores the date window, so a contractor on a flat
+   * rate offers one identical amount per period and the list came back in Wise's
+   * own order: the first suggestion for December was November's transfer. Rank by
+   * the interval the schedule actually targets and each period's own transfer
+   * comes up first. Ordering only — nothing here links anything.
+   */
+  const windowMiss = (t: WiseTransfer, p: MatcherPayment): number => {
+    const c = transferCreatedMs(t);
+    const lo = ms(p.pay_periods?.period_end);
+    if (lo === null) return 0;
+    // Both bounds are date-only midnights while a transfer carries a real UTC
+    // time, so the deadline runs to the END of pay_date — a send on the deadline
+    // afternoon (or the deadline evening in Manila, which is the next day UTC) is
+    // inside the window, not half a day late.
+    const hi = Math.max(lo, ms(p.pay_periods?.pay_date) ?? lo) + DAY_MS;
+    return c < lo ? lo - c : c > hi ? c - hi : 0;
+  };
+
   // Count how many unmatched payments each orphan fits (for ambiguity flag).
   const fitCount = new Map<string, number>();
   for (const t of orphans) {
@@ -575,12 +597,14 @@ export function annotateOrphans(
     if (!p) continue;
     const fits = orphans
       .filter((t) => fitsPayment(t, p))
-      // Name hit beats no name hit, then fewest other claimants, then closest
-      // amount — so the row the operator should click is the one on top.
+      // Name hit beats no name hit, then fewest other claimants, then nearest the
+      // period's legal send window, then closest amount — so the row the operator
+      // should click is the one on top.
       .sort(
         (a, b) =>
           Number(nameMatches(b, p)) - Number(nameMatches(a, p)) ||
           (fitCount.get(String(a.id)) ?? 1) - (fitCount.get(String(b.id)) ?? 1) ||
+          windowMiss(a, p) - windowMiss(b, p) ||
           centavoDelta(p, a) - centavoDelta(p, b),
       )
       .slice(0, 5);
