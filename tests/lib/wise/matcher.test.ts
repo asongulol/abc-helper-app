@@ -684,6 +684,120 @@ describe('annotateOrphans', () => {
     }
   });
 
+  it('resolves the recipient name and marks the contractor hit', () => {
+    // The whole point: recipient 777 is NOT on this contractor's profile, so the
+    // primary matcher can never see this transfer — but Wise says the account
+    // belongs to them, and the amount agrees.
+    const orphan = makeTransfer(400, 777, 10000, 0);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Ma. Luisa Marcelo' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Maria Luisa Marcelo']]));
+
+    const c = unmatched[0]?.candidate_orphan_transfers?.[0];
+    expect(c?.recipient_name).toBe('Maria Luisa Marcelo');
+    expect(c?.name_matches).toBe(true);
+  });
+
+  it('a name hit reaches outside the date window; without one it does not', () => {
+    const farOutside = makeTransfer(401, 777, 10000, 30);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Jessica Aguilar' };
+    const result = () => [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    const withName = result();
+    annotateOrphans(withName, [p], [farOutside], 7, new Map([['777', 'Jessica Aguilar']]));
+    expect(withName[0]?.candidate_orphan_transfers).toHaveLength(1);
+
+    const noName = result();
+    annotateOrphans(noName, [p], [farOutside], 7, new Map([['777', 'Someone Else']]));
+    expect(noName[0]?.candidate_orphan_transfers).toBeUndefined();
+  });
+
+  it('a name hit breaks the tie two identical amounts cannot', () => {
+    // Both payments are a round 10,000 on the same day — amount alone is a coin
+    // flip, and that is exactly when auto-linking pays the wrong person.
+    const orphan = makeTransfer(402, 777, 10000, 0);
+    const p1 = { ...makePayment('p1', 10000, 888), worker_name: 'Kevin Llamoso' };
+    const p2 = { ...makePayment('p2', 10000, 999), worker_name: 'Genel Montero' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+      {
+        payment_id: 'p2',
+        worker_id: 'w2',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['999'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p1, p2], [orphan], 7, new Map([['777', 'Kevin Llamoso']]));
+
+    // Offered to both — but only Kevin's is presented as unambiguous.
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(false);
+    expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(true);
+  });
+
+  it('sweeps for a contractor with no recipient id at all', () => {
+    const orphan = makeTransfer(403, 777, 10000, 0);
+    const p: MatcherPayment = {
+      ...makePayment('p1', 10000, 888),
+      worker_name: 'Joyce Ann Millo',
+      workers: null,
+    };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_recipient' as const,
+        reason: 'no recipient stored',
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Joyce Ann Millo']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('403');
+  });
+
+  it('never suggests a transfer whose amount disagrees', () => {
+    const orphan = makeTransfer(404, 777, 12000, 0);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Hazzan Buat' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Hazzan Buat']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers).toBeUndefined();
+  });
+
   it('no orphans when all transfers are claimed', () => {
     const t = makeTransfer(1, 999, 10000, 0);
     const unmatched = [

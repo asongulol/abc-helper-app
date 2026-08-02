@@ -10,6 +10,7 @@
  */
 
 import { majorToMinor } from '@/lib/money';
+import { looseKey, nameKey } from '@/lib/names';
 import type {
   MatchDecision,
   MatcherPayment,
@@ -498,13 +499,28 @@ export function decideMatch(
  * a one-click "Link this recipient" action. An orphan that fits multiple
  * payments is flagged ambiguous so the UI forces an explicit pick.
  *
+ * The primary match is keyed on recipient id, so a transfer sent to an account
+ * the contractor's profile doesn't know about (recipient re-created, second
+ * account, paid via Wisetag) is invisible to it — the row reports "no Wise
+ * transfer" while the transfer sits right there in the pulled list. This sweep
+ * is the fallback that finds it, on amount and, when `recipientNames` is
+ * supplied, on the recipient's account-holder name. A name hit also lifts the
+ * date window: same person, same amount, a few days off the expected date is
+ * still overwhelmingly that transfer.
+ *
+ * Never writes — every hit is a suggestion the operator confirms.
+ *
  * Mutates the result objects in place (same pattern as the legacy function).
+ *
+ * @param recipientNames  targetAccount → account-holder name, from
+ *                        serviceRecipients(). Omit to sweep on amount only.
  */
 export function annotateOrphans(
   allResults: MatchResult[],
   allPayments: MatcherPayment[],
   liveTransfers: WiseTransfer[],
   windowDays: number,
+  recipientNames?: Map<string, string>,
 ): void {
   const claimedIds = new Set<string>(
     allResults
@@ -519,11 +535,29 @@ export function annotateOrphans(
   for (const p of allPayments) paymentById.set(p.id, p);
 
   const unmatchedResults = allResults.filter(
-    (r) => r.outcome === 'no_wise_transfer' || r.outcome === 'no_wise_transfer_in_window',
-  ) as Extract<MatchResult, { outcome: 'no_wise_transfer' | 'no_wise_transfer_in_window' }>[];
+    (r) =>
+      r.outcome === 'no_wise_transfer' ||
+      r.outcome === 'no_wise_transfer_in_window' ||
+      r.outcome === 'no_recipient',
+  ) as Extract<
+    MatchResult,
+    { outcome: 'no_wise_transfer' | 'no_wise_transfer_in_window' | 'no_recipient' }
+  >[];
+
+  const recipientName = (t: WiseTransfer): string | null =>
+    recipientNames?.get(String(t.targetAccount ?? '')) ?? null;
+
+  // Strict key first (all tokens, order-insensitive), then loose (first+last) so
+  // a recipient saved without the middle name still matches. Same keys the
+  // roster uses, so "Ma. Luisa Marcelo" and "Maria Luisa Marcelo" are one person.
+  const nameMatches = (t: WiseTransfer, p: MatcherPayment): boolean => {
+    const rn = recipientName(t);
+    if (!rn || !p.worker_name) return false;
+    return nameKey(rn) === nameKey(p.worker_name) || looseKey(rn) === looseKey(p.worker_name);
+  };
 
   const fitsPayment = (t: WiseTransfer, p: MatcherPayment): boolean =>
-    isInWindow(t, matchWindow(p, windowDays)) && isWithinTolerance(p, t);
+    isWithinTolerance(p, t) && (isInWindow(t, matchWindow(p, windowDays)) || nameMatches(t, p));
 
   // Count how many unmatched payments each orphan fits (for ambiguity flag).
   const fitCount = new Map<string, number>();
@@ -539,7 +573,17 @@ export function annotateOrphans(
   for (const r of unmatchedResults) {
     const p = paymentById.get(r.payment_id);
     if (!p) continue;
-    const fits = orphans.filter((t) => fitsPayment(t, p)).slice(0, 5);
+    const fits = orphans
+      .filter((t) => fitsPayment(t, p))
+      // Name hit beats no name hit, then fewest other claimants, then closest
+      // amount — so the row the operator should click is the one on top.
+      .sort(
+        (a, b) =>
+          Number(nameMatches(b, p)) - Number(nameMatches(a, p)) ||
+          (fitCount.get(String(a.id)) ?? 1) - (fitCount.get(String(b.id)) ?? 1) ||
+          centavoDelta(p, a) - centavoDelta(p, b),
+      )
+      .slice(0, 5);
     if (fits.length === 0) continue;
     r.candidate_orphan_transfers = fits.map((t): OrphanCandidate => {
       const shared = fitCount.get(String(t.id)) ?? 1;
@@ -550,7 +594,11 @@ export function annotateOrphans(
         created: t.created ?? t.createdAt ?? null,
         wise_status: t.status ?? null,
         shared_with_n_payments: shared,
-        ambiguous: shared > 1,
+        // A name hit pins it to one person, so sharing an amount with another
+        // payment no longer makes it a coin flip.
+        ambiguous: shared > 1 && !nameMatches(t, p),
+        recipient_name: recipientName(t),
+        name_matches: nameMatches(t, p),
       };
     });
   }

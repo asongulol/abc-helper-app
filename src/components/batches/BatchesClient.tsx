@@ -18,12 +18,14 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PeriodSummaryRow } from '@/db/queries/payroll';
+import { matchSummary } from '@/lib/wise/match-summary';
+import type { UnlinkedPayment } from '@/lib/wise/types';
 import {
   getReconcileOverview,
   type ReconcileOverview,
   reconcileAllPending,
 } from '@/server/actions/reconcile';
-import { wiseMatch, wisePoll } from '@/server/actions/wise';
+import { wiseLinkTransfer, wiseMatch, wisePoll } from '@/server/actions/wise';
 
 interface BatchesClientProps {
   companyId: string;
@@ -40,6 +42,9 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** Rows the last Match run declined, with the transfers that could be them. */
+  const [unlinked, setUnlinked] = useState<UnlinkedPayment[]>([]);
+  const [linking, setLinking] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -92,14 +97,36 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
         notify(`Match failed: ${res.error}`, { type: 'error' });
         return;
       }
-      const left = res.data.suggestions.length;
-      notify(
-        `Matched ${res.data.matched} transfer(s)${left > 0 ? ` — ${left} still unmatched (no Wise transfer found near the payment date)` : '.'}`,
-        { type: left > 0 && res.data.matched === 0 ? 'warn' : 'success' },
-      );
+      const { text, tone } = matchSummary(res.data);
+      notify(text, { type: tone });
+      setUnlinked(res.data.unlinked);
       await load();
     } finally {
       setBusy(false);
+    }
+  };
+
+  /** Operator confirms one of the suggested transfers for one payment. */
+  const linkTransfer = async (paymentId: string, transferId: string) => {
+    setLinking(paymentId);
+    try {
+      const res = await wiseLinkTransfer(paymentId, transferId);
+      if (!res.ok) {
+        notify(`Link failed: ${res.error}`, { type: 'error' });
+        return;
+      }
+      const off = Math.abs(res.data.delta) >= 0.01;
+      notify(
+        `Linked transfer ${res.data.transferId}.` +
+          (off
+            ? ` Wise sent ₱${res.data.wiseAmount.toLocaleString()} against ₱${res.data.dbAmount.toLocaleString()} here — the payroll amount is unchanged.`
+            : ''),
+        { type: off ? 'warn' : 'success' },
+      );
+      setUnlinked((cur) => cur.filter((u) => u.paymentId !== paymentId));
+      await load();
+    } finally {
+      setLinking('');
     }
   };
 
@@ -133,7 +160,14 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
         <div className="row" style={{ alignItems: 'flex-end' }}>
           <div className="field">
             <label htmlFor={idBatch}>Batch (locked or paid)</label>
-            <select id={idBatch} value={periodId} onChange={(e) => setPeriodId(e.target.value)}>
+            <select
+              id={idBatch}
+              value={periodId}
+              onChange={(e) => {
+                setPeriodId(e.target.value);
+                setUnlinked([]);
+              }}
+            >
               <option value="">Select…</option>
               {periods.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -191,6 +225,87 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                 </button>
               </div>
             </div>
+
+            {/* Match keys on recipient id, so a transfer sent to an account this
+                contractor's profile doesn't hold is invisible to it. These are
+                the leftovers, with any Wise transfer that fits on amount — and
+                on the recipient's name where Wise gave us one. Suggestions
+                only: nothing is written until the operator picks one. */}
+            {unlinked.length > 0 && (
+              <div className="table-scroll" style={{ marginTop: 12 }}>
+                <table aria-label="Unlinked payments and candidate transfers">
+                  <thead>
+                    <tr>
+                      <th scope="col">Contractor</th>
+                      <th scope="col">Amount</th>
+                      <th scope="col">Possible Wise transfers</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unlinked.map((u) => (
+                      <tr key={u.paymentId}>
+                        <td className="card-title">
+                          <b>{u.workerName || '—'}</b>
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            {u.reason}
+                          </div>
+                        </td>
+                        <td data-label="Amount">₱{u.netPhp.toLocaleString()}</td>
+                        <td data-label="Possible Wise transfers">
+                          {u.candidates.length === 0 ? (
+                            <span className="muted" style={{ fontSize: 12 }}>
+                              No Wise transfer for this amount in the pulled history.
+                            </span>
+                          ) : (
+                            <div style={{ display: 'grid', gap: 6 }}>
+                              {u.candidates.map((c) => (
+                                <div
+                                  key={c.transfer_id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    flexWrap: 'wrap',
+                                    gap: 6,
+                                  }}
+                                >
+                                  <span>
+                                    ₱{c.target_value.toLocaleString()}
+                                    {c.created ? ` · ${c.created.slice(0, 10)}` : ''} ·{' '}
+                                    <span className="muted">#{c.transfer_id}</span>
+                                  </span>
+                                  {c.recipient_name && (
+                                    <Badge tone={c.name_matches ? 'good' : 'neutral'}>
+                                      {c.name_matches ? `✓ ${c.recipient_name}` : c.recipient_name}
+                                    </Badge>
+                                  )}
+                                  {c.ambiguous && (
+                                    <Badge
+                                      tone="warn"
+                                      title="This same transfer also fits other unlinked payments — check before linking"
+                                    >
+                                      fits {c.shared_with_n_payments}
+                                    </Badge>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn ghost sm"
+                                    disabled={linking !== ''}
+                                    onClick={() => linkTransfer(u.paymentId, c.transfer_id)}
+                                    title="Record this transfer as the one that paid this row. No money moves and the payroll amount is not changed."
+                                  >
+                                    {linking === u.paymentId ? 'Linking…' : 'Link'}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
@@ -279,6 +394,7 @@ export const BatchesClient = ({ companyId, periods }: BatchesClientProps) => {
                             className="btn ghost sm"
                             onClick={() => {
                               setPeriodId(p.id);
+                              setUnlinked([]);
                               // The per-period panel renders at the top of this
                               // card — bring it into view so the click is visible.
                               document

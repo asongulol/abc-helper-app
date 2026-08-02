@@ -66,6 +66,14 @@ export const WiseMatchSchema = z.object({
 });
 export type WiseMatchInput = z.infer<typeof WiseMatchSchema>;
 
+export const WiseLinkTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  // Wise transfer ids are numeric; reject anything else before it reaches the
+  // API path so a link can't be pointed at an arbitrary URL segment.
+  transferId: z.string().regex(/^\d+$/, 'transferId must be a Wise transfer id'),
+});
+export type WiseLinkTransferInput = z.infer<typeof WiseLinkTransferSchema>;
+
 export const WiseStatusSchema = z.object({
   paymentIds: PaymentIdsSchema,
 });

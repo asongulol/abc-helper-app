@@ -8,6 +8,7 @@ import {
   markPaymentSent,
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
+import { fullName } from '@/lib/names';
 import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
 import { classifyDraftError } from '@/lib/wise/draft-error';
 import { type DraftOverride, resolveDraftRow } from '@/lib/wise/draft-row';
@@ -20,7 +21,14 @@ import {
   filterLive,
 } from '@/lib/wise/matcher';
 import { missingRecipientReason } from '@/lib/wise/recipient-miss';
-import type { MatchDecision, MatchResult, WiseDates, WiseTransfer } from '@/lib/wise/types';
+import type {
+  MatchDecision,
+  MatchResult,
+  OrphanCandidate,
+  UnlinkedPayment,
+  WiseDates,
+  WiseTransfer,
+} from '@/lib/wise/types';
 import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
 import { wiseRequest, wiseRequestNullable } from './client';
@@ -453,6 +461,8 @@ export interface MatchStats {
   window: { from: string; to: string; days: number };
   mode: 'match' | 'refresh';
   results: MatchResult[];
+  /** Rows the matcher declined, each with the transfers that could be it. */
+  unlinked: UnlinkedPayment[];
 }
 
 /**
@@ -499,6 +509,7 @@ export async function serviceMatch(
       },
       mode: refresh ? 'refresh' : 'match',
       results: [],
+      unlinked: [],
     };
   }
 
@@ -697,6 +708,13 @@ export async function serviceMatch(
     status: p.status,
     wise_transfer_id: p.wise_transfer_id,
     paid_at: p.paid_at, // same anchor as above, for orphan suggestions
+    worker_name: p.workers
+      ? fullName({
+          firstName: p.workers.first_name,
+          middleName: p.workers.middle_name,
+          lastName: p.workers.last_name,
+        })
+      : null,
     workers: p.workers,
     pay_periods: p.pay_periods
       ? {
@@ -705,9 +723,50 @@ export async function serviceMatch(
         }
       : null,
   }));
-  annotateOrphans(allResults, matcherPayments, liveTransfers, windowDays);
+
+  // Recipient names give the sweep its second axis (amount alone can't tell two
+  // contractors on a round ₱10,000 apart). One extra API call, and only when a
+  // row actually needs the fallback.
+  const needsFallback = allResults.some(
+    (r) =>
+      r.outcome === 'no_wise_transfer' ||
+      r.outcome === 'no_wise_transfer_in_window' ||
+      r.outcome === 'no_recipient',
+  );
+  let recipientNames: Map<string, string> | undefined;
+  if (needsFallback) {
+    try {
+      const { recipients } = await serviceRecipients(profileId);
+      recipientNames = new Map(recipients.map((r) => [String(r.id), r.name]));
+    } catch {
+      // Names are an enhancement — fall back to the amount-only sweep.
+      recipientNames = undefined;
+    }
+  }
+  annotateOrphans(allResults, matcherPayments, liveTransfers, windowDays, recipientNames);
+
+  const netByPayment = new Map(payments.map((p) => [p.id, Number(p.net_php ?? 0)]));
+  const nameByPayment = new Map(matcherPayments.map((p) => [p.id, p.worker_name ?? '']));
+  const unlinked: UnlinkedPayment[] = allResults
+    .filter(
+      (r): r is Extract<MatchResult, { candidate_orphan_transfers?: OrphanCandidate[] }> =>
+        r.outcome === 'no_wise_transfer' ||
+        r.outcome === 'no_wise_transfer_in_window' ||
+        r.outcome === 'no_recipient',
+    )
+    .map((r) => ({
+      paymentId: r.payment_id,
+      workerName: nameByPayment.get(r.payment_id) ?? '',
+      netPhp: netByPayment.get(r.payment_id) ?? 0,
+      outcome: r.outcome,
+      reason: r.reason,
+      candidates: r.candidate_orphan_transfers ?? [],
+    }))
+    // Rows we can actually offer a candidate for come first.
+    .sort((a, b) => b.candidates.length - a.candidates.length);
 
   return {
+    unlinked,
     scanned: payments.length,
     matched,
     variances,
@@ -719,6 +778,64 @@ export async function serviceMatch(
     window: { from: fromIso, to: toIso, days: windowDays },
     mode: refresh ? 'refresh' : 'match',
     results: allResults,
+  };
+}
+
+// ─── manual link ──────────────────────────────────────────────────────────────
+
+export interface LinkTransferResult {
+  transferId: string;
+  wiseStatus: string | null;
+  wiseAmount: number;
+  dbAmount: number;
+  /** wiseAmount − dbAmount, in pesos. Non-zero means the operator accepted a
+   *  variance; the stored net is left alone either way. */
+  delta: number;
+}
+
+/**
+ * Attach a specific Wise transfer to a payment, by operator decision.
+ *
+ * The escape hatch for what the automatic matcher can't key on — a transfer
+ * sent to a recipient the profile never knew about. Bookkeeping only: no money
+ * moves and no new transfer is created.
+ *
+ * Unlike the auto-matcher's variance path, this NEVER rewrites net_php. The
+ * operator is asserting "this transfer paid this row", not "the amount I
+ * calculated was wrong" — silently restating the payroll amount from a
+ * hand-picked transfer is how a typo becomes the record.
+ */
+export async function serviceLinkTransfer(
+  db: Db,
+  paymentId: string,
+  transferId: string,
+  dbAmount: number,
+): Promise<LinkTransferResult> {
+  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const status = (detail.status as string | null | undefined) ?? null;
+  if (status === 'cancelled') {
+    throw new Error(`Wise transfer ${transferId} is cancelled — it never paid anyone.`);
+  }
+
+  const dates = wiseDatesFromRow(detail);
+  const sentIso = bestSentDate(dates);
+  const wiseAmount = Number(detail.targetValue ?? 0);
+
+  await applyMatchPatch(db, paymentId, {
+    wise_transfer_id: String(transferId),
+    wise_dates: dates,
+    // Only claim it was paid when Wise says the money actually left.
+    ...(sentIso && status && WISE_PAID_STATES.has(status)
+      ? { paid_at: sentIso, status: 'sent', wise_locked_at: new Date().toISOString() }
+      : {}),
+  });
+
+  return {
+    transferId: String(transferId),
+    wiseStatus: status,
+    wiseAmount,
+    dbAmount,
+    delta: wiseAmount - dbAmount,
   };
 }
 

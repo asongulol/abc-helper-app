@@ -19,6 +19,7 @@
  */
 
 import { createServerSupabase } from '@/db/clients/server';
+import { selectAll } from '@/db/queries/paging';
 import { fetchPeriodIdsForPayments, syncPeriodPaidState } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
@@ -69,16 +70,28 @@ export async function getReconcileOverview(
 
   try {
     const db = await createServerSupabase();
-    const { data, error } = await db
-      .from('payments')
-      .select(
-        'net_php,status,payout_method,wise_transfer_id,paid_at,pay_periods(id,period_start,period_end,state)',
-      )
-      .eq('company_id', companyId);
-    if (error) return { ok: false, error: error.message };
+    // This is every payment the company has ever made (1,152 and climbing) and
+    // it was unbounded, so PostgREST silently returned an arbitrary 1,000 of
+    // them — whole periods came and went between reloads. Worse, an UPDATE
+    // rewrites its rows to the end of the heap, so reconciling moved those very
+    // rows out of the truncated window: the action reported success and the
+    // table redrew unchanged. `.order('id')` gives the paging a stable total
+    // order; without it successive ranges can repeat or skip rows.
+    const data = await selectAll(
+      (from, to) =>
+        db
+          .from('payments')
+          .select(
+            'status,payout_method,wise_transfer_id,paid_at,pay_periods(id,period_start,period_end,state)',
+          )
+          .eq('company_id', companyId)
+          .order('id')
+          .range(from, to),
+      'payments (reconcile overview)',
+    );
 
     const byP = new Map<string, ReconcileOverviewPeriod>();
-    for (const p of data ?? []) {
+    for (const p of data) {
       const pp = p.pay_periods;
       if (!pp) continue;
       const g =
