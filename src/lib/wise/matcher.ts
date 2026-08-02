@@ -44,7 +44,7 @@ function ms(d: string | null | undefined): number | null {
 }
 
 /**
- * The match window for one payment, as anchor ± halfMs.
+ * The match window for one payment: [period_start, pay_date + slack].
  *
  * Pay runs semi-monthly on half-month arrears: days 1–15 are paid by month end,
  * days 16–EOM by the 15th of the next month — and pay_date is a DEADLINE, not an
@@ -53,32 +53,73 @@ function ms(d: string | null | undefined): number | null {
  * period Mar 1–15 / deadline Mar 31, sent Mar 17 → ±7d of Mar 31 is Mar 24–Apr 7
  * → no_wise_transfer_in_window even though nothing was wrong.
  *
- * So anchor at the MIDPOINT of the legal window and take half its own span (+1d
- * of slack for timezone skew and a send that slips past the deadline). Both halves
- * of that are needed: the midpoint with a fixed ±7d still misses the deadline day,
- * and a fixed ±16d anchored anywhere reaches into the NEXT period's legal window,
- * where a similar amount would match the wrong period. windowDays stays a floor so
- * callers can widen it deliberately.
+ * The floor is period_start, not period_end: a run sometimes leaves BEFORE the
+ * period closes (verified on prod — Zagado's 2024-08-01→15 row was paid Aug 13).
+ * The ceiling is the deadline run to the END of pay_date, because transfers carry
+ * a real UTC time and Manila is UTC+8, so an evening send isn't half a day late.
+ *
+ * Deliberately generous: this decides only what is ELIGIBLE. Which candidate wins
+ * is decided by windowMiss() ranking, and a transfer another payment already
+ * claimed never gets here — the service drops claimed ids before indexing.
+ *
+ * paid_at only ever WIDENS. The app writes it from whichever transfer was matched,
+ * so a wrong link poisons it — that is how 36 transfers ended up on two rows each
+ * — and it must never narrow a period's own window. It still earns its keep when a
+ * batch went out well past the deadline (prod: pay_date 06-15, paid_at 06-29).
+ *
+ * windowDays stays a floor so callers can widen it deliberately.
  */
-function matchWindow(p: MatcherPayment, windowDays: number): { anchor: number; halfMs: number } {
+function matchWindow(p: MatcherPayment, windowDays: number): { lo: number; hi: number } {
   const floorMs = windowDays * DAY_MS;
-
-  // paid_at is the app's own record of when the batch actually went out — a real
-  // date beats a scheduled range, so window tightly around it.
-  const paid = ms(p.paid_at);
-  if (paid !== null) return { anchor: paid, halfMs: floorMs };
-
+  const start = ms(p.pay_periods?.period_start);
   const end = ms(p.pay_periods?.period_end);
   const due = ms(p.pay_periods?.pay_date);
+  const paid = ms(p.paid_at);
+
+  let lo: number;
+  let hi: number;
   if (end !== null && due !== null && due > end) {
-    return { anchor: (end + due) / 2, halfMs: Math.max(floorMs, (due - end) / 2 + DAY_MS) };
+    const mid = (end + due) / 2;
+    lo = Math.min(start ?? end, mid - floorMs);
+    hi = Math.max(due + DAY_MS, mid + floorMs);
+  } else {
+    // ponytail: rows with no legal span to derive — pre-RP-03 rows (lockPeriod
+    // overwrote pay_date with period_end) and off-cycle batches (start = end =
+    // pay_date) — keep the legacy ±windowDays anchor. No worse than today, and
+    // the real deadline isn't recoverable from such a row.
+    const anchor = paid ?? due ?? end ?? Date.now();
+    lo = anchor - floorMs;
+    hi = anchor + floorMs;
   }
 
-  // ponytail: rows written before RP-03 (lockPeriod overwrote pay_date with
-  // period_end, so due === end) fall back to the legacy ±windowDays anchor — no
-  // worse than today, and the real deadline isn't recoverable from such a row.
-  return { anchor: due ?? end ?? Date.now(), halfMs: floorMs };
+  if (paid === null) return { lo, hi };
+  return { lo: Math.min(lo, paid - floorMs), hi: Math.max(hi, paid + floorMs) };
 }
+
+/**
+ * How far a transfer sits from the period's LEGAL send window
+ * [period_end, pay_date] — 0 while inside it.
+ *
+ * RANKING ONLY: matchWindow decides what is eligible, this decides which eligible
+ * transfer is the one. A flat-rate contractor offers one identical amount per
+ * period, so amount can't order them and the widened window admits a neighbour's
+ * transfer; ranking by the interval the schedule actually targets puts each
+ * period's own transfer first. Nothing here links anything.
+ */
+function windowMiss(t: WiseTransfer, p: MatcherPayment): number {
+  const c = transferCreatedMs(t);
+  const lo = ms(p.pay_periods?.period_end);
+  if (lo === null) return 0;
+  // Both bounds are date-only midnights while a transfer carries a real UTC time,
+  // so the deadline runs to the END of pay_date — a send on the deadline afternoon
+  // (or the deadline evening in Manila, which is the next day UTC) is inside the
+  // window, not half a day late.
+  const hi = Math.max(lo, ms(p.pay_periods?.pay_date) ?? lo) + DAY_MS;
+  return c < lo ? lo - c : c > hi ? c - hi : 0;
+}
+
+/** YYYY-MM-DD for a window bound, for operator-facing reasons. */
+const day = (t: number): string => new Date(t).toISOString().slice(0, 10);
 
 /** Extract the transfer's created epoch ms. */
 function transferCreatedMs(t: WiseTransfer): number {
@@ -107,8 +148,9 @@ function isWithinTolerance(p: MatcherPayment, t: WiseTransfer): boolean {
 }
 
 /** True when the transfer was created inside the payment's match window. */
-function isInWindow(t: WiseTransfer, w: { anchor: number; halfMs: number }): boolean {
-  return Math.abs(transferCreatedMs(t) - w.anchor) <= w.halfMs;
+function isInWindow(t: WiseTransfer, w: { lo: number; hi: number }): boolean {
+  const c = transferCreatedMs(t);
+  return c >= w.lo && c <= w.hi;
 }
 
 /**
@@ -292,9 +334,10 @@ export function decideRefresh(
  * Applies ALL legacy edge cases in order:
  *  1. No recipient keys stored → no_recipient
  *  2. No transfer in the recipient index → no_wise_transfer
+ *  2b. None of them successful, or all already claimed → no_wise_transfer
  *  3. Transfer exists but outside the match window → no_wise_transfer_in_window
  *  4. Exactly one within-tolerance candidate → matched_exact
- *  5. Multiple within-tolerance → closest-pay-date disambiguation → ambiguous_exact if true tie
+ *  5. Multiple within-tolerance → legal-window disambiguation → ambiguous_exact if true tie
  *  6. No within-tolerance candidate, one inWindow → unambiguous variance auto-override
  *  7. No within-tolerance candidate, multiple inWindow → ambiguous variance (no auto-override)
  *
@@ -304,8 +347,12 @@ export function decideRefresh(
  *                    (which fetches the detail endpoint for each candidate).
  *                    Pass a function so the pure matcher can request dates lazily.
  * @param windowDays  MINIMUM half-window in days (legacy default 7). The period's
- *                    own [period_end, pay_date] span widens it — see matchWindow.
+ *                    own [period_start, pay_date] span widens it — see matchWindow.
  * @param nowIso      Current ISO timestamp.
+ * @param taken       Transfer ids already claimed EARLIER IN THIS RUN. One transfer
+ *                    pays one row: without this, a flat-rate contractor's four
+ *                    unmatched periods all grab the same transfer. Ids claimed by
+ *                    rows outside the run are dropped before indexing instead.
  */
 export function decideMatch(
   p: MatcherPayment,
@@ -313,6 +360,7 @@ export function decideMatch(
   getDates: (t: WiseTransfer) => WiseDates,
   windowDays: number,
   nowIso: string,
+  taken?: ReadonlySet<string>,
 ): MatchDecision {
   // 1. Recipient keys
   const keys = recipientKeys(p);
@@ -354,10 +402,29 @@ export function decideMatch(
     };
   }
 
+  // 2b. Only a SUCCESSFUL transfer paid anybody, and one transfer pays one row —
+  // a draft/refunded transfer, or one another payment already claimed, is not a
+  // candidate for this one.
+  const usable = candidates.filter(
+    (t) => WISE_PAID_STATES.has(t.status) && !taken?.has(String(t.id)),
+  );
+
+  if (usable.length === 0) {
+    const statuses = [...new Set(candidates.map((t) => t.status))].join(', ');
+    return {
+      result: {
+        payment_id: p.id,
+        worker_id: p.worker_id,
+        outcome: 'no_wise_transfer',
+        reason: `Wise has ${candidates.length} transfer(s) for this recipient, but none of them is both successful and unclaimed (statuses: ${statuses})`,
+        recipient_keys_tried: keys,
+      },
+    };
+  }
+
   // 3. Per-payment date window filter.
   const w = matchWindow(p, windowDays);
-  const payTs = w.anchor;
-  const inWindow = candidates.filter((t) => isInWindow(t, w));
+  const inWindow = usable.filter((t) => isInWindow(t, w));
 
   if (inWindow.length === 0) {
     const tried = keys.length === 1 ? 'this recipient' : `${keys.length} known recipient ids`;
@@ -367,12 +434,17 @@ export function decideMatch(
         worker_id: p.worker_id,
         outcome: 'no_wise_transfer_in_window',
         // Report the window actually used, not windowDays — they differ whenever
-        // the period's own [period_end, pay_date] span is the wider one.
-        reason: `Wise has transfers to ${tried} but none within ±${Math.round(w.halfMs / DAY_MS)} days of ${new Date(payTs).toISOString().slice(0, 10)}`,
+        // the period's own [period_start, pay_date] span is the wider one.
+        reason: `Wise has transfers to ${tried} but none created between ${day(w.lo)} and ${day(w.hi)}`,
         recipient_keys_tried: keys,
       },
     };
   }
+
+  // The deadline the schedule targets — the secondary rank once two candidates sit
+  // equally inside (or outside) the legal window. Payment is manual and lands at,
+  // or a few days before, pay_date.
+  const payTs = ms(p.pay_periods?.pay_date) ?? (w.lo + w.hi) / 2;
 
   // 4 + 5. Exact amount match (within ±₱1.00).
   const exact = inWindow.filter((t) => isWithinTolerance(p, t));
@@ -396,17 +468,19 @@ export function decideMatch(
   }
 
   if (exact.length > 1) {
-    // Multiple exact-amount matches — resolve by closest pay_date.
+    // Multiple exact-amount matches — the one nearest the period's LEGAL send
+    // window wins, and inside that window the one nearest the deadline.
+    const toDeadline = (t: WiseTransfer): number => Math.abs(transferCreatedMs(t) - payTs);
     const ranked = [...exact].sort(
-      (a, b) => Math.abs(transferCreatedMs(a) - payTs) - Math.abs(transferCreatedMs(b) - payTs),
+      (a, b) => windowMiss(a, p) - windowMiss(b, p) || toDeadline(a) - toDeadline(b),
     );
     const first = ranked[0] as WiseTransfer;
     const second = ranked[1] as WiseTransfer;
-    const closestMs = Math.abs(transferCreatedMs(first) - payTs);
-    const runnerUpMs = Math.abs(transferCreatedMs(second) - payTs);
-    // Only a true tie when the two closest are within 1 day of each other
-    // relative to pay_date — that's a genuine "can't tell" case.
-    const isTrueTie = Math.abs(closestMs - runnerUpMs) < DAY_MS;
+    // Only a true tie when NEITHER key separates the two closest by as much as a
+    // day — that's a genuine "can't tell" case.
+    const isTrueTie =
+      Math.abs(windowMiss(first, p) - windowMiss(second, p)) < DAY_MS &&
+      Math.abs(toDeadline(first) - toDeadline(second)) < DAY_MS;
 
     if (isTrueTie) {
       return {
@@ -440,10 +514,11 @@ export function decideMatch(
   }
 
   // 6 + 7. No exact amount match — amount variance path.
-  // Sort inWindow by closest amount to payment.
+  // Same rank as the exact path (legal window first), then closest amount.
   const dbCentavos = paymentCentavos(p);
   const ranked = [...inWindow].sort(
     (a, b) =>
+      windowMiss(a, p) - windowMiss(b, p) ||
       Math.abs(transferCentavos(a) - dbCentavos) - Math.abs(transferCentavos(b) - dbCentavos),
   );
   const t = ranked[0] as WiseTransfer;
@@ -567,28 +642,6 @@ export function annotateOrphans(
 
   const fitsPayment = (t: WiseTransfer, p: MatcherPayment): boolean =>
     isWithinTolerance(p, t) && (isInWindow(t, matchWindow(p, windowDays)) || nameMatches(t, p));
-
-  /**
-   * How far the transfer sits from the period's LEGAL send window
-   * [period_end, pay_date] — 0 while inside it.
-   *
-   * A name hit deliberately ignores the date window, so a contractor on a flat
-   * rate offers one identical amount per period and the list came back in Wise's
-   * own order: the first suggestion for December was November's transfer. Rank by
-   * the interval the schedule actually targets and each period's own transfer
-   * comes up first. Ordering only — nothing here links anything.
-   */
-  const windowMiss = (t: WiseTransfer, p: MatcherPayment): number => {
-    const c = transferCreatedMs(t);
-    const lo = ms(p.pay_periods?.period_end);
-    if (lo === null) return 0;
-    // Both bounds are date-only midnights while a transfer carries a real UTC
-    // time, so the deadline runs to the END of pay_date — a send on the deadline
-    // afternoon (or the deadline evening in Manila, which is the next day UTC) is
-    // inside the window, not half a day late.
-    const hi = Math.max(lo, ms(p.pay_periods?.pay_date) ?? lo) + DAY_MS;
-    return c < lo ? lo - c : c > hi ? c - hi : 0;
-  };
 
   // Count how many unmatched payments each orphan fits (for ambiguity flag).
   const fitCount = new Map<string, number>();

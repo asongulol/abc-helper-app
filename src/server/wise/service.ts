@@ -2,6 +2,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   applyMatchPatch,
+  fetchClaimedTransferIds,
   fetchDraftPayments,
   fetchMatchPayments,
   fetchPollPayments,
@@ -566,8 +567,13 @@ export async function serviceMatch(
   // 4. Filter out cancelled "ghost" transfers.
   const liveTransfers = filterLive(wiseTransfers);
 
-  // 5. Build indexes.
-  const recipIndex = buildRecipientIndex(liveTransfers);
+  // 5. Build indexes. One transfer pays one row, so anything a payment already
+  //    holds is off the table before the matcher ever sees it — the discovery
+  //    path is what put 36 transfers on two rows each. The by-id index keeps the
+  //    full list: the refresh path has to find the transfer a row already claims.
+  const claimed = await fetchClaimedTransferIds(db);
+  const unclaimed = liveTransfers.filter((t) => !claimed.has(String(t.id)));
+  const recipIndex = buildRecipientIndex(unclaimed);
   const idIndex = buildTransferIdIndex(liveTransfers);
 
   // 6. Match each payment.
@@ -577,6 +583,8 @@ export async function serviceMatch(
   const linkedPaymentIds = new Set<string>();
   /** dry-run only: payment id → the transfer a real run would have linked. */
   const proposed = new Map<string, string>();
+  /** Transfers this run has already handed out — one transfer pays one row. */
+  const taken = new Set<string>();
   let matched = 0;
   let variances = 0;
   let ambiguous = 0;
@@ -605,6 +613,7 @@ export async function serviceMatch(
       pay_periods: p.pay_periods
         ? {
             pay_date: p.pay_periods.pay_date,
+            period_start: p.pay_periods.period_start,
             period_end: p.pay_periods.period_end,
           }
         : null,
@@ -625,7 +634,7 @@ export async function serviceMatch(
         // The service layer re-fetches the detail asynchronously below.
         return wiseDatesFromListRow(t);
       };
-      decision = decideMatch(mp, recipIndex, getDates, windowDays, nowIso);
+      decision = decideMatch(mp, recipIndex, getDates, windowDays, nowIso, taken);
 
       // If the decision involves a transfer, fetch the real detail dates now.
       if (decision.patch?.wise_transfer_id) {
@@ -658,6 +667,9 @@ export async function serviceMatch(
     // unmatched and then showed nothing to act on.
     if (patch?.wise_transfer_id || p.wise_transfer_id) linkedPaymentIds.add(p.id);
     if (dryRun && patch?.wise_transfer_id) proposed.set(p.id, patch.wise_transfer_id);
+    // Claim it for the rest of the run — in a dry run too, or the read-only view
+    // would offer one transfer to two rows and both would look linkable.
+    if (patch?.wise_transfer_id) taken.add(patch.wise_transfer_id);
 
     // Apply DB write if the matcher proposed one.
     if (patch && !dryRun) {
@@ -735,6 +747,7 @@ export async function serviceMatch(
     pay_periods: p.pay_periods
       ? {
           pay_date: p.pay_periods.pay_date,
+          period_start: p.pay_periods.period_start,
           period_end: p.pay_periods.period_end,
         }
       : null,
@@ -756,7 +769,7 @@ export async function serviceMatch(
       const names = new Map(recipients.map((r) => [String(r.id), r.name] as [string, string]));
       // ponytail: one GET per since-deleted recipient (9 across all of 2024–2026),
       // so no caching or paging. Batch it if the recipient list ever churns hard.
-      const extra = await mapLimit(unknownTargetAccounts(liveTransfers, names), 8, (id) =>
+      const extra = await mapLimit(unknownTargetAccounts(unclaimed, names), 8, (id) =>
         serviceGetRecipient(Number(id)).catch(() => null),
       );
       for (const r of extra) if (r?.name) names.set(String(r.id), r.name);
@@ -766,7 +779,9 @@ export async function serviceMatch(
       recipientNames = undefined;
     }
   }
-  annotateOrphans(allResults, matcherPayments, liveTransfers, windowDays, recipientNames);
+  // Suggestions come from the same unclaimed pool: a transfer that already paid
+  // another row is not an orphan, and offering it invites a second link to it.
+  annotateOrphans(allResults, matcherPayments, unclaimed, windowDays, recipientNames);
 
   const netByPayment = new Map(payments.map((p) => [p.id, Number(p.net_php ?? 0)]));
   const nameByPayment = new Map(matcherPayments.map((p) => [p.id, p.worker_name ?? '']));
