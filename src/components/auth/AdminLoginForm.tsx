@@ -2,6 +2,7 @@
 
 import { type FormEvent, useId, useState } from 'react';
 import { createBrowserSupabase } from '@/db/clients/browser';
+import { TurnstileWidget, useTurnstileToken } from './Turnstile';
 
 type Busy = 'google' | 'password' | null;
 
@@ -20,6 +21,7 @@ export const AdminLoginForm = () => {
   const [err, setErr] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const captchaToken = useTurnstileToken();
   const emailId = useId();
   const passwordId = useId();
   // Google OAuth isn't wired on the local Supabase stack — steer dev sign-in to email.
@@ -62,6 +64,7 @@ export const AdminLoginForm = () => {
     const { error } = await supabase.auth.signInWithPassword({
       email: email.trim().toLowerCase(),
       password,
+      ...(captchaToken ? { options: { captchaToken } } : {}),
     });
     if (error) {
       setErr(error.message);
@@ -107,6 +110,7 @@ export const AdminLoginForm = () => {
           style={{ width: '100%', marginBottom: 0 }}
         />
       </div>
+      <TurnstileWidget style={{ marginTop: 12 }} />
       <button
         type="submit"
         className={emailIsPrimary ? 'btn' : 'btn ghost'}
