@@ -759,6 +759,39 @@ describe('annotateOrphans', () => {
     expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(true);
   });
 
+  it('offers each period the transfer sent inside ITS legal window', () => {
+    // A flat-rate contractor paid through a since-deleted recipient: every period
+    // is the same amount to the same account, so the name hit fits them all and
+    // amount can't order them. December's row must not lead with November's
+    // transfer just because Wise listed it first.
+    const oct = makeTransferOn(405, 777, 10000, '2024-10-30');
+    const nov = makeTransferOn(406, 777, 10000, '2024-11-15');
+    const mk = (id: string, periodEnd: string, payDate: string): MatcherPayment => ({
+      ...makePayment(id, 10000, 888, { periodEnd, payDate, paidAt: `${periodEnd}T00:00:00Z` }),
+      worker_name: 'Cecilia Pasaoa Velante',
+    });
+    const first = mk('p-oct1', '2024-10-15', '2024-10-31');
+    const second = mk('p-oct16', '2024-10-31', '2024-11-15');
+    const unmatched = [first, second].map((p) => ({
+      payment_id: p.id,
+      worker_id: `w-${p.id}`,
+      outcome: 'no_wise_transfer' as const,
+      reason: 'x',
+      recipient_keys_tried: ['888'],
+    }));
+
+    annotateOrphans(
+      unmatched,
+      [first, second],
+      [oct, nov],
+      7,
+      new Map([['777', 'Cecilia Velante']]),
+    );
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('405');
+    expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('406');
+  });
+
   it('sweeps for a contractor with no recipient id at all', () => {
     const orphan = makeTransfer(403, 777, 10000, 0);
     const p: MatcherPayment = {
