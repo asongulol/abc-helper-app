@@ -70,9 +70,11 @@
 }
 body {
   margin: 0;
-  /* Legacy stack: Inter preferred when installed, otherwise the system stack
-     (no webfont was loaded in legacy — keep it that way: zero font flash). */
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Inter is now actually loaded (self-hosted via next/font in layout.tsx),
+     where legacy only *named* it and silently fell through to system-ui — which
+     meant the app rendered in SF on macOS and Segoe on Windows. --font-sans is
+     next/font's size-adjusted fallback chain, so there is still no layout shift. */
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -80,7 +82,17 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-td {
+/* Money and figures ride a fixed-width digit. Table cells already did, but the
+   headline amounts did not — so a net-pay total re-rendering from ₱98,411 to
+   ₱103,244 changed width mid-column and nudged everything beside it. Every
+   number a person reads as currency belongs here, not just the ones in a <td>. */
+td,
+.ov-tile-num,
+.ov-delta,
+.steps-time,
+.portal .net,
+.portal .bigpay,
+.portal .summary .scell .v {
   font-variant-numeric: tabular-nums;
 }
 a {
@@ -861,7 +873,6 @@ a.btn:hover {
 }
 .steps-time {
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
   font-weight: 600;
   font-size: 12px;
 }
@@ -1724,28 +1735,6 @@ dialog.modal::backdrop {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
-/* Dashboard stat cards & summary grids: mobile-only refinements. */
-@media (max-width: 640px) {
-  .dash-stats {
-    display: grid !important;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 12px;
-    margin-bottom: 8px;
-  }
-  .dash-stats > .dash-stat {
-    min-width: 0 !important;
-    margin-bottom: 0;
-  }
-  .dash-stats .dash-stat-num {
-    font-size: 18px !important;
-  }
-}
-@media (max-width: 400px) {
-  .dash-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Custom hover tooltip — native title= is unreliable on Chrome/macOS for
    multi-line text; this fires instantly and respects line breaks. */
 .tip-wrap {
@@ -2018,10 +2007,12 @@ dialog.modal::backdrop {
      were identical literals — re-skinning --navy now flows through to portal). */
   --accent-soft: #eaf0fb;
   --radius: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Was its own -apple-system stack, so the portal and the admin app rendered
+     in different typefaces on the same account. Both now resolve to --font-sans. */
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 100dvh;
   -webkit-text-size-adjust: 100%;
 }
 .portal .wrap {
