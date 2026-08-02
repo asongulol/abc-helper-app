@@ -1,9 +1,9 @@
 'use client';
 
-import Script from 'next/script';
-import { type FormEvent, useEffect, useId, useState } from 'react';
+import { type FormEvent, useId, useState } from 'react';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import { safeNext } from '@/lib/auth/safe-next';
+import { TurnstileWidget, useTurnstileToken } from './Turnstile';
 
 /** Post-login destination from `?next=`, constrained to a portal path (#045). */
 const postLoginDest = (): string => {
@@ -14,35 +14,17 @@ const postLoginDest = (): string => {
 /**
  * Contractor portal sign-in — email/password with a self-serve password reset.
  *
- * Cloudflare Turnstile (§7.6): rendered only when NEXT_PUBLIC_TURNSTILE_SITE_KEY
- * is configured. Its single-use token is attached to signInWithPassword /
- * resetPasswordForEmail via `options.captchaToken`; we never client-block on it
- * (Supabase Auth is the enforcer when the project has Turnstile enabled).
+ * Cloudflare Turnstile lives in ./Turnstile, shared with the admin form.
  */
-const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-
-type TurnstileWindow = Window & {
-  __abcTurnstileToken?: ((token: string) => void) | undefined;
-};
-
 export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sent, setSent] = useState('');
-  const [captchaToken, setCaptchaToken] = useState<string | undefined>(undefined);
+  const captchaToken = useTurnstileToken();
   const emailId = useId();
   const passwordId = useId();
-
-  // Turnstile invokes a named global callback with the token; mirror it to state.
-  useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return;
-    (window as TurnstileWindow).__abcTurnstileToken = (token: string) => setCaptchaToken(token);
-    return () => {
-      (window as TurnstileWindow).__abcTurnstileToken = undefined;
-    };
-  }, []);
 
   const signIn = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -138,17 +120,7 @@ export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
         aria-invalid={err ? 'true' : undefined}
         aria-describedby={err ? 'portal-login-err' : undefined}
       />
-      {TURNSTILE_SITE_KEY && (
-        <>
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer />
-          <div
-            className="cf-turnstile"
-            data-sitekey={TURNSTILE_SITE_KEY}
-            data-callback="__abcTurnstileToken"
-            style={{ marginTop: 8 }}
-          />
-        </>
-      )}
+      <TurnstileWidget />
       {err && (
         <div id="portal-login-err" className="err" role="alert">
           {err}
