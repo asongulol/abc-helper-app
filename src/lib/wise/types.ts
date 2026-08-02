@@ -103,6 +103,9 @@ export interface MatchResultAmbiguous extends MatchResultBase {
   outcome: 'ambiguous_exact';
   reason: string;
   candidate_transfer_ids: string[];
+  /** The same standoff, as pickable rows — an ambiguous row is one an operator
+   *  has to resolve by hand, so it needs the suggestion list most of all. */
+  candidate_orphan_transfers?: OrphanCandidate[];
 }
 
 export interface MatchResultSuccess extends MatchResultBase {

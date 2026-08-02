@@ -759,6 +759,30 @@ describe('annotateOrphans', () => {
     expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(true);
   });
 
+  it('annotates an ambiguous row — the operator has to pick, so give it the list', () => {
+    // Two identical transfers to the same recipient: the matcher refuses to
+    // choose, which is exactly when the row needs its candidates surfaced.
+    const a = makeTransfer(407, 777, 10000, 0);
+    const b = makeTransfer(408, 777, 10000, 0);
+    const p = { ...makePayment('p1', 10000, 777), worker_name: 'Loren Zagado' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'ambiguous_exact' as const,
+        reason: 'two equally close',
+        candidate_transfer_ids: ['407', '408'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [a, b], 7, new Map([['777', 'Loren Zagado']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.map((c) => c.transfer_id)).toEqual([
+      '407',
+      '408',
+    ]);
+  });
+
   it('offers each period the transfer sent inside ITS legal window', () => {
     // A flat-rate contractor paid through a since-deleted recipient: every period
     // is the same amount to the same account, so the name hit fits them all and

@@ -192,6 +192,50 @@ export const fetchMatchPayments = async (
   });
 };
 
+/** One payment in a period, as the reconcile view shows it. */
+export interface PeriodPaymentRow {
+  id: string;
+  workerName: string;
+  netPhp: number;
+  status: string;
+  payoutMethod: string | null;
+  wiseTransferId: string | null;
+  paidAt: string | null;
+}
+
+/**
+ * Every payment in one period for the reconcile view — linked and unlinked
+ * alike. The overview only carries counts, so opening a period used to show a
+ * "1 unmatched" badge above an empty table until you ran a match.
+ */
+export const fetchPeriodPayments = async (
+  db: Db,
+  payPeriodId: string,
+): Promise<PeriodPaymentRow[]> => {
+  const { data, error } = await db
+    .from('payments')
+    .select(
+      'id,net_php,status,payout_method,wise_transfer_id,paid_at,workers(first_name,middle_name,last_name)',
+    )
+    .eq('pay_period_id', payPeriodId);
+  if (error) throw new Error(`payments (period): ${error.message}`);
+
+  return (data ?? [])
+    .map((p) => ({
+      id: p.id,
+      workerName: [p.workers?.first_name, p.workers?.middle_name, p.workers?.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim(),
+      netPhp: Number(p.net_php ?? 0),
+      status: p.status,
+      payoutMethod: p.payout_method,
+      wiseTransferId: p.wise_transfer_id,
+      paidAt: p.paid_at ?? null,
+    }))
+    .sort((a, b) => a.workerName.localeCompare(b.workerName));
+};
+
 /**
  * Apply the matcher's proposed patch to a payment row.
  * The patch shape is defined in src/lib/wise/types.ts (PaymentPatch).

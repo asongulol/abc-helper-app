@@ -475,6 +475,9 @@ export interface MatchStats {
  * @param windowDays   ±days around pay_date (default 7; legacy default).
  * @param refresh      Re-fetch already-matched rows (to backfill wise_dates etc.).
  * @param payPeriodId  Scope to one period (omit = all unmatched wise payments).
+ * @param dryRun       Decide everything, write nothing. Opening a period runs
+ *                     this to show its suggestions; only the explicit Match
+ *                     button may link a transfer or restate an amount.
  */
 export async function serviceMatch(
   db: Db,
@@ -482,10 +485,12 @@ export async function serviceMatch(
     windowDays?: number | undefined;
     refresh?: boolean | undefined;
     payPeriodId?: string | undefined;
+    dryRun?: boolean | undefined;
   } = {},
 ): Promise<MatchStats> {
   const windowDays = Number(opts.windowDays ?? 7);
   const refresh = opts.refresh === true;
+  const dryRun = opts.dryRun === true;
 
   const payments = await fetchMatchPayments(db, {
     refresh,
@@ -568,6 +573,10 @@ export async function serviceMatch(
   // 6. Match each payment.
   const nowIso = new Date().toISOString();
   const allResults: MatchResult[] = [];
+  /** Payments this run leaves carrying a transfer id. */
+  const linkedPaymentIds = new Set<string>();
+  /** dry-run only: payment id → the transfer a real run would have linked. */
+  const proposed = new Map<string, string>();
   let matched = 0;
   let variances = 0;
   let ambiguous = 0;
@@ -643,8 +652,15 @@ export async function serviceMatch(
 
     const { patch, result } = decision;
 
+    // A row is "unlinked" when the run leaves it without a transfer — not when
+    // its outcome happens to be one of a named few. Listing by outcome dropped
+    // ambiguous_exact rows out of the UI entirely: the period counted them as
+    // unmatched and then showed nothing to act on.
+    if (patch?.wise_transfer_id || p.wise_transfer_id) linkedPaymentIds.add(p.id);
+    if (dryRun && patch?.wise_transfer_id) proposed.set(p.id, patch.wise_transfer_id);
+
     // Apply DB write if the matcher proposed one.
-    if (patch) {
+    if (patch && !dryRun) {
       try {
         await applyMatchPatch(db, p.id, {
           ...(patch.wise_transfer_id !== undefined
@@ -754,20 +770,37 @@ export async function serviceMatch(
 
   const netByPayment = new Map(payments.map((p) => [p.id, Number(p.net_php ?? 0)]));
   const nameByPayment = new Map(matcherPayments.map((p) => [p.id, p.worker_name ?? '']));
+
+  /** The transfer a dry run would have linked, as a pickable candidate. */
+  const proposedCandidate = (paymentId: string): OrphanCandidate[] => {
+    const t = idIndex.get(proposed.get(paymentId) ?? '');
+    if (!t) return [];
+    return [
+      {
+        transfer_id: String(t.id),
+        target_account: String(t.targetAccount ?? ''),
+        target_value: Number(t.targetValue ?? t.targetAmount ?? 0),
+        created: t.created ?? t.createdAt ?? null,
+        wise_status: t.status ?? null,
+        shared_with_n_payments: 1,
+        ambiguous: false,
+        recipient_name: recipientNames?.get(String(t.targetAccount ?? '')) ?? null,
+        name_matches: false,
+      },
+    ];
+  };
+
   const unlinked: UnlinkedPayment[] = allResults
-    .filter(
-      (r): r is Extract<MatchResult, { candidate_orphan_transfers?: OrphanCandidate[] }> =>
-        r.outcome === 'no_wise_transfer' ||
-        r.outcome === 'no_wise_transfer_in_window' ||
-        r.outcome === 'no_recipient',
-    )
+    .filter((r) => !linkedPaymentIds.has(r.payment_id))
     .map((r) => ({
       paymentId: r.payment_id,
       workerName: nameByPayment.get(r.payment_id) ?? '',
       netPhp: netByPayment.get(r.payment_id) ?? 0,
       outcome: r.outcome,
-      reason: r.reason,
-      candidates: r.candidate_orphan_transfers ?? [],
+      reason: 'reason' in r ? r.reason : 'error' in r ? r.error : 'Not linked to a Wise transfer',
+      candidates:
+        ('candidate_orphan_transfers' in r ? r.candidate_orphan_transfers : undefined) ??
+        proposedCandidate(r.payment_id),
     }))
     // Rows we can actually offer a candidate for come first.
     .sort((a, b) => b.candidates.length - a.candidates.length);
