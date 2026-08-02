@@ -341,6 +341,14 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
                   {selected.unmatchedWise > 0 && (
                     <Badge tone="bad">{selected.unmatchedWise} unmatched</Badge>
                   )}
+                  {selected.unconfirmed > 0 && (
+                    <Badge
+                      tone="bad"
+                      title="Linked to a Wise transfer that was never confirmed as paid — a draft the app could not fund, or a cancelled one. Open the rows below."
+                    >
+                      {selected.unconfirmed} unconfirmed
+                    </Badge>
+                  )}
                   {selected.readySent > 0 && (
                     <Badge tone="warn">{selected.readySent} to reconcile</Badge>
                   )}
@@ -724,7 +732,9 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
                 </thead>
                 <tbody>
                   {ovPeriods.map((p) => {
-                    const done = p.total > 0 && p.reconciled === p.total;
+                    // "Paid · Wise OK" must not cover rows whose transfer never
+                    // paid — that green tick is precisely what hid 29 of them.
+                    const done = p.total > 0 && p.reconciled === p.total && p.unconfirmed === 0;
                     return (
                       <tr key={p.id}>
                         <td className="card-title">
@@ -755,6 +765,14 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
                                   title="Wise payment with no matched transfer — match it per-period first"
                                 >
                                   {p.unmatchedWise} unmatched
+                                </Badge>
+                              )}
+                              {p.unconfirmed > 0 && (
+                                <Badge
+                                  tone="bad"
+                                  title="Linked to a Wise transfer that was never confirmed as paid — open the period and check those rows"
+                                >
+                                  {p.unconfirmed} unconfirmed
                                 </Badge>
                               )}
                               {p.reconciled > 0 && <Badge tone="good">{p.reconciled} ok</Badge>}
