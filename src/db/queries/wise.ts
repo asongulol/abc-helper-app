@@ -14,6 +14,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '@/db/types';
 import type { WiseDates } from '@/lib/wise/types';
+import { selectAll } from './paging';
 
 type Db = SupabaseClient<Database>;
 
@@ -190,6 +191,29 @@ export const fetchMatchPayments = async (
         : null,
     };
   });
+};
+
+/**
+ * Every Wise transfer id already stored on a payments row.
+ *
+ * One transfer pays one row. The matcher indexes only what nothing has claimed
+ * yet, so the transfer that paid March can't also be offered to April — 36
+ * transfers currently sit on two payments each, all of them a period and its
+ * neighbour. Paged: payments is already past PostgREST's 1000-row cap, and a
+ * truncated claim list silently re-opens the same double-link.
+ */
+export const fetchClaimedTransferIds = async (db: Db): Promise<Set<string>> => {
+  const rows = await selectAll<{ wise_transfer_id: string | null }>(
+    (from, to) =>
+      db
+        .from('payments')
+        .select('wise_transfer_id')
+        .not('wise_transfer_id', 'is', null)
+        .order('wise_transfer_id')
+        .range(from, to),
+    'payments (claimed transfer ids)',
+  );
+  return new Set(rows.map((r) => String(r.wise_transfer_id)));
 };
 
 /** One payment in a period, as the reconcile view shows it. */

@@ -68,6 +68,7 @@ function makePayment(
     status?: string;
     wiseTransferId?: string | null;
     payDate?: string;
+    periodStart?: string;
     periodEnd?: string;
     paidAt?: string;
   } = {},
@@ -87,6 +88,7 @@ function makePayment(
     },
     pay_periods: {
       pay_date: opts.payDate ?? PAY_DATE,
+      period_start: opts.periodStart ?? null,
       period_end: opts.periodEnd ?? null,
     },
   };
@@ -97,7 +99,7 @@ function makeArrearsPayment(
   id: string,
   netPhp: number,
   recipientId: number,
-  opts: { paidAt?: string } = {},
+  opts: { paidAt?: string; periodStart?: string } = {},
 ): MatcherPayment {
   return makePayment(id, netPhp, recipientId, {
     periodEnd: '2026-03-15',
@@ -231,10 +233,10 @@ describe('decideMatch — no transfers for recipient', () => {
 // Mar 24–Apr 7 and rejects the perfectly legal Mar 17 transfer as
 // no_wise_transfer_in_window.
 //
-// The window is now derived from the row's own [period_end, pay_date] span
-// (midpoint anchor, half the span + 1d slack), with windowDays as a floor. Please
-// don't "restore" the ±7d boundary: it only ever looked right because these
-// fixtures had no period_end. See matchWindow() in src/lib/wise/matcher.ts.
+// The window is now the row's own [period_start, pay_date + slack], with
+// windowDays as a floor. Please don't "restore" the ±7d boundary: it only ever
+// looked right because these fixtures had no period_end. See matchWindow() in
+// src/lib/wise/matcher.ts.
 
 describe('decideMatch — legal payment window (semi-monthly arrears)', () => {
   /** Outcome for a ₱10,000 arrears row whose only transfer was created on `created`. */
@@ -268,22 +270,60 @@ describe('decideMatch — legal payment window (semi-monthly arrears)', () => {
 
   it('paid_at still wins over the legal window — a late send anchors on the real date', () => {
     const t = makeTransferOn(1, 999, 10000, '2026-04-20'); // well past the deadline
-    const p = makeArrearsPayment('p1', 10000, 999, { paidAt: '2026-04-20T10:00:00.000Z' });
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      paidAt: '2026-04-20T10:00:00.000Z',
+    });
     const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
     expect(d.result.outcome).toBe('matched_exact');
   });
 
-  it('paid_at narrows as well as widens: legal-window transfer is out once paid_at says otherwise', () => {
+  it('paid_at only ever WIDENS — it cannot push a legal-window transfer out', () => {
+    // This assertion used to be the opposite ("paid_at narrows as well as
+    // widens"). It can't be: the app writes paid_at from whichever transfer got
+    // matched, so a wrong link poisons it — that is how 36 transfers ended up on
+    // two payments each. A date the row derived from a guess must not veto the
+    // schedule's own window.
     const t = makeTransferOn(1, 999, 10000, '2026-03-20'); // inside the legal window…
-    const p = makeArrearsPayment('p1', 10000, 999, { paidAt: '2026-04-20T10:00:00.000Z' }); // …but the row records Apr 20
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      paidAt: '2026-04-20T10:00:00.000Z',
+    }); // …but the row records Apr 20
     const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
-    expect(d.result.outcome).toBe('no_wise_transfer_in_window');
+    expect(d.result.outcome).toBe('matched_exact');
+  });
+
+  it('a transfer sent BEFORE period_end still matches (prod: Zagado, paid 2 days early)', () => {
+    // Verified counter-example to "after period_end" as a hard floor: Zagado's
+    // 2024-08-01→15 row was paid on Aug 13. The floor is period_start.
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      periodStart: '2026-03-01',
+    });
+    const early = makeTransferOn(1, 999, 10000, '2026-03-13');
+    expect(decideMatch(p, buildRecipientIndex([early]), noopDates, 7, NOW_ISO).result.outcome).toBe(
+      'matched_exact',
+    );
+  });
+
+  it('the previous period’s transfer is in window but loses the rank to this one', () => {
+    // period_start opens the window wide enough to admit the Feb 16–28 period's
+    // transfer (sent Mar 5). Eligible, but ranked behind the one that landed
+    // inside THIS row's legal send window.
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      periodStart: '2026-03-01',
+    });
+    const previous = makeTransferOn(1, 999, 10000, '2026-03-05');
+    const ours = makeTransferOn(2, 999, 10000, '2026-03-27');
+    const d = decideMatch(p, buildRecipientIndex([previous, ours]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_closest_date');
+    expect('transfer_id' in d.result && d.result.transfer_id).toBe('2');
   });
 
   it('pre-RP-03 rows (pay_date overwritten with period_end) degrade to the legacy ±windowDays', () => {
     // lockPeriod used to write period_end into pay_date, so the span is zero and
     // the real deadline is unrecoverable — behave exactly as before the fix.
-    const p = makePayment('p1', 10000, 999, { periodEnd: '2026-03-15', payDate: '2026-03-15' });
+    const p = makePayment('p1', 10000, 999, {
+      periodEnd: '2026-03-15',
+      payDate: '2026-03-15',
+    });
     const inside = makeTransferOn(1, 999, 10000, '2026-03-20'); // within ±7d of Mar 15
     const outside = makeTransferOn(2, 999, 10000, '2026-03-30'); // 15d out — still missed
     expect(
@@ -462,6 +502,45 @@ describe('decideMatch — variance', () => {
     expect(d.patch?.net_php).toBeUndefined();
     // Closest-amount (t2 = ₱19,500) picked as the write target.
     expect(d.patch?.wise_transfer_id).toBe('2');
+  });
+});
+
+// ─── decideMatch — one transfer pays one row ──────────────────────────────────
+
+describe('decideMatch — successful and unclaimed candidates only', () => {
+  it('a non-successful transfer never links a row', () => {
+    // Live (not cancelled) but still in flight — nothing was paid with it yet.
+    const t = makeTransfer(1, 999, 20000, 0, 'processing');
+    const d = decideMatch(
+      makePayment('p1', 20000, 999),
+      buildRecipientIndex([t]),
+      noopDates,
+      7,
+      NOW_ISO,
+    );
+    expect(d.result.outcome).toBe('no_wise_transfer');
+    expect(d.patch).toBeUndefined();
+    expect('reason' in d.result && d.result.reason).toContain('processing');
+  });
+
+  it('a transfer already handed to an earlier row is not offered to this one', () => {
+    // Two periods of the same flat-rate contractor, one transfer. Without the
+    // claim set both rows link to it — 36 transfers in prod sit on two rows each.
+    const t = makeTransfer(1, 999, 10000, 0);
+    const idx = buildRecipientIndex([t]);
+    const first = decideMatch(makePayment('p1', 10000, 999), idx, noopDates, 7, NOW_ISO, new Set());
+    expect(first.patch?.wise_transfer_id).toBe('1');
+
+    const second = decideMatch(
+      makePayment('p2', 10000, 999),
+      idx,
+      noopDates,
+      7,
+      NOW_ISO,
+      new Set(['1']),
+    );
+    expect(second.result.outcome).toBe('no_wise_transfer');
+    expect(second.patch).toBeUndefined();
   });
 });
 

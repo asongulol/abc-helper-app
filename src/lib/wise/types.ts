@@ -48,6 +48,8 @@ export interface MatcherPayment {
   workers?: WorkerRecipientInfo | null;
   pay_periods?: {
     pay_date?: string | null;
+    /** Floor of the match window — a run sometimes leaves before the period closes. */
+    period_start?: string | null;
     period_end?: string | null;
   } | null;
 }
