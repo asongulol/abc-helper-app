@@ -8,6 +8,7 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cache } from 'react';
 import type { Database } from '@/db/types';
 import {
   type CoverageActual,
@@ -211,25 +212,33 @@ export const fetchCoverageRoster = async (
     .sort((a, b) => a.workerName.localeCompare(b.workerName));
 };
 
-/** End-to-end: expected vs actual → coverage gaps for the period (worst first). */
-export const getCoverageGaps = async (
-  db: Db,
-  companyId: string,
-  periodStart: string,
-  periodEnd: string,
-  underThreshold = 0.6,
-): Promise<{ gaps: CoverageGap[]; measured: number }> => {
-  const expectations = await fetchCoverageExpectations(db, companyId, periodStart, periodEnd);
-  const expected = expectations.filter((e) => e.expectedHours > 0);
-  // `measured` = contractors with an expected-hours baseline. 0 means nothing is
-  // being measured — the caller must not read that as "all on track" (#029).
-  if (expected.length === 0) return { gaps: [], measured: 0 };
-  const actuals = await fetchActualHours(
-    db,
-    companyId,
-    expected.map((e) => e.workerId),
-    periodStart,
-    periodEnd,
-  );
-  return { gaps: classifyCoverage(expected, actuals, underThreshold), measured: expected.length };
-};
+/**
+ * End-to-end: expected vs actual → coverage gaps for the period (worst first).
+ *
+ * `cache()`-wrapped: /overview asks for the same period from two independently
+ * streamed blocks (the queue row and the KPI tile), and the request-scoped
+ * Supabase client is itself cached — so identical args mean one round-trip.
+ */
+export const getCoverageGaps = cache(
+  async (
+    db: Db,
+    companyId: string,
+    periodStart: string,
+    periodEnd: string,
+    underThreshold = 0.6,
+  ): Promise<{ gaps: CoverageGap[]; measured: number }> => {
+    const expectations = await fetchCoverageExpectations(db, companyId, periodStart, periodEnd);
+    const expected = expectations.filter((e) => e.expectedHours > 0);
+    // `measured` = contractors with an expected-hours baseline. 0 means nothing is
+    // being measured — the caller must not read that as "all on track" (#029).
+    if (expected.length === 0) return { gaps: [], measured: 0 };
+    const actuals = await fetchActualHours(
+      db,
+      companyId,
+      expected.map((e) => e.workerId),
+      periodStart,
+      periodEnd,
+    );
+    return { gaps: classifyCoverage(expected, actuals, underThreshold), measured: expected.length };
+  },
+);
