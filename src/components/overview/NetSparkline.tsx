@@ -53,7 +53,8 @@ export const NetSparkline = ({ periods, deltaPct = null }: NetSparklineProps) =>
     <div className="ov-spark-wrap">
       <div className="ov-spark-meta">
         <div className="ov-tile-label">
-          <span aria-hidden="true">📈</span>NET PAY · last {periods.length} periods
+          <span aria-hidden="true">📈</span>NET PAY · last {periods.length}{' '}
+          {periods.length === 1 ? 'period' : 'periods'}
         </div>
         <div className="ov-tile-num" style={{ fontSize: 22, margin: '2px 0' }}>
           {lastNetDisplay}
