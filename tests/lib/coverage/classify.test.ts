@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyCoverage } from '@/lib/coverage/classify';
+import { classifyCoverage, coverageStatus } from '@/lib/coverage/classify';
 
 const exp = (workerId: string, expectedHours: number, workerName = workerId) => ({
   workerId,
@@ -75,5 +75,32 @@ describe('classifyCoverage — PTO counts toward coverage', () => {
   it('zero_time means nothing at all recorded — PTO-only is under_coverage, not zero', () => {
     const [gap] = classifyCoverage([exp('w1', 40)], [act('w1', 0, 4)], 0.6);
     expect(gap).toMatchObject({ kind: 'under_coverage', workedHours: 0, ptoHours: 4 });
+  });
+});
+
+describe('coverageStatus — the one predicate /overview and /coverage share', () => {
+  it('separates "nothing to measure" from "on track" — 0 expected is never all-clear', () => {
+    expect(coverageStatus(0, 0)).toBe('not_measured');
+    expect(coverageStatus(0, 120)).toBe('not_measured');
+    expect(coverageStatus(86, 86)).toBe('on_track');
+  });
+
+  it('agrees with classifyCoverage on every boundary it drives', () => {
+    const cases: Array<[number, number]> = [
+      [40, 0],
+      [40, 4],
+      [40, 23.9],
+      [40, 24],
+      [40, 40],
+      [0, 0],
+    ];
+    for (const [expected, covered] of cases) {
+      const status = coverageStatus(expected, covered);
+      const gaps = classifyCoverage([exp('w1', expected)], [act('w1', covered)], 0.6);
+      // A gap kind from the classifier must be exactly what the pill shows; no
+      // gap must mean the pill says on_track or not_measured, never a gap kind.
+      expect(gaps[0]?.kind ?? status).toBe(status);
+      expect(gaps).toHaveLength(status === 'on_track' || status === 'not_measured' ? 0 : 1);
+    }
   });
 });
