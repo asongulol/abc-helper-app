@@ -1,13 +1,42 @@
 {
-	"permissions": {
-		"defaultMode": "bypassPermissions",
-		"allow": [
-			"Bash(cd /Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app && echo \"=== WORKFLOWS §1.2 ===\" && grep -n \"§1.2\\\\|1.2 \\\\|Add a contractor\\\\|Hire\\\\|hire\\\\|wizard\\\\|Wizard\\\\|Step 1\\\\|Step 2\\\\|Step 3\\\\|countersign\\\\|canCountersign\" docs/WORKFLOWS.md | head -50)",
-			"Read(//Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app/**)",
-			"Bash(xargs sed -n '1,60p')",
-			"Bash(pnpm exec *)",
-			"Bash(pnpm typecheck *)",
-			"Bash(gh pr merge:*)"
-		]
-	}
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app && echo \"=== WORKFLOWS §1.2 ===\" && grep -n \"§1.2\\\\|1.2 \\\\|Add a contractor\\\\|Hire\\\\|hire\\\\|wizard\\\\|Wizard\\\\|Step 1\\\\|Step 2\\\\|Step 3\\\\|countersign\\\\|canCountersign\" docs/WORKFLOWS.md | head -50)",
+      "Read(//Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app/**)",
+      "Bash(xargs sed -n '1,60p')",
+      "Bash(pnpm exec *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(gh pr merge:*)"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "vercel@claude-plugins-official": true,
+    "ralph-loop@claude-plugins-official": true,
+    "claude-code-setup@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "figma@claude-plugins-official": true,
+    "supabase@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "pyright-lsp@claude-plugins-official": true,
+    "chrome-devtools-mcp@claude-plugins-official": true,
+    "serena@claude-plugins-official": true,
+    "explanatory-output-style@claude-plugins-official": true,
+    "gitlab@claude-plugins-official": true,
+    "huggingface-skills@claude-plugins-official": true,
+    "semgrep@claude-plugins-official": true,
+    "data-engineering@claude-plugins-official": true
+  }
 }
