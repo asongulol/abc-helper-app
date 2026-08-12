@@ -32,6 +32,8 @@ export interface OnbSignatureLite {
   signedAt: string;
   ipAddress: string;
   docVersion: string;
+  /** 'signed' is the only status countersign accepts (see countersignAgreement). */
+  status: Database['public']['Enums']['signature_status'];
 }
 
 export interface OnbDocLite {
@@ -152,6 +154,7 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
           signedAt: s.signedAt,
           ipAddress: s.ipAddress != null ? String(s.ipAddress) : '',
           docVersion: s.docVersion,
+          status: s.status,
         })),
         agreements: agrs.map((a) => ({
           agreementKind: a.agreementKind,
