@@ -406,6 +406,13 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
 
   const agreementKinds = ['ic_agreement', 'non_compete', 'confidentiality_nda', 'baa'] as const;
 
+  // An onboarding_agreements row exists from hire time (prefill/countersigner),
+  // signed or not — so signed-ness comes from the signature ledger, same rule
+  // countersignAgreement enforces server-side.
+  const signedKinds = new Set(
+    signatures.filter((s) => s.status === 'signed').map((s) => s.agreementKind),
+  );
+
   // Documents: resolve the required checklist against uploads so MISSING docs
   // are shown (not just uploaded ones). Uploads not matching a required slot
   // (e.g. 'other', 'w8ben') are listed separately so they're still reviewable.
@@ -604,7 +611,12 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                 key={kind}
                 type="button"
                 className="btn sm"
-                disabled={isPending}
+                disabled={isPending || (detailLoaded && !signedKinds.has(kind))}
+                title={
+                  detailLoaded && !signedKinds.has(kind)
+                    ? 'The contractor has not signed this agreement yet.'
+                    : undefined
+                }
                 onClick={() => {
                   setCountersignModal(kind);
                   setSignatureInput('');
@@ -670,7 +682,9 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
                 <strong style={{ fontSize: 13 }}>
                   {AGREEMENT_LABELS[a.agreementKind] ?? a.agreementKind}
                 </strong>
-                <Badge tone="good">Signed</Badge>
+                <Badge tone={signedKinds.has(a.agreementKind) ? 'good' : 'warn'}>
+                  {signedKinds.has(a.agreementKind) ? 'Signed' : 'Not signed'}
+                </Badge>
                 <Badge tone={a.countersignedAt ? 'good' : 'neutral'}>
                   {a.countersignedAt ? 'Countersigned' : 'Awaiting countersign'}
                 </Badge>
