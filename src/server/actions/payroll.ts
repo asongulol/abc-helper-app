@@ -7,6 +7,7 @@
  * no money math here — that lives in src/lib (pure) and src/db/queries.
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import type {
@@ -116,6 +117,17 @@ import {
   UnlockPeriodSchema,
   UpdatePaymentRowSchema,
 } from '@/types/schemas/payroll';
+
+/**
+ * A period changed state (open → locked → paid). Every admin page that lists
+ * batches reads that state server-side — Process & Pay, Calculate, Overview,
+ * Batches — so drop the client Router Cache, which otherwise keeps replaying
+ * the pre-lock render: a batch locked in Calculate stayed invisible in Process
+ * & Pay (and its "waiting upstream: not yet locked" banner stayed up) until a
+ * hard reload. Called from a Server Action, this clears the whole client cache,
+ * which is the point — the stale entry is on the page we're NOT on.
+ */
+const revalidatePeriodViews = () => revalidatePath('/', 'layout');
 
 /**
  * Effective-dated rate save (legacy `saveRate`). Same-day saves replace;
@@ -514,6 +526,7 @@ export async function lockPeriod(
       detail: { contractors: validCount },
     });
 
+    revalidatePeriodViews();
     return { ok: true, data: { lockedCount: validCount } };
   } catch (err) {
     return {
@@ -580,6 +593,7 @@ export async function unlockPeriod(
       detail: { reason: input.reason, previous_state: period.state },
     });
 
+    revalidatePeriodViews();
     return {
       ok: true,
       data: { periodStart: input.periodStart, periodEnd: input.periodEnd },
@@ -919,6 +933,7 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
         paid_at: paidAt,
       },
     });
+    revalidatePeriodViews();
     return { ok: true, data: { markedCount } };
   } catch (err) {
     return {
@@ -984,6 +999,7 @@ export async function markAllUnpaid(args: unknown): Promise<ActionResult<{ marke
       entity: input.periodId,
       detail: { scope: 'all', count: toReverse.length },
     });
+    revalidatePeriodViews();
     return { ok: true, data: { markedCount: toReverse.length } };
   } catch (err) {
     return {
@@ -1907,6 +1923,7 @@ export async function openOffCycleBatch(args: {
         entity: batch.id,
         detail: {},
       });
+      revalidatePeriodViews();
     }
     return {
       ok: true,
