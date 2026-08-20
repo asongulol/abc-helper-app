@@ -73,13 +73,28 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
     expect(m.basis).toBe('full period rate PHP 25,000.00 (81.68 h this period)');
   });
 
-  it('rate saved without required hours: a gross that is not the rate says manual', () => {
+  it('rate saved without required hours: a prorated gross states the percentage identity', () => {
+    // Althea's legacy rows: rate + worked stored, ratio/expected never saved.
+    const m = receiptModel({
+      ...base,
+      expected: null,
+      workedPay: 87.54,
+      rate: 15000,
+      gross: 9947.32,
+      net: 9947.32,
+    });
+    expect(m.basis).toBe(
+      '66.3% of the PHP 15,000.00 period rate (87.54 h this period) — required-hours target not saved',
+    );
+  });
+
+  it('rate saved without required hours: a gross ABOVE the rate says manual', () => {
     const m = receiptModel({
       ...base,
       expected: null,
       rate: 25000,
-      gross: 20000,
-      net: 20000,
+      gross: 27000,
+      net: 27000,
     });
     expect(m.basis).toContain('do not reproduce this gross');
   });

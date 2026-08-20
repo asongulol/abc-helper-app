@@ -120,12 +120,20 @@ export const receiptModel = (
       basis = `${MANUAL} — amounts shown as saved`;
     }
   } else if (r.rate != null) {
-    // Rate saved but no required-hours target / units (legacy-seeded rows):
-    // when the gross simply equals the rate, say so plainly.
+    // Rate saved but no required-hours target / units (legacy-seeded rows:
+    // rate + worked hours are stored, ratio and expected hours are not). The
+    // gross either equals the rate or is a proration of it whose inputs were
+    // never saved — state the proration as the identity it is (gross ÷ rate)
+    // rather than implying a manual edit. A gross ABOVE the rate really is
+    // unexplainable from the stored inputs, so that keeps the manual message.
     basis =
       Math.abs(r.rate - formulaGross) <= 1
         ? `full period rate ${php(r.rate)}${hoursCtx ? ` (${hoursCtx} this period)` : ''}`
-        : `${MANUAL} — amounts shown as saved`;
+        : r.rate > 0 && formulaGross < r.rate
+          ? `${((formulaGross / r.rate) * 100).toFixed(1)}% of the ${php(r.rate)} period rate${
+              hoursCtx ? ` (${hoursCtx} this period)` : ''
+            } — required-hours target not saved`
+          : `${MANUAL} — amounts shown as saved`;
   } else {
     // Legacy statements saved without rate / required hours: still give the
     // reader every stored fact instead of an unexplained bare amount.
