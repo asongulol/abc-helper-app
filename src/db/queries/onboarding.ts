@@ -328,3 +328,108 @@ export const seedOnboardingProgress = async (db: Db, workerId: string): Promise<
     );
   if (error) throw new Error(`seed onboarding_progress: ${error.message}`);
 };
+
+/** Signing order — exported here because 'use server' modules can't export it. */
+export const AGREEMENT_KINDS: readonly Database['public']['Enums']['agreement_kind'][] = [
+  'ic_agreement',
+  'non_compete',
+  'confidentiality_nda',
+  'baa',
+];
+
+export interface DerivedAgreementPrefill {
+  /** Semi-monthly PHP amount as a plain number string (what f_rate stores). */
+  rate: string | null;
+  position: string | null;
+  startDate: string | null;
+  companyName: string | null;
+  employmentType: 'full_time' | 'part_time' | null;
+  hoursPerWeek: number | null;
+}
+
+/**
+ * Derive what the hire wizard's prep block enters by hand (rate, position,
+ * start date, company, engagement basis) from rows the worker already has.
+ * The assignment carrying the current rate wins over other active links.
+ */
+export const deriveAgreementPrefill = async (
+  db: Db,
+  workerId: string,
+): Promise<DerivedAgreementPrefill> => {
+  const [workerRes, linksRes, rateRes] = await Promise.all([
+    db.from('workers').select('hire_date').eq('id', workerId).maybeSingle(),
+    db
+      .from('worker_companies')
+      .select('company_id, role, contract, weekly_hours, companies(name)')
+      .eq('worker_id', workerId)
+      .eq('status', 'active'),
+    db
+      .from('rates')
+      .select('amount_php, period_basis, company_id')
+      .eq('worker_id', workerId)
+      .order('effective_start', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+
+  const rate = rateRes.data;
+  const links = linksRes.data ?? [];
+  const link = links.find((l) => l.company_id === rate?.company_id) ?? links[0] ?? null;
+
+  return {
+    rate:
+      rate && rate.period_basis === 'semi_monthly' && Number(rate.amount_php) > 0
+        ? String(rate.amount_php)
+        : null,
+    position: link?.role ?? null,
+    startDate: workerRes.data?.hire_date ?? null,
+    companyName: link?.companies?.name ?? null,
+    employmentType: link ? (link.contract === 'PT' ? 'part_time' : 'full_time') : null,
+    hoursPerWeek: link?.weekly_hours ?? null,
+  };
+};
+
+/**
+ * Seed onboarding_agreements prefill for a worker added OUTSIDE the hire
+ * wizard, so agreements don't render blank lines. No-ops when any agreement
+ * row exists; in the wizard path the wizard's own upsert then overwrites
+ * these derived defaults with its authoritative values. Countersigner is
+ * left null (recorded at countersign time).
+ */
+export const seedAgreementPrefill = async (
+  db: Db,
+  workerId: string,
+  preparedBy: string | null,
+): Promise<void> => {
+  const { data: existing } = await db
+    .from('onboarding_agreements')
+    .select('worker_id')
+    .eq('worker_id', workerId)
+    .limit(1);
+  if (existing?.length) return;
+
+  const p = await deriveAgreementPrefill(db, workerId);
+
+  const now = new Date().toISOString();
+  const shared = {
+    f_company_name: p.companyName,
+    f_employment_type: p.employmentType,
+    f_hours_per_week: p.hoursPerWeek,
+    prepared_by: preparedBy,
+    prepared_at: now,
+    updated_at: now,
+  };
+  const rows = AGREEMENT_KINDS.map((kind) => ({
+    worker_id: workerId,
+    agreement_kind: kind,
+    ...shared,
+    // Engagement terms appear on the IC Agreement only (mirrors the wizard).
+    ...(kind === 'ic_agreement'
+      ? { f_rate: p.rate, f_position: p.position, f_start_date: p.startDate }
+      : {}),
+  }));
+  const { error } = await db
+    .from('onboarding_agreements')
+    .upsert(rows, { onConflict: 'worker_id,agreement_kind', ignoreDuplicates: true });
+  if (error) throw new Error(`seed onboarding_agreements: ${error.message}`);
+};

@@ -50,7 +50,10 @@ vi.mock('@/server/audit', () => ({ logEvent: vi.fn() }));
 vi.mock('@/server/email/transport', () => ({ sendEmail: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock('@/server/env', () => ({ env: { APP_URL: 'http://localhost:3000' } }));
 // Imported by the action module but unused on this path.
-vi.mock('@/db/queries/onboarding', () => ({ seedOnboardingProgress: vi.fn() }));
+vi.mock('@/db/queries/onboarding', () => ({
+  seedOnboardingProgress: vi.fn(),
+  seedAgreementPrefill: vi.fn(),
+}));
 vi.mock('@/db/queries/secrets', () => ({ decryptWorkerTools: vi.fn() }));
 
 const { restorePortalLogin, revokePortalLogin, withdrawOffer } = await import(
