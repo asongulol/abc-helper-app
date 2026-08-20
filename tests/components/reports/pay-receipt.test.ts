@@ -42,7 +42,7 @@ const base: Row = {
 describe('receiptModel — the "how this pay was computed" breakdown', () => {
   it('salaried: shows the ratio formula when stored inputs reproduce the gross', () => {
     const m = receiptModel(base);
-    expect(m.basis).toContain('81.05 h ÷ 86.67 h expected');
+    expect(m.basis).toContain('81.05 h ÷ 86.67 h required');
     expect(m.basis).toContain('93.5%');
     expect(m.extras).toEqual([]);
   });
@@ -50,6 +50,12 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
   it('salaried at/over 100%: reads as full period rate', () => {
     const m = receiptModel({ ...base, workedPay: 90, gross: 30000, net: 30000 });
     expect(m.basis).toContain('full period rate');
+  });
+
+  it('never shows hours beyond the required hours in the explanation', () => {
+    const m = receiptModel({ ...base, workedPay: 90, gross: 30000, net: 30000 });
+    expect(m.basis).toContain('86.67 h of 86.67 h required');
+    expect(m.basis).not.toContain('90');
   });
 
   it('drops the formula (no false "=") when stored gross does not match', () => {

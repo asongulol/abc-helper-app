@@ -867,11 +867,14 @@ export const receiptModel = (
   if (r.rate != null) {
     if (r.expected != null && r.expected > 0 && r.workedPay != null) {
       const ratio = r.ratio ?? r.workedPay / r.expected;
+      // Owner rule: the explanation never shows hours beyond the required
+      // hours — pay caps at the rate, so only the payable portion is shown.
+      const payable = Math.min(r.workedPay, r.expected);
       if (Math.abs(Math.min(ratio, 1) * r.rate - formulaGross) <= 1) {
         basis =
           ratio >= 1
-            ? `${num(r.workedPay)} h of ${num(r.expected)} h expected — full period rate ${money(r.rate, 'PHP')}`
-            : `${num(r.workedPay)} h ÷ ${num(r.expected)} h expected = ${(ratio * 100).toFixed(1)}% × ${money(r.rate, 'PHP')} period rate`;
+            ? `${num(payable)} h of ${num(r.expected)} h required — full period rate ${money(r.rate, 'PHP')}`
+            : `${num(payable)} h ÷ ${num(r.expected)} h required = ${(ratio * 100).toFixed(1)}% × ${money(r.rate, 'PHP')} period rate`;
       }
     } else if (r.units != null && r.units > 0 && Math.abs(r.units * r.rate - formulaGross) <= 1) {
       basis = r.perSession
