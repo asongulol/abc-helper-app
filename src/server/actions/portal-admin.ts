@@ -13,7 +13,7 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
-import { seedOnboardingProgress } from '@/db/queries/onboarding';
+import { seedAgreementPrefill, seedOnboardingProgress } from '@/db/queries/onboarding';
 import { decryptWorkerTools } from '@/db/queries/secrets';
 import { endEngagement } from '@/db/queries/workers';
 import { humanizeError } from '@/lib/errors';
@@ -230,6 +230,15 @@ export async function createPortalLogin(args: {
 
     // Seed onboarding_progress so new hire appears in the Onboarding queue.
     await seedOnboardingProgress(svc, args.workerId);
+
+    // Best-effort: derive agreement prefill for workers added outside the hire
+    // wizard so their contracts don't render blank rate/position/company lines
+    // (the wizard path overwrites these with its own values right after).
+    try {
+      await seedAgreementPrefill(svc, args.workerId, admin.userId);
+    } catch {
+      /* non-fatal: admin can fix prefill from the onboarding review panel */
+    }
 
     await logEvent({
       action: 'portal_login.created',

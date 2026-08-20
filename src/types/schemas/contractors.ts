@@ -335,3 +335,32 @@ export const DeleteContractorSchema = z.object({
   force: z.boolean().default(false),
 });
 export type DeleteContractorInput = z.infer<typeof DeleteContractorSchema>;
+
+/**
+ * "Onboard Current Contractor" wizard input — invites an EXISTING worker to
+ * the portal and prepares their agreement prefill (the terms are confirmed by
+ * the admin, seeded from the worker's existing engagement rows). No worker /
+ * link / rate rows are touched — only onboarding artifacts.
+ */
+export const OnboardCurrentSchema = z.object({
+  workerId: uuid(),
+  companyId: uuid(),
+  email: z.string().email('Enter a valid email'),
+  position: z.string().max(100).nullable().default(null),
+  ratePhp: z.number().min(0).default(0),
+  startDate: IsoDateSchema.nullable().default(null),
+  employmentType: z.enum(['full_time', 'part_time']).nullable().default(null),
+  hoursPerWeek: z.number().min(0).max(168).nullable().default(null),
+  countersignerUserId: uuid().nullable().default(null),
+  countersignerName: z.string().max(120).nullable().default(null),
+  icAddendumType: IcAddendumTypeSchema.default(''),
+  icAddendumText: z.string().max(5000).nullable().default(null),
+  tools: HireToolsSchema.default({
+    gmail: false,
+    providersoft: false,
+    hubstaff: false,
+    zoom: false,
+    others: '',
+  }),
+});
+export type OnboardCurrentInput = z.infer<typeof OnboardCurrentSchema>;

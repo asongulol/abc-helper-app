@@ -49,6 +49,10 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/server/actions/payroll', () => ({ saveRate: vi.fn() }));
 vi.mock('@/server/actions/portal-admin', () => ({ createPortalLogin: vi.fn() }));
 vi.mock('@/db/queries/invoicing', () => ({ fetchActiveClients: vi.fn() }));
+vi.mock('@/db/queries/onboarding', () => ({
+  AGREEMENT_KINDS: ['ic_agreement', 'non_compete', 'confidentiality_nda', 'baa'],
+  deriveAgreementPrefill: vi.fn(),
+}));
 
 const { endAssignment, saveWorkerCompanyLink, terminateContractor } = await import(
   '@/server/actions/contractors'

@@ -9,7 +9,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
-import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
+import { AGREEMENT_KINDS, fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
 import { type DocSlotStatus, deriveDocChecklist } from '@/lib/onboarding/documents';
@@ -325,15 +325,6 @@ export async function resetOnboarding(args: { workerId: string }): Promise<Simpl
     return fail(e);
   }
 }
-
-// Local copy — portal.ts's AGREEMENT_ORDER can't be imported (no non-async
-// exports from a 'use server' module).
-const AGREEMENT_KINDS: readonly AgreementKind[] = [
-  'ic_agreement',
-  'non_compete',
-  'confidentiality_nda',
-  'baa',
-];
 
 /**
  * Permanently delete a mistakenly-signed agreement: the signature ledger rows

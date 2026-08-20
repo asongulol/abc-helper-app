@@ -103,7 +103,7 @@ const checkRow = {
 } as const;
 
 /** Block caption + nested control (the nesting associates the label, a11y-clean). */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: the control is passed as children and nested in this label
     <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
