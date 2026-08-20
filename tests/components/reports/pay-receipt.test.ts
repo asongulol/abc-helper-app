@@ -1,28 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { peso } from '@/lib/format';
+import { flattenMisc, type ReceiptInput, receiptModel } from '@/lib/pay/receipt';
 
-// ReportsClient pulls in the reports server actions (Supabase client + env
-// validation) at module load. receiptModel is pure, so placeholders suffice.
-vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://localhost:54321');
-vi.stubEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'test-anon-key-0000000000000000');
-vi.stubEnv('SUPABASE_SERVICE_KEY', 'test-service-key-0000000000000000');
-
-const { receiptModel } = await import('@/components/reports/ReportsClient');
-type Row = Parameters<typeof receiptModel>[0];
-
-const base: Row = {
-  start: '2026-08-01',
-  end: '2026-08-15',
+const base: ReceiptInput = {
   worked: 81.05,
   pto: 0,
-  hasPay: true,
-  days: [],
   ha: 0,
   lunch: 0,
   t13: 0,
   gross: 28054.69,
   net: 28054.69,
   method: null,
-  status: 'sent',
   workedPay: 81.05,
   expected: 86.67,
   ratio: null,
@@ -35,7 +23,6 @@ const base: Row = {
   perSession: false,
   payout: null,
   payoutCur: null,
-  note: null,
 };
 
 describe('receiptModel — the "how this pay was computed" breakdown', () => {
@@ -156,5 +143,32 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
     const m = receiptModel({ ...base, payout: 495.12, method: 'wise_api' });
     expect(m.paid).toContain('$495.12');
     expect(m.paid).not.toMatch(/\/ \$1|₱\d/);
+  });
+
+  it('portal formatter renders PHP amounts in the basis with the peso sign', () => {
+    const m = receiptModel(base, peso);
+    expect(m.basis).toContain('₱30,000.00 period rate');
+    expect(m.basis).not.toContain('PHP ');
+  });
+});
+
+describe('flattenMisc — stored misc_items → signed display lines', () => {
+  it('deductions flip negative, zero lines drop, labels fall back by kind', () => {
+    expect(
+      flattenMisc([
+        { kind: 'deduction', label: 'Laptop', amount: 2000 },
+        { kind: 'other_earns', amount: 1000 },
+        { kind: 'deduction', amount: 500 },
+        { kind: 'other_earns', label: 'Nothing', amount: 0 },
+      ]),
+    ).toEqual([
+      { label: 'Laptop', amount: -2000 },
+      { label: 'Adjustment', amount: 1000 },
+      { label: 'Deduction', amount: -500 },
+    ]);
+  });
+
+  it('non-array input yields an empty list', () => {
+    expect(flattenMisc(null)).toEqual([]);
   });
 });

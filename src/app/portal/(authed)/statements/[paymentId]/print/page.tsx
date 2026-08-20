@@ -28,7 +28,8 @@ export default async function StatementPrintPage({
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
       <AutoPrint />
-      <PaySlip pay={pay} />
+      {/* Owner rule: exchange rates never render on contractor-visible views. */}
+      <PaySlip pay={{ ...pay, fxRate: null }} />
     </div>
   );
 }

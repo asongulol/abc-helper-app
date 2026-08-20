@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { PortalPaymentRow } from '@/db/queries/portal';
 import { peso } from '@/lib/format';
+import { receiptModel } from '@/lib/pay/receipt';
 
 interface Props {
   payments: PortalPaymentRow[];
@@ -10,6 +11,67 @@ interface Props {
 
 /** Legacy "paid" = sent or reconciled (portal/index.html). */
 const isPaid = (status: string): boolean => status === 'sent' || status === 'reconciled';
+
+/**
+ * Expanded pay-slip breakdown: the shared "How this pay was computed" receipt
+ * (same model as the admin reports history) rendered with portal styling.
+ * Extras are signed and always sum from gross to net; the basis line explains
+ * how the gross was arrived at from the STORED statement inputs.
+ */
+const SlipReceipt = ({ p }: { p: PortalPaymentRow }) => {
+  const { basis, gross, extras, paid } = receiptModel(p.receipt, peso);
+  const divider = {
+    borderTop: '1px solid var(--line)',
+    marginTop: 4,
+    paddingTop: 6,
+  } as const;
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        borderTop: '1px solid var(--line)',
+        paddingTop: 8,
+      }}
+    >
+      <div className="row" style={{ fontWeight: 600, ...divider }}>
+        <span>Gross pay</span>
+        <span>{peso(gross)}</span>
+      </div>
+      {basis && (
+        <div className="sub" style={{ marginBottom: 4 }}>
+          How it was computed: {basis}
+        </div>
+      )}
+      {extras.map(([label, v], i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: derived static list, never reordered
+        <div className="row" key={`${label}-${i}`}>
+          <span className="k">{label}</span>
+          <span>{v < 0 ? `− ${peso(-v)}` : `+ ${peso(v)}`}</span>
+        </div>
+      ))}
+      <div className="row" style={{ fontWeight: 700, ...divider }}>
+        <span>Net pay</span>
+        <span>{peso(p.netPhp)}</span>
+      </div>
+      {isPaid(p.status) && paid ? (
+        <div className="sub" style={divider}>
+          {paid}
+        </div>
+      ) : (
+        <div className="row" style={divider}>
+          <span className="k">Paid via</span>
+          <span>{p.payoutMethod || '—'}</span>
+        </div>
+      )}
+      {p.paidAt && (
+        <div className="row">
+          <span className="k">Date sent</span>
+          <span>{p.paidAt.slice(0, 10)}</span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 export const PortalStatements = ({ payments }: Props) => {
   const [open, setOpen] = useState<string | null>(null);
@@ -87,81 +149,7 @@ export const PortalStatements = ({ payments }: Props) => {
               </div>
               <div className="net">{peso(p.netPhp)}</div>
             </div>
-            {isOpen && (
-              <div
-                style={{
-                  marginTop: 10,
-                  borderTop: '1px solid var(--line)',
-                  paddingTop: 8,
-                }}
-              >
-                <div
-                  className="row"
-                  style={{
-                    fontWeight: 600,
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span>Gross pay</span>
-                  <span>{peso(p.grossPhp)}</span>
-                </div>
-                {p.haPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Health allowance</span>
-                    <span>{peso(p.haPhp)}</span>
-                  </div>
-                )}
-                {p.t13Php > 0 && (
-                  <div className="row">
-                    <span className="k">13th month</span>
-                    <span>{peso(p.t13Php)}</span>
-                  </div>
-                )}
-                {p.pddPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Lunch</span>
-                    <span>{peso(p.pddPhp)}</span>
-                  </div>
-                )}
-                {p.bonusPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Bonus</span>
-                    <span>{peso(p.bonusPhp)}</span>
-                  </div>
-                )}
-                <div
-                  className="row"
-                  style={{
-                    fontWeight: 700,
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span>Net pay</span>
-                  <span>{peso(p.netPhp)}</span>
-                </div>
-                <div
-                  className="row"
-                  style={{
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span className="k">Paid via</span>
-                  <span>{p.payoutMethod || '—'}</span>
-                </div>
-                {p.paidAt && (
-                  <div className="row">
-                    <span className="k">Date sent</span>
-                    <span>{p.paidAt.slice(0, 10)}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            {isOpen && <SlipReceipt p={p} />}
           </div>
         );
       })}
