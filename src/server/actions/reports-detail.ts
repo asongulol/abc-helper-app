@@ -21,6 +21,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
 import { humanizeError } from '@/lib/errors';
+import { flattenMisc, type ReceiptMisc } from '@/lib/pay/receipt';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 
@@ -408,7 +409,7 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
 export type HistoryDay = { date: string; tracked: number; pto: number };
 
 /** Misc item flattened for display: deductions arrive already negative. */
-export type HistoryMisc = { label: string; amount: number };
+export type HistoryMisc = ReceiptMisc;
 
 export type HistoryRow = {
   start: string;
@@ -529,18 +530,7 @@ export async function getContractorHistory(
     for (const p of pays ?? []) {
       const s = p.pay_periods?.period_start;
       if (!s) continue;
-      // Deduction-kind items are stored positive but subtract from net; flatten
-      // to signed amounts so the receipt can render one +/− list.
-      const misc: HistoryMisc[] = (Array.isArray(p.misc_items) ? p.misc_items : [])
-        .map((m) => {
-          const it = m as { kind?: string; label?: string; amount?: number | string | null };
-          const amt = Number(it?.amount) || 0;
-          return {
-            label: it?.label || (it?.kind === 'deduction' ? 'Deduction' : 'Adjustment'),
-            amount: it?.kind === 'deduction' ? -amt : amt,
-          };
-        })
-        .filter((m) => m.amount !== 0);
+      const misc = flattenMisc(p.misc_items);
       pmap.set(s, {
         end: p.pay_periods?.period_end ?? '',
         ha: Number(p.health_allowance_php || 0),

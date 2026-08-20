@@ -19,6 +19,7 @@ import { Fragment, useEffect, useState, useTransition } from 'react';
 import { StatTile } from '@/components/overview/StatTile';
 import { ContractorPicker } from '@/components/ui';
 import { money } from '@/lib/format';
+import { receiptModel } from '@/lib/pay/receipt';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
 import { csvEscape } from '@/lib/reports/csv';
 import {
@@ -843,102 +844,8 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
 // 4. Contractor pay & hours history
 // ---------------------------------------------------------------------------
 
-/**
- * "How this pay was computed" model for one saved statement, assembled from
- * the STORED inputs only (never recomputed — old rows must not drift). Zero
- * components are never listed: not every contractor is entitled to health
- * allowance / 13th / lunch, and a ₱0 line would imply they are. The formula
- * line only claims "=" when the stored inputs actually reproduce the stored
- * gross; otherwise the basis SAYS why no formula can be shown instead of
- * going silent. Owner rule: no exchange-rate information anywhere — this
- * view is shown to contractors. Exported for tests.
- */
-export const receiptModel = (
-  r: HistoryRow,
-): {
-  basis: string | null;
-  gross: number;
-  extras: Array<[string, number]>;
-  paid: string | null;
-} => {
-  const gross = r.gross ?? 0;
-  const adjusted = r.computedGross != null && Math.abs(r.computedGross - gross) >= 0.01;
-  const formulaGross = adjusted ? (r.computedGross ?? 0) : gross;
-
-  // Payable hours include PTO; spell the split out when the time entries
-  // actually account for the stored payable figure.
-  const ptoPart =
-    r.pto > 0 &&
-    r.workedPay != null &&
-    r.worked != null &&
-    Math.abs(r.workedPay - (r.worked + r.pto)) <= 0.05
-      ? ` (${num(r.worked)} h worked + ${num(r.pto)} h PTO)`
-      : '';
-  const hoursCtx =
-    r.workedPay != null
-      ? `${num(r.workedPay)} h${ptoPart}`
-      : r.worked != null
-        ? `${num(r.worked)} h${r.pto > 0 ? ` + ${num(r.pto)} h PTO` : ''}`
-        : null;
-  const MANUAL = 'stored inputs do not reproduce this gross (likely entered manually)';
-
-  let basis: string;
-  if (r.rate != null && r.expected != null && r.expected > 0 && r.workedPay != null) {
-    const ratio = r.ratio ?? r.workedPay / r.expected;
-    // Owner rule: the explanation never shows hours beyond the required
-    // hours — pay caps at the rate, so only the payable portion is shown.
-    const payable = Math.min(r.workedPay, r.expected);
-    if (Math.abs(Math.min(ratio, 1) * r.rate - formulaGross) <= 1) {
-      basis =
-        ratio >= 1
-          ? `${num(payable)} h of ${num(r.expected)} h required — full period rate ${money(r.rate, 'PHP')}`
-          : `${num(payable)} h${ptoPart} ÷ ${num(r.expected)} h required = ${(ratio * 100).toFixed(1)}% × ${money(r.rate, 'PHP')} period rate`;
-    } else {
-      basis = `${MANUAL} — amounts shown as saved`;
-    }
-  } else if (r.rate != null && r.units != null && r.units > 0) {
-    if (Math.abs(r.units * r.rate - formulaGross) <= 1) {
-      basis = r.perSession
-        ? `${num(r.units)} sessions × ${money(r.rate, 'PHP')} per session`
-        : `${num(r.units)} h × ${money(r.rate, 'PHP')} per hour`;
-    } else {
-      basis = `${MANUAL} — amounts shown as saved`;
-    }
-  } else {
-    // Legacy statements saved without rate / required hours: still give the
-    // reader every stored fact instead of an unexplained bare amount.
-    basis = `saved without its rate and required hours${
-      hoursCtx ? ` (${hoursCtx} this period)` : ''
-    } — amounts shown as saved`;
-  }
-
-  const extras: Array<[string, number]> = [];
-  if (r.ha) extras.push(['Health allowance', r.ha]);
-  if (r.t13) extras.push(['13th-month accrual', r.t13]);
-  if (r.lunch) extras.push(['PDD lunch', r.lunch]);
-  if (r.bonus) extras.push(['Bonus', r.bonus]);
-  if (r.offCycle) extras.push(['Off-cycle pay', r.offCycle]);
-  for (const m of r.misc) extras.push([m.label, m.amount]);
-  if (adjusted) extras.unshift(['Manual gross adjustment', gross - (r.computedGross ?? 0)]);
-
-  // Keep the column arithmetically honest on legacy rows where the stored
-  // components don't reach the stored net (e.g. reconcile-edited nets).
-  const resid = (r.net ?? 0) - (formulaGross + extras.reduce((s, [, v]) => s + v, 0));
-  if (Math.abs(resid) >= 0.01) extras.push(['Unattributed difference', resid]);
-
-  // Owner rule: never show exchange-rate information — contractors see this.
-  const paid =
-    r.payout != null
-      ? `Paid ${
-          !r.payoutCur || r.payoutCur === 'USD'
-            ? money(r.payout, 'USD')
-            : `${num(r.payout)} ${r.payoutCur}`
-        }${payoutMethodLabel(r.method) ? ` via ${payoutMethodLabel(r.method)}` : ''}`
-      : null;
-
-  return { basis, gross: formulaGross, extras, paid };
-};
-
+// "How this pay was computed" model lives in @/lib/pay/receipt (shared with
+// the contractor portal pay slips).
 const PayReceipt = ({ r }: { r: HistoryRow }) => {
   const { basis, gross, extras, paid } = receiptModel(r);
   const amt = { textAlign: 'right' as const, whiteSpace: 'nowrap' as const };

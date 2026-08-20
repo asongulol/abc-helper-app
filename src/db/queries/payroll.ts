@@ -1808,6 +1808,15 @@ export type PaymentDetail = {
   status: Database['public']['Enums']['payment_status'];
   paidAt: string | null;
   note: string | null;
+  // Stored computation inputs for the "How this pay was computed" basis line
+  // (never recomputed).
+  workedHours: number | null;
+  expectedHours: number | null;
+  performanceRatio: number | null;
+  ratePhp: number | null;
+  computedGrossPhp: number | null;
+  units: number | null;
+  perSession: boolean;
 };
 
 /**
@@ -1827,7 +1836,7 @@ export const fetchPaymentDetail = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
+      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -1861,6 +1870,13 @@ export const fetchPaymentDetail = async (
     status: data.status,
     paidAt: data.paid_at,
     note: data.note,
+    workedHours: data.worked_hours == null ? null : Number(data.worked_hours),
+    expectedHours: data.expected_hours == null ? null : Number(data.expected_hours),
+    performanceRatio: data.performance_ratio == null ? null : Number(data.performance_ratio),
+    ratePhp: data.rate_php == null ? null : Number(data.rate_php),
+    computedGrossPhp: data.computed_gross_php == null ? null : Number(data.computed_gross_php),
+    units: data.units == null ? null : Number(data.units),
+    perSession: data.contract === 'PS' || data.pay_basis === 'per_session',
   };
 };
 
