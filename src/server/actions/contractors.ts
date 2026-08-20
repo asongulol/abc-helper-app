@@ -439,7 +439,7 @@ export async function listInvoiceClients(): Promise<ActionResult<ClientOption[]>
 
 export async function hireContractor(
   args: unknown,
-): Promise<ActionResult<{ workerId: string; tempPassword?: string }>> {
+): Promise<ActionResult<{ workerId: string; tempPassword?: string; emailSent?: boolean }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -624,6 +624,7 @@ export async function hireContractor(
     // 5) Portal login (only if invite). The edge create_login is the
     // authoritative duplicate-email guard (it can see ALL auth accounts).
     let tempPassword: string | undefined;
+    let emailSent = false;
     if (input.invite && input.email) {
       const loginRes = await createPortalLogin({
         workerId,
@@ -631,6 +632,7 @@ export async function hireContractor(
       });
       if (!loginRes.ok) throw new Error(loginRes.error);
       tempPassword = loginRes.data.tempPassword;
+      emailSent = loginRes.data.emailSent ?? false;
     }
 
     // --- Best-effort per-hire prep (own try/catch, EXCLUDED from rollback) ---
@@ -744,7 +746,7 @@ export async function hireContractor(
 
     revalidatePath('/contractors');
     return tempPassword !== undefined
-      ? { ok: true, data: { workerId, tempPassword } }
+      ? { ok: true, data: { workerId, tempPassword, emailSent } }
       : { ok: true, data: { workerId } };
   } catch (err) {
     // ROLLBACK: delete the just-created worker (FK cascades clear the rest).
