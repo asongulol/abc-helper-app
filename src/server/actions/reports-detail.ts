@@ -407,6 +407,9 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
 
 export type HistoryDay = { date: string; tracked: number; pto: number };
 
+/** Misc item flattened for display: deductions arrive already negative. */
+export type HistoryMisc = { label: string; amount: number };
+
 export type HistoryRow = {
   start: string;
   end: string;
@@ -421,6 +424,22 @@ export type HistoryRow = {
   net: number | null;
   method: string | null;
   status: string | null;
+  // Computation trail (all null/empty when there is no saved statement). These
+  // are the STORED inputs the statement was saved with — never recomputed.
+  workedPay: number | null;
+  expected: number | null;
+  ratio: number | null;
+  rate: number | null;
+  computedGross: number | null;
+  bonus: number | null;
+  offCycle: number;
+  misc: HistoryMisc[];
+  units: number | null;
+  perSession: boolean;
+  fx: number | null;
+  payout: number | null;
+  payoutCur: string | null;
+  note: string | null;
 };
 
 /**
@@ -440,7 +459,7 @@ export async function getContractorHistory(
     const { data: pays, error: pe } = await db
       .from('payments')
       .select(
-        'worked_hours,gross_php,health_allowance_php,pdd_lunch_php,thirteenth_month_php,bonus_php,net_php,payout_method,status,pay_periods(period_start,period_end,pay_date)',
+        'worked_hours,expected_hours,performance_ratio,units,contract,pay_basis,rate_php,gross_php,computed_gross_php,health_allowance_php,pdd_lunch_php,thirteenth_month_php,bonus_php,misc_items,off_cycle_php,net_php,fx_rate,payout_currency,payout_amount,payout_method,status,note,pay_periods(period_start,period_end,pay_date)',
       )
       .eq('worker_id', workerId)
       .eq('company_id', companyId);
@@ -493,11 +512,37 @@ export async function getContractorHistory(
       method: string | null;
       status: string;
       workedPay: number | null;
+      expected: number | null;
+      ratio: number | null;
+      rate: number | null;
+      computedGross: number | null;
+      bonus: number;
+      offCycle: number;
+      misc: HistoryMisc[];
+      units: number | null;
+      perSession: boolean;
+      fx: number | null;
+      payout: number | null;
+      payoutCur: string | null;
+      note: string | null;
     };
+    const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
     const pmap = new Map<string, PBucket>();
     for (const p of pays ?? []) {
       const s = p.pay_periods?.period_start;
       if (!s) continue;
+      // Deduction-kind items are stored positive but subtract from net; flatten
+      // to signed amounts so the receipt can render one +/− list.
+      const misc: HistoryMisc[] = (Array.isArray(p.misc_items) ? p.misc_items : [])
+        .map((m) => {
+          const it = m as { kind?: string; label?: string; amount?: number | string | null };
+          const amt = Number(it?.amount) || 0;
+          return {
+            label: it?.label || (it?.kind === 'deduction' ? 'Deduction' : 'Adjustment'),
+            amount: it?.kind === 'deduction' ? -amt : amt,
+          };
+        })
+        .filter((m) => m.amount !== 0);
       pmap.set(s, {
         end: p.pay_periods?.period_end ?? '',
         ha: Number(p.health_allowance_php || 0),
@@ -507,7 +552,20 @@ export async function getContractorHistory(
         net: Number(p.net_php || 0),
         method: p.payout_method,
         status: p.status,
-        workedPay: p.worked_hours,
+        workedPay: numOrNull(p.worked_hours),
+        expected: numOrNull(p.expected_hours),
+        ratio: numOrNull(p.performance_ratio),
+        rate: numOrNull(p.rate_php),
+        computedGross: numOrNull(p.computed_gross_php),
+        bonus: Number(p.bonus_php || 0),
+        offCycle: Number(p.off_cycle_php || 0),
+        misc,
+        units: numOrNull(p.units),
+        perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
+        fx: numOrNull(p.fx_rate),
+        payout: numOrNull(p.payout_amount),
+        payoutCur: p.payout_currency ?? null,
+        note: p.note ?? null,
       });
     }
 
@@ -534,6 +592,20 @@ export async function getContractorHistory(
         net: p ? p.net : null,
         method: p ? p.method : null,
         status: p ? p.status : null,
+        workedPay: p?.workedPay ?? null,
+        expected: p?.expected ?? null,
+        ratio: p?.ratio ?? null,
+        rate: p?.rate ?? null,
+        computedGross: p?.computedGross ?? null,
+        bonus: p ? p.bonus : null,
+        offCycle: p?.offCycle ?? 0,
+        misc: p?.misc ?? [],
+        units: p?.units ?? null,
+        perSession: p?.perSession ?? false,
+        fx: p?.fx ?? null,
+        payout: p?.payout ?? null,
+        payoutCur: p?.payoutCur ?? null,
+        note: p?.note ?? null,
       };
     });
     return { ok: true, data: { rows } };
