@@ -60,11 +60,10 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     .select(
       'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, misc_items, net_php, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, payout_method, payout_currency, payout_amount, status, paid_at, pay_periods(period_start, period_end, pay_date)',
     )
-    .eq('worker_id', workerId)
-    .order('pay_period_id', { ascending: false });
+    .eq('worker_id', workerId);
   if (error) throw new Error(`own payments: ${error.message}`);
   const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
-  return (data ?? []).map((p) => ({
+  const rows = (data ?? []).map((p) => ({
     paymentId: p.id,
     periodId: p.pay_period_id,
     periodStart: p.pay_periods?.period_start ?? '',
@@ -105,6 +104,9 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
       payoutCur: p.payout_currency ?? null,
     },
   }));
+  // Newest-first by period date. pay_period_id is a UUID, so ordering by it in
+  // SQL scrambles the list (and the "last pay" / "since" stats built on it).
+  return rows.sort((a, b) => b.periodStart.localeCompare(a.periodStart));
 };
 
 /** Own documents (RLS scoped). */

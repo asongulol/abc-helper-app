@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PortalStatements } from '@/components/portal/PortalStatements';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchOwnPayments } from '@/db/queries/portal';
+import { fetchOwnPayments, fetchOwnTimeEntries } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 
 export const metadata = { title: 'Pay slips — Contractor Portal' };
@@ -11,7 +11,10 @@ export default async function PortalStatementsPage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const payments = await fetchOwnPayments(supabase, worker.workerId);
+  const [payments, entries] = await Promise.all([
+    fetchOwnPayments(supabase, worker.workerId),
+    fetchOwnTimeEntries(supabase, worker.workerId),
+  ]);
 
-  return <PortalStatements payments={payments} />;
+  return <PortalStatements payments={payments} entries={entries} />;
 }

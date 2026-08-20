@@ -61,6 +61,29 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
     expect(m.basis).toContain('63.47 h (59.47 h worked + 4.00 h PTO) ÷ 86.67 h required');
   });
 
+  it('rate saved without required hours: gross equal to the rate reads as full period rate', () => {
+    const m = receiptModel({
+      ...base,
+      expected: null,
+      workedPay: 81.68,
+      rate: 25000,
+      gross: 25000,
+      net: 25000,
+    });
+    expect(m.basis).toBe('full period rate PHP 25,000.00 (81.68 h this period)');
+  });
+
+  it('rate saved without required hours: a gross that is not the rate says manual', () => {
+    const m = receiptModel({
+      ...base,
+      expected: null,
+      rate: 25000,
+      gross: 20000,
+      net: 20000,
+    });
+    expect(m.basis).toContain('do not reproduce this gross');
+  });
+
   it('legacy rows without rate/required hours still explain themselves', () => {
     const m = receiptModel({
       ...base,
