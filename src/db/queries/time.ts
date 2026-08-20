@@ -641,7 +641,9 @@ export const deleteByBatch = async (
 export const fetchRosterLinks = async (db: Db, companyId: string): Promise<RosterLink[]> => {
   const { data, error } = await db
     .from('worker_companies')
-    .select('worker_id, hubstaff_name, status, workers(first_name, middle_name, last_name, status)')
+    .select(
+      'worker_id, hubstaff_name, status, contract, workers(first_name, middle_name, last_name, status)',
+    )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
   return (data ?? []).map((l) => {
@@ -655,6 +657,7 @@ export const fetchRosterLinks = async (db: Db, companyId: string): Promise<Roste
       middleName: w?.middle_name ?? null,
       lastName: w?.last_name ?? null,
       isInactive: linkInactive || workerInactive,
+      contract: l.contract,
     };
   });
 };

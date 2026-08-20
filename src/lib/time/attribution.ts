@@ -18,6 +18,8 @@ export interface RosterLink {
   /** Optional middle name — indexed so a source name WITH a middle still strict-matches. */
   middleName?: string | null;
   isInactive: boolean;
+  /** worker_companies.contract (FT/PT/PH/PS/PHS) — drives expected hours. */
+  contract?: string | null;
 }
 
 export interface MatchHit {
