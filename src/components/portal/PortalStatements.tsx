@@ -111,12 +111,9 @@ const SlipReceipt = ({ p, hours }: { p: PortalPaymentRow; hours: PeriodHours | u
       )}
       {hours && hours.days.length > 0 && (
         <>
+          {/* Owner: no worked/PTO sum here — the day rows speak for themselves. */}
           <div className="row" style={{ fontWeight: 600, ...divider }}>
             <span>Hours this period</span>
-            <span>
-              {h(hours.worked)}
-              {hours.pto > 0 ? ` + ${h(hours.pto)} PTO` : ''}
-            </span>
           </div>
           {hours.days.map((d) => (
             <div className="row" key={d.date}>
