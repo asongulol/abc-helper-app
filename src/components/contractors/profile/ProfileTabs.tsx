@@ -115,7 +115,7 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [],
         <PortalLoginTab
           worker={worker}
           loginBusy={p.loginBusy}
-          tempPassword={p.tempPassword}
+          portalCreds={p.portalCreds}
           runLogin={p.runLogin}
           panelProps={tablist.panelProps()}
         />

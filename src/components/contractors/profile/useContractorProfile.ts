@@ -113,7 +113,11 @@ export function useContractorProfile(
 
   // Portal & login local state.
   const [loginBusy, startLogin] = useTransition();
-  const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [portalCreds, setPortalCreds] = useState<{
+    tempPassword: string;
+    emailSent: boolean;
+    email: string | null;
+  } | null>(null);
 
   // Photo (avatars bucket: admin uploads client-side, display via signed URL).
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
@@ -452,11 +456,16 @@ export function useContractorProfile(
         const res = (await fn()) as {
           ok: boolean;
           error?: string;
-          data?: { tempPassword?: string };
+          data?: { tempPassword?: string; emailSent?: boolean; email?: string };
         };
         if (res.ok) {
           notify(ok, { type: 'success' });
-          if (res.data?.tempPassword) setTempPassword(res.data.tempPassword);
+          if (res.data?.tempPassword)
+            setPortalCreds({
+              tempPassword: res.data.tempPassword,
+              emailSent: res.data.emailSent ?? false,
+              email: res.data.email ?? null,
+            });
         } else {
           notify(res.error ?? 'Failed.', { type: 'error' });
         }
@@ -496,7 +505,7 @@ export function useContractorProfile(
     setAssignTo,
     handleAssign,
     loginBusy,
-    tempPassword,
+    portalCreds,
     runLogin,
     handleSave,
     doSave,

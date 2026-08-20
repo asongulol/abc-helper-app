@@ -10,14 +10,14 @@ import {
 interface Props {
   worker: RosterWorker;
   loginBusy: boolean;
-  tempPassword: string | null;
+  portalCreds: { tempPassword: string; emailSent: boolean; email: string | null } | null;
   runLogin: (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => void;
   /** Spread of the shell's tablist.panelProps() — makes this div the active tabpanel. */
   panelProps: { role: 'tabpanel'; id: string; 'aria-labelledby': string; tabIndex: number };
 }
 
 /** Portal & login tab — self-service login provisioning (decoupled from the profile form). */
-export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, panelProps }: Props) {
+export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panelProps }: Props) {
   return (
     <div
       {...panelProps}
@@ -108,22 +108,39 @@ export function PortalLoginTab({ worker, loginBusy, tempPassword, runLogin, pane
           </button>
         </div>
       </div>
-      {tempPassword && (
-        <div
-          className="banner"
-          style={{
-            marginTop: 8,
-            background: 'var(--good-soft)',
-            borderColor: 'var(--good)',
-            color: 'var(--good)',
-          }}
-        >
-          Portal credentials — share these <b>once</b> (the contractor should change the password
-          after first sign-in):
-          <br />
-          <b>Temp password:</b> <code>{tempPassword}</code>
-        </div>
-      )}
+      {portalCreds &&
+        (portalCreds.emailSent ? (
+          <div
+            className="banner"
+            style={{
+              marginTop: 8,
+              background: 'var(--good-soft)',
+              borderColor: 'var(--good)',
+              color: 'var(--good)',
+            }}
+          >
+            ✉ Credentials emailed to <b>{portalCreds.email ?? 'the contractor'}</b> — they can sign
+            in with them right away (they&apos;ll be asked to change the password). Backup in case
+            it doesn&apos;t arrive:
+            <br />
+            <b>Temp password:</b> <code>{portalCreds.tempPassword}</code>
+          </div>
+        ) : (
+          <div
+            className="banner"
+            style={{
+              marginTop: 8,
+              background: 'var(--warn-soft, #fef9c3)',
+              borderColor: 'var(--warn)',
+              color: 'var(--warn)',
+            }}
+          >
+            ⚠ The credentials email could <b>not</b> be sent — share these with the contractor
+            yourself (they should change the password after first sign-in):
+            <br />
+            <b>Temp password:</b> <code>{portalCreds.tempPassword}</code>
+          </div>
+        ))}
       {worker.wiseTag && (
         <div
           className="banner"
