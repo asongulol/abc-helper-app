@@ -20,9 +20,13 @@ import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
 
-// Heavy wizard (692 lines) loads on first open, not with the onboarding list.
+// Heavy wizards load on first open, not with the onboarding list.
 const AddContractorWizard = dynamic(
   () => import('@/components/contractors/AddContractorWizard').then((m) => m.AddContractorWizard),
+  { ssr: false },
+);
+const OnboardCurrentWizard = dynamic(
+  () => import('@/components/onboarding/OnboardCurrentWizard').then((m) => m.OnboardCurrentWizard),
   { ssr: false },
 );
 
@@ -52,6 +56,7 @@ export const OnboardingClient = ({
   const [isPending, startTransition] = useTransition();
   const [showDone, setShowDone] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
+  const [showOnboardCurrent, setShowOnboardCurrent] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
 
   const handleResendInvite = (row: OnboardingProgressRow) => {
@@ -209,6 +214,19 @@ export const OnboardingClient = ({
           >
             + Hire new contractor
           </button>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={consolidated}
+            title={
+              consolidated
+                ? 'Pick a single company first'
+                : 'Invite an already-added contractor to the portal'
+            }
+            onClick={() => setShowOnboardCurrent(true)}
+          >
+            Onboard current contractor
+          </button>
           <label className="sub" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <input
               type="checkbox"
@@ -258,6 +276,19 @@ export const OnboardingClient = ({
           onClose={() => setShowWizard(false)}
           onCreated={() => {
             setShowWizard(false);
+            router.refresh();
+          }}
+        />
+      )}
+
+      {showOnboardCurrent && (
+        <OnboardCurrentWizard
+          companyId={companyId}
+          companyName={employerName}
+          countersigners={countersigners}
+          onClose={() => setShowOnboardCurrent(false)}
+          onCreated={() => {
+            setShowOnboardCurrent(false);
             router.refresh();
           }}
         />
