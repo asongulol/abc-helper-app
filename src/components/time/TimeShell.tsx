@@ -53,6 +53,8 @@ interface TimeShellProps {
   contractorOptions: ContractorOption[];
   /** worker_id → assigned active CLIENT companies (the invoicing target). */
   assignedClients: Record<string, { id: string; name: string }[]>;
+  /** worker_id → expected hours for this period (salaried only). */
+  expectedByWorker: Record<string, number>;
 }
 
 export const TimeShell = ({
@@ -67,6 +69,7 @@ export const TimeShell = ({
   roster,
   contractorOptions,
   assignedClients,
+  expectedByWorker,
 }: TimeShellProps) => {
   const router = useRouter();
   const pathname = usePathname();
@@ -245,6 +248,7 @@ export const TimeShell = ({
                   unmatchedNames={unmatchedNames}
                   contractorOptions={contractorOptions}
                   assignedClients={assignedClients}
+                  expectedByWorker={expectedByWorker}
                   onRefresh={handleRefresh}
                 />
               </div>

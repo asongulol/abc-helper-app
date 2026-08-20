@@ -13,6 +13,7 @@ import {
   fetchUnpaidEntries,
 } from '@/db/queries/time';
 import { nextUnimportedPeriod, periodFor } from '@/lib/dates/periods';
+import { expectedHours } from '@/lib/pay/expected-hours';
 import { resolveHolidaysForRange } from '@/lib/pay/holidays';
 import { buildMatchIndex, matchName } from '@/lib/time/attribution';
 import { groupByContractor, periodStats } from '@/lib/time/grouping';
@@ -79,11 +80,19 @@ export default async function TimePage({
   for (const [workerId, list] of clientsByWorker) assignedClients[workerId] = list;
 
   const rows = groupByContractor(entries);
-  const stats = periodStats(
-    period.start,
-    period.end,
-    resolveHolidaysForRange(holidaysConfig, period.start, period.end),
-  );
+  const holidays = resolveHolidaysForRange(holidaysConfig, period.start, period.end);
+  const stats = periodStats(period.start, period.end, holidays);
+
+  // Expected hours per worker for THIS period (working days × contracted
+  // day-hours). Per-unit contracts (PH/PS/PHS) have none and are omitted —
+  // the table shows "—" for them. Period-scoped, so skipped in unpaid mode.
+  const expectedByWorker: Record<string, number> = {};
+  if (!unpaidMode) {
+    for (const r of roster) {
+      const h = expectedHours(r.contract ?? 'FT', period.start, period.end, holidays);
+      if (h > 0) expectedByWorker[r.workerId] = h;
+    }
+  }
 
   // Find source_names (from the shown entries) with no matching worker.
   const idx = buildMatchIndex(roster);
@@ -103,6 +112,7 @@ export default async function TimePage({
       roster={roster}
       contractorOptions={contractorOptions}
       assignedClients={assignedClients}
+      expectedByWorker={expectedByWorker}
     />
   );
 }
