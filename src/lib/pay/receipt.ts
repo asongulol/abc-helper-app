@@ -119,6 +119,13 @@ export const receiptModel = (
     } else {
       basis = `${MANUAL} — amounts shown as saved`;
     }
+  } else if (r.rate != null) {
+    // Rate saved but no required-hours target / units (legacy-seeded rows):
+    // when the gross simply equals the rate, say so plainly.
+    basis =
+      Math.abs(r.rate - formulaGross) <= 1
+        ? `full period rate ${php(r.rate)}${hoursCtx ? ` (${hoursCtx} this period)` : ''}`
+        : `${MANUAL} — amounts shown as saved`;
   } else {
     // Legacy statements saved without rate / required hours: still give the
     // reader every stored fact instead of an unexplained bare amount.

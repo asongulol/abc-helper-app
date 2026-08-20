@@ -1,25 +1,65 @@
 'use client';
 
 import { useState } from 'react';
-import type { PortalPaymentRow } from '@/db/queries/portal';
+import type { PortalPaymentRow, PortalTimeEntryRow } from '@/db/queries/portal';
+import { periodFor } from '@/lib/dates/periods';
 import { peso } from '@/lib/format';
 import { receiptModel } from '@/lib/pay/receipt';
 
 interface Props {
   payments: PortalPaymentRow[];
+  entries: PortalTimeEntryRow[];
 }
 
 /** Legacy "paid" = sent or reconciled (portal/index.html). */
 const isPaid = (status: string): boolean => status === 'sent' || status === 'reconciled';
 
+/** Time entries bucketed into one pay period: totals + per-day rows. */
+type PeriodHours = {
+  worked: number;
+  pto: number;
+  days: Array<{ date: string; tracked: number; pto: number }>;
+};
+
+/** Bucket own time entries by semi-monthly period start (hours, not seconds). Exported for tests. */
+export const bucketHours = (entries: PortalTimeEntryRow[]): Map<string, PeriodHours> => {
+  const map = new Map<string, PeriodHours>();
+  for (const e of entries) {
+    const key = periodFor(e.workDate).start;
+    const b = map.get(key) ?? { worked: 0, pto: 0, days: [] };
+    const tracked = e.trackedSeconds / 3600;
+    const pto = e.ptoSeconds / 3600;
+    b.worked += tracked;
+    b.pto += pto;
+    if (tracked > 0 || pto > 0) {
+      const d = b.days.find((x) => x.date === e.workDate);
+      if (d) {
+        d.tracked += tracked;
+        d.pto += pto;
+      } else {
+        b.days.push({ date: e.workDate, tracked, pto });
+      }
+    }
+    map.set(key, b);
+  }
+  for (const b of map.values()) b.days.sort((a, z) => a.date.localeCompare(z.date));
+  return map;
+};
+
+const h = (n: number): string => `${n.toFixed(2)} h`;
+
 /**
  * Expanded pay-slip breakdown: the shared "How this pay was computed" receipt
  * (same model as the admin reports history) rendered with portal styling.
  * Extras are signed and always sum from gross to net; the basis line explains
- * how the gross was arrived at from the STORED statement inputs.
+ * how the gross was arrived at from the STORED statement inputs. Time entries
+ * for the period feed the worked/PTO split and the per-day hours list.
  */
-const SlipReceipt = ({ p }: { p: PortalPaymentRow }) => {
-  const { basis, gross, extras, paid } = receiptModel(p.receipt, peso);
+const SlipReceipt = ({ p, hours }: { p: PortalPaymentRow; hours: PeriodHours | undefined }) => {
+  const { basis, gross, extras, paid } = receiptModel(
+    { ...p.receipt, worked: hours ? hours.worked : null, pto: hours?.pto ?? 0 },
+    peso,
+  );
   const divider = {
     borderTop: '1px solid var(--line)',
     marginTop: 4,
@@ -69,12 +109,33 @@ const SlipReceipt = ({ p }: { p: PortalPaymentRow }) => {
           <span>{p.paidAt.slice(0, 10)}</span>
         </div>
       )}
+      {hours && hours.days.length > 0 && (
+        <>
+          <div className="row" style={{ fontWeight: 600, ...divider }}>
+            <span>Hours this period</span>
+            <span>
+              {h(hours.worked)}
+              {hours.pto > 0 ? ` + ${h(hours.pto)} PTO` : ''}
+            </span>
+          </div>
+          {hours.days.map((d) => (
+            <div className="row" key={d.date}>
+              <span className="k">{d.date}</span>
+              <span>
+                {h(d.tracked)}
+                {d.pto > 0 ? ` + ${h(d.pto)} PTO` : ''}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 };
 
-export const PortalStatements = ({ payments }: Props) => {
+export const PortalStatements = ({ payments, entries }: Props) => {
   const [open, setOpen] = useState<string | null>(null);
+  const hoursByPeriod = bucketHours(entries);
 
   if (!payments.length) {
     return <div className="empty">No pay slips yet.</div>;
@@ -149,7 +210,7 @@ export const PortalStatements = ({ payments }: Props) => {
               </div>
               <div className="net">{peso(p.netPhp)}</div>
             </div>
-            {isOpen && <SlipReceipt p={p} />}
+            {isOpen && <SlipReceipt p={p} hours={hoursByPeriod.get(p.periodStart)} />}
           </div>
         );
       })}
