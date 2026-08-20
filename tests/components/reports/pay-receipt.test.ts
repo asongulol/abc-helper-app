@@ -33,7 +33,6 @@ const base: Row = {
   misc: [],
   units: null,
   perSession: false,
-  fx: null,
   payout: null,
   payoutCur: null,
   note: null,
@@ -58,9 +57,36 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
     expect(m.basis).not.toContain('90');
   });
 
-  it('drops the formula (no false "=") when stored gross does not match', () => {
+  it('no false "=" when stored gross does not match — says so instead', () => {
     const m = receiptModel({ ...base, gross: 20000, net: 20000 });
-    expect(m.basis).toBeNull();
+    expect(m.basis).toContain('do not reproduce this gross');
+  });
+
+  it('spells out the worked + PTO split when time entries account for payable hours', () => {
+    const m = receiptModel({
+      ...base,
+      worked: 59.47,
+      pto: 4,
+      workedPay: 63.47,
+      gross: 21969.54,
+      net: 21969.54,
+    });
+    expect(m.basis).toContain('63.47 h (59.47 h worked + 4.00 h PTO) ÷ 86.67 h required');
+  });
+
+  it('legacy rows without rate/required hours still explain themselves', () => {
+    const m = receiptModel({
+      ...base,
+      rate: null,
+      expected: null,
+      worked: 59.47,
+      pto: 4,
+      workedPay: 63.47,
+      gross: 8613.25,
+      net: 8613.25,
+    });
+    expect(m.basis).toContain('saved without its rate and required hours');
+    expect(m.basis).toContain('63.47 h (59.47 h worked + 4.00 h PTO) this period');
   });
 
   it('per-hour and per-session word the basis by unit', () => {
@@ -125,10 +151,10 @@ describe('receiptModel — the "how this pay was computed" breakdown', () => {
     expect(total).toBeCloseTo(33012.34, 2);
   });
 
-  it('paid line renders only when payout + fx exist', () => {
+  it('paid line shows the payout but NEVER the exchange rate (contractors see this)', () => {
     expect(receiptModel(base).paid).toBeNull();
-    const m = receiptModel({ ...base, payout: 495.12, fx: 56.68, method: 'wise_api' });
+    const m = receiptModel({ ...base, payout: 495.12, method: 'wise_api' });
     expect(m.paid).toContain('$495.12');
-    expect(m.paid).toContain('₱56.68 / $1');
+    expect(m.paid).not.toMatch(/\/ \$1|₱\d/);
   });
 });

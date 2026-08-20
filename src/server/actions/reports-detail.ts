@@ -436,7 +436,6 @@ export type HistoryRow = {
   misc: HistoryMisc[];
   units: number | null;
   perSession: boolean;
-  fx: number | null;
   payout: number | null;
   payoutCur: string | null;
   note: string | null;
@@ -459,7 +458,7 @@ export async function getContractorHistory(
     const { data: pays, error: pe } = await db
       .from('payments')
       .select(
-        'worked_hours,expected_hours,performance_ratio,units,contract,pay_basis,rate_php,gross_php,computed_gross_php,health_allowance_php,pdd_lunch_php,thirteenth_month_php,bonus_php,misc_items,off_cycle_php,net_php,fx_rate,payout_currency,payout_amount,payout_method,status,note,pay_periods(period_start,period_end,pay_date)',
+        'worked_hours,expected_hours,performance_ratio,units,contract,pay_basis,rate_php,gross_php,computed_gross_php,health_allowance_php,pdd_lunch_php,thirteenth_month_php,bonus_php,misc_items,off_cycle_php,net_php,payout_currency,payout_amount,payout_method,status,note,pay_periods(period_start,period_end,pay_date)',
       )
       .eq('worker_id', workerId)
       .eq('company_id', companyId);
@@ -521,7 +520,6 @@ export async function getContractorHistory(
       misc: HistoryMisc[];
       units: number | null;
       perSession: boolean;
-      fx: number | null;
       payout: number | null;
       payoutCur: string | null;
       note: string | null;
@@ -562,7 +560,6 @@ export async function getContractorHistory(
         misc,
         units: numOrNull(p.units),
         perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
-        fx: numOrNull(p.fx_rate),
         payout: numOrNull(p.payout_amount),
         payoutCur: p.payout_currency ?? null,
         note: p.note ?? null,
@@ -602,7 +599,6 @@ export async function getContractorHistory(
         misc: p?.misc ?? [],
         units: p?.units ?? null,
         perSession: p?.perSession ?? false,
-        fx: p?.fx ?? null,
         payout: p?.payout ?? null,
         payoutCur: p?.payoutCur ?? null,
         note: p?.note ?? null,
