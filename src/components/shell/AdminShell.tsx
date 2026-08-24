@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { type ReactNode, useEffect, useState, useTransition } from 'react';
+import { type ReactNode, useEffect, useRef, useState, useTransition } from 'react';
 import { Mark } from '@/components/brand/Mark';
 import { ToastProvider } from '@/components/ui';
 import { BackToTop } from '@/components/ui/BackToTop';
@@ -129,6 +129,17 @@ export const AdminShell = ({
     }
   };
 
+  // Close the Client dropdown on outside click (<details> has no light-dismiss).
+  const clientMenuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const d = clientMenuRef.current;
+      if (d?.open && e.target instanceof Node && !d.contains(e.target)) d.removeAttribute('open');
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, []);
+
   const toggleClient = (clientId: string) => {
     const next = selectedClientIds.includes(clientId)
       ? selectedClientIds.filter((id) => id !== clientId)
@@ -242,7 +253,7 @@ export const AdminShell = ({
               <span className="muted" style={{ fontSize: 12 }}>
                 Client
               </span>
-              <details style={{ position: 'relative' }}>
+              <details ref={clientMenuRef} style={{ position: 'relative' }}>
                 <summary
                   className="btn ghost sm"
                   style={{ listStyle: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}
