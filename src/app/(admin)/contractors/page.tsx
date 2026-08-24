@@ -5,9 +5,14 @@ import { createServiceClient } from '@/db/clients/service';
 import { listAdmins } from '@/db/queries/admins';
 import { listAnnouncementsAll } from '@/db/queries/config';
 import { fetchRates } from '@/db/queries/payroll';
-import { fetchRoster, fetchWorkerClientsMap, type RosterWorker } from '@/db/queries/workers';
+import {
+  fetchRoster,
+  fetchWorkerClientsMap,
+  fetchWorkerIdsForClients,
+  type RosterWorker,
+} from '@/db/queries/workers';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId, listCompanies } from '@/server/company';
+import { getSelectedClientIds, getSelectedCompanyId, listCompanies } from '@/server/company';
 
 export const metadata = { title: 'Contractors — Aaron Anderson E.H.S. LLC' };
 
@@ -28,12 +33,20 @@ export default async function ContractorsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const db = await createServerSupabase();
 
-  const [roster, allRates, admins, announcements] = await Promise.all([
+  const [fullRoster, allRates, admins, announcements, selectedClientIds] = await Promise.all([
     fetchRoster(db, companyId),
     fetchRates(db, companyId),
     listAdmins(db),
     listAnnouncementsAll(db),
+    getSelectedClientIds(),
   ]);
+  // Header Client filter: keep only workers assigned to a selected client.
+  const roster =
+    selectedClientIds.length === 0
+      ? fullRoster
+      : await fetchWorkerIdsForClients(db, selectedClientIds).then((ids) =>
+          fullRoster.filter((w) => ids.has(w.workerId)),
+        );
   const countersigners = admins
     .filter((a) => a.canCountersign)
     .map((a) => ({ userId: a.userId, name: a.name ?? a.email }));

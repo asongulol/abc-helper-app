@@ -296,6 +296,21 @@ export const fetchWorkerClientsMap = async (
   return map;
 };
 
+/** Worker ids with a non-ended link to ANY of the given client companies (header Client filter). */
+export const fetchWorkerIdsForClients = async (
+  db: Db,
+  clientIds: string[],
+): Promise<Set<string>> => {
+  if (clientIds.length === 0) return new Set();
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('worker_id, status')
+    .in('company_id', clientIds)
+    .neq('status', 'ended');
+  if (error) throw new Error(`worker client links: ${error.message}`);
+  return new Set((data ?? []).map((r) => r.worker_id));
+};
+
 /** Insert a new worker and link row. Returns the new worker_id. */
 export const insertWorkerWithLink = async (
   db: Db,
