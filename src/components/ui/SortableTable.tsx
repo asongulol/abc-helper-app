@@ -1,6 +1,7 @@
 'use client';
 
 import { type ReactNode, useMemo, useState } from 'react';
+import { matchesQuery } from '@/lib/names';
 
 export interface SortableColumn<T> {
   key: string;
@@ -93,12 +94,14 @@ export const SortableTable = <T,>({
   const visible = useMemo(() => {
     let out: T[] = [...rows];
     if (filterable && q) {
-      const needle = q.toLowerCase();
       out = out.filter((row) =>
-        columns.some((col) => {
-          const v = defaultAccessor(col)(row);
-          return v != null && String(v).toLowerCase().includes(needle);
-        }),
+        matchesQuery(
+          q,
+          columns.map((col) => {
+            const v = defaultAccessor(col)(row);
+            return v != null ? String(v) : null;
+          }),
+        ),
       );
     }
     if (sortKey) {

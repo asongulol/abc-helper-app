@@ -163,6 +163,8 @@ export type RosterIndexRow = {
   firstName: string | null;
   middleName: string | null;
   lastName: string | null;
+  /** Portal-set nickname (profile_extras) — shown + searched in the ⌘K palette. */
+  nickname: string | null;
 };
 
 /**
@@ -176,7 +178,7 @@ export const fetchRosterIndex = cache(
   async (db: Db, companyId: string): Promise<RosterIndexRow[]> => {
     const { data, error } = await db
       .from('worker_companies')
-      .select('worker_id, workers(first_name, middle_name, last_name)')
+      .select('worker_id, workers(first_name, middle_name, last_name, profile_extras)')
       .eq('company_id', companyId)
       .order('id', { ascending: false });
     if (error) throw new Error(`worker_companies index: ${error.message}`);
@@ -189,6 +191,7 @@ export const fetchRosterIndex = cache(
         firstName: l.workers.first_name,
         middleName: l.workers.middle_name,
         lastName: l.workers.last_name,
+        nickname: extraStr(l.workers.profile_extras, 'nickname'),
       }));
   },
 );

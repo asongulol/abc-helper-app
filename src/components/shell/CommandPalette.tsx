@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal } from '@/components/ui';
+import { matchesQuery } from '@/lib/names';
 import type { NavItem } from './nav';
 
 export interface CommandPaletteProps {
@@ -64,7 +65,7 @@ export const CommandPalette = ({
   const ql = q.trim().toLowerCase();
 
   const results = useMemo<Result[]>(() => {
-    const match = (s: string) => !ql || s.toLowerCase().includes(ql);
+    const match = (s: string) => matchesQuery(ql, [s]);
     const out: Result[] = [];
     for (const s of sections) {
       if (match(s.label)) {
