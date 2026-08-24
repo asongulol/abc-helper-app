@@ -690,7 +690,7 @@ export async function reviewDocument(args: {
 
     const { data: doc } = await svc
       .from('documents')
-      .select('id, worker_id, kind, issued_on, review_status')
+      .select('id, worker_id, kind, side, storage_path, issued_on, review_status')
       .eq('id', args.documentId)
       .maybeSingle();
     if (!doc) return { ok: false, error: 'Document not found.' };
@@ -722,6 +722,13 @@ export async function reviewDocument(args: {
       admin.userId,
       args.note?.trim() ?? null,
     );
+
+    // An approved/waived UPLOAD fulfills the slot — drop any fileless
+    // waived/deferred placeholder so it stops counting as an open follow-up
+    // (otherwise the 📌 badge and docs digest keep flagging the old deferral).
+    if (doc.storage_path && (reviewStatus === 'approved' || reviewStatus === 'waived')) {
+      await clearFilelessDocumentSlot(svc, doc.worker_id, doc.kind, doc.side);
+    }
 
     // Re-eval stage 3 completion (shared with resolveMissingDocument).
     const { onboardingComplete } = await recomputeStage3(svc, doc.worker_id);
