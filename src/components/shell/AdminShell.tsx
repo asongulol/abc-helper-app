@@ -9,7 +9,7 @@ import { BackToTop } from '@/components/ui/BackToTop';
 import { Modal } from '@/components/ui/Modal';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import type { AdminRow } from '@/db/queries/admins';
-import { selectCompany } from '@/server/actions/company';
+import { selectClients } from '@/server/actions/company';
 import { AdminsModal } from './AdminsModal';
 import { CommandPalette } from './CommandPalette';
 import { NAV_GROUPS } from './nav';
@@ -30,7 +30,10 @@ export interface ShellCompany {
 interface AdminShellProps {
   admin: ShellAdmin;
   companies: ShellCompany[];
-  selectedCompanyId: string | null;
+  /** CLIENT companies for the header filter (billing tags, not tenants). */
+  clients: ShellCompany[];
+  /** Client ids currently filtered to; empty = all. */
+  selectedClientIds: string[];
   contractors: ReadonlyArray<{ id: string; name: string }>;
   periods: ReadonlyArray<{ id: string; label: string; start: string }>;
   /** Admin roster for the owner-only Admins modal (empty for non-owners). */
@@ -62,7 +65,8 @@ const BUILD = process.env.NEXT_PUBLIC_BUILD ?? 'local · unstamped';
 export const AdminShell = ({
   admin,
   companies,
-  selectedCompanyId,
+  clients,
+  selectedClientIds,
   contractors,
   periods,
   admins,
@@ -125,13 +129,22 @@ export const AdminShell = ({
     }
   };
 
-  const onCompanyChange = (companyId: string) => {
-    if (!companyId || companyId === selectedCompanyId) return;
+  const toggleClient = (clientId: string) => {
+    const next = selectedClientIds.includes(clientId)
+      ? selectedClientIds.filter((id) => id !== clientId)
+      : [...selectedClientIds, clientId];
     startSwitch(async () => {
-      await selectCompany(companyId);
+      await selectClients(next);
       router.refresh();
     });
   };
+
+  const clientSummary =
+    selectedClientIds.length === 0
+      ? 'All clients'
+      : selectedClientIds.length === 1
+        ? (clients.find((c) => c.id === selectedClientIds[0])?.name ?? '1 client')
+        : `${selectedClientIds.length} clients`;
 
   const signOut = async () => {
     setSigningOut(true);
@@ -227,26 +240,61 @@ export const AdminShell = ({
               }}
             >
               <span className="muted" style={{ fontSize: 12 }}>
-                Employer
+                Client
               </span>
-              <select
-                aria-label="Company"
-                value={selectedCompanyId ?? ''}
-                onChange={(e) => onCompanyChange(e.target.value)}
-                disabled={switching || companies.length <= 1}
-                title={
-                  companies.length <= 1
-                    ? 'The payroll home for every contractor'
-                    : 'Switch employer (tenant)'
-                }
-              >
-                {companies.length === 0 && <option value="">No companies</option>}
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+              <details style={{ position: 'relative' }}>
+                <summary
+                  className="btn ghost sm"
+                  style={{ listStyle: 'none', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  title="Filter contractors by client assignment"
+                >
+                  {clientSummary} ▾
+                </summary>
+                <div
+                  className="card"
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: 'calc(100% + 6px)',
+                    zIndex: 50,
+                    minWidth: 240,
+                    padding: 10,
+                    display: 'grid',
+                    gap: 6,
+                  }}
+                >
+                  {clients.map((c) => (
+                    <label
+                      key={c.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedClientIds.includes(c.id)}
+                        disabled={switching}
+                        onChange={() => toggleClient(c.id)}
+                      />
+                      {c.name}
+                    </label>
+                  ))}
+                  {clients.length === 0 && <span className="sub">No client companies.</span>}
+                  {selectedClientIds.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={switching}
+                      onClick={() => {
+                        startSwitch(async () => {
+                          await selectClients([]);
+                          router.refresh();
+                        });
+                      }}
+                    >
+                      Clear — show all
+                    </button>
+                  )}
+                </div>
+              </details>
             </div>
           </div>
           <span
