@@ -42,7 +42,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     ]);
     contractors = roster.map((w) => ({
       id: w.workerId,
-      name: fullName(w),
+      // Nickname rides in the label so the palette both shows and matches it.
+      name: w.nickname ? `${fullName(w)} “${w.nickname}”` : fullName(w),
     }));
     periods = periodRows.map((p) => ({
       id: p.id,
