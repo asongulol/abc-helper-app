@@ -103,7 +103,7 @@ const checkRow = {
 } as const;
 
 /** Block caption + nested control (the nesting associates the label, a11y-clean). */
-function Field({ label, children }: { label: string; children: ReactNode }) {
+export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     // biome-ignore lint/a11y/noLabelWithoutControl: the control is passed as children and nested in this label
     <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
@@ -140,6 +140,7 @@ export function AddContractorWizard({
   const [busy, setBusy] = useState(false);
   const [dupConfirm, setDupConfirm] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [credsEmailSent, setCredsEmailSent] = useState(false);
   const [done, setDone] = useState(false);
   const [clients, setClients] = useState<{ id: string; name: string }[]>([]);
 
@@ -221,8 +222,10 @@ export function AddContractorWizard({
     markDone();
     draftClear(companyId);
     setDone(true);
-    if (res.data.tempPassword) setTempPassword(res.data.tempPassword);
-    else {
+    if (res.data.tempPassword) {
+      setTempPassword(res.data.tempPassword);
+      setCredsEmailSent(res.data.emailSent ?? false);
+    } else {
       notify('Contractor created.', { type: 'success' });
       onCreated();
       onClose();
@@ -238,8 +241,9 @@ export function AddContractorWizard({
     return (
       <Modal title="Contractor created" onClose={finishClose} maxWidth={460}>
         <p className="sub">
-          Their portal login was created. Share this temporary password — they&apos;ll set their own
-          on first sign-in.
+          {credsEmailSent
+            ? 'Their portal login was created and the credentials were emailed to them — they\u2019ll set their own password on first sign-in. Backup copy:'
+            : 'Their portal login was created but the credentials email could NOT be sent — share this temporary password yourself (they\u2019ll set their own on first sign-in).'}
         </p>
         <div
           style={{

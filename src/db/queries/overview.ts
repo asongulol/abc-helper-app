@@ -91,11 +91,17 @@ export const countFailedPayouts = async (db: Db, companyId: string): Promise<num
 // ---------------------------------------------------------------------------
 
 export interface PipelineStageData {
-  /** true when this stage has time entries with the given approval state, or payments
-   *  at the given status, or a period at the given state. */
+  /**
+   * true when the stage is COMPLETE — not merely started. The old rule was
+   * "any > 0", so a single approved entry out of 312 rendered "Approved ✓" and
+   * an admin could calculate pay on partly-approved time. Countable stages now
+   * carry `progress` and are done only when n === m.
+   */
   done: boolean;
   /** Brief sub-label, e.g. count of records. */
   detail: string | null;
+  /** n of m for stages that count things; null for state-only stages. */
+  progress: { n: number; m: number } | null;
 }
 
 export interface PipelineData {
@@ -106,6 +112,8 @@ export interface PipelineData {
   paid: PipelineStageData;
   /** Period state from pay_periods row, null if no period found. */
   periodState: Database['public']['Enums']['pay_period_state'] | null;
+  /** pay_periods.id — the uuid /process deep-links take (NOT the ISO start). */
+  periodId: string | null;
 }
 
 /** Pay-cycle pipeline state for the current semi-monthly period. */
@@ -176,24 +184,31 @@ export const getPipelineData = async (
     timeImported: {
       done: totalEntries > 0,
       detail: totalEntries > 0 ? `${totalEntries} entr${totalEntries === 1 ? 'y' : 'ies'}` : null,
+      progress: null,
     },
     approved: {
-      done: approvedEntries > 0,
-      detail: approvedEntries > 0 ? `${approvedEntries} approved` : null,
+      // Complete, not "any": partial approval is an unfinished stage.
+      done: totalEntries > 0 && approvedEntries === totalEntries,
+      detail: totalEntries > 0 ? `${approvedEntries} of ${totalEntries}` : null,
+      progress: { n: approvedEntries, m: totalEntries },
     },
     calculated: {
       done: paymentCount > 0,
       detail: paymentCount > 0 ? `${paymentCount} payment${paymentCount === 1 ? '' : 's'}` : null,
+      progress: null,
     },
     locked: {
       done: isLocked,
       detail: isLocked ? periodState : null,
+      progress: null,
     },
     paid: {
-      done: isPaid || paidCount > 0,
-      detail: paidCount > 0 ? `${paidCount} sent` : isPaid ? 'paid' : null,
+      done: isPaid || (paymentCount > 0 && paidCount === paymentCount),
+      detail: paymentCount > 0 ? `${paidCount} of ${paymentCount}` : isPaid ? 'paid' : null,
+      progress: paymentCount > 0 ? { n: paidCount, m: paymentCount } : null,
     },
     periodState,
+    periodId: period?.id ?? null,
   };
 };
 

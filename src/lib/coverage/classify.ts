@@ -30,6 +30,27 @@ export interface CoverageActual {
 
 export type CoverageGapKind = 'zero_time' | 'under_coverage';
 
+/** Every state a contractor can be in, including the two that aren't gaps. */
+export type CoverageStatus = CoverageGapKind | 'on_track' | 'not_measured';
+
+/**
+ * The single definition of "is this person short?" — `classifyCoverage` (which
+ * feeds the Overview's gap count) and /coverage's per-row pill both read it, so
+ * the page an admin lands on can't contradict the badge that sent them there.
+ *
+ * `not_measured` is its own state, never "on track": no target and no
+ * weekly_hours means there is nothing to be short OF (#029).
+ */
+export const coverageStatus = (
+  expectedHours: number,
+  coveredHours: number,
+  underThreshold = 0.6,
+): CoverageStatus => {
+  if (!(expectedHours > 0)) return 'not_measured';
+  if (!(coveredHours > 0)) return 'zero_time';
+  return coveredHours / expectedHours < underThreshold ? 'under_coverage' : 'on_track';
+};
+
 export interface CoverageGap {
   workerId: string;
   workerName: string;
@@ -50,24 +71,20 @@ export const classifyCoverage = (
   const gaps: CoverageGap[] = [];
 
   for (const e of expectations) {
-    if (!(e.expectedHours > 0)) continue; // no target → nothing to compare against
     const worked = byWorker.get(e.workerId)?.workedHours ?? 0;
     const pto = byWorker.get(e.workerId)?.ptoHours ?? 0;
     const covered = worked + pto;
-    const ratio = covered / e.expectedHours;
-    const row = {
+    const status = coverageStatus(e.expectedHours, covered, underThreshold);
+    if (status !== 'zero_time' && status !== 'under_coverage') continue;
+    gaps.push({
       workerId: e.workerId,
       workerName: e.workerName,
       expectedHours: e.expectedHours,
       workedHours: worked,
       ptoHours: pto,
-      ratio,
-    };
-    if (covered <= 0) {
-      gaps.push({ ...row, ratio: 0, kind: 'zero_time' });
-    } else if (ratio < underThreshold) {
-      gaps.push({ ...row, kind: 'under_coverage' });
-    }
+      ratio: status === 'zero_time' ? 0 : covered / e.expectedHours,
+      kind: status,
+    });
   }
 
   // Worst (lowest ratio) first — most urgent gap on top.

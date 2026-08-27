@@ -11,6 +11,11 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { type ClientOption, fetchActiveClients } from '@/db/queries/invoicing';
 import {
+  AGREEMENT_KINDS,
+  type DerivedAgreementPrefill,
+  deriveAgreementPrefill,
+} from '@/db/queries/onboarding';
+import {
   clearWorkerTools,
   endEngagement,
   fetchWorkerLinks,
@@ -30,6 +35,7 @@ import {
   AddContractorSchema,
   EndAssignmentSchema,
   HireContractorSchema,
+  OnboardCurrentSchema,
   SaveWorkerCompanyLinkSchema,
   SaveWorkerProfileSchema,
   SetLinkStatusSchema,
@@ -144,6 +150,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       postal_code: input.postalCode,
       payout_method: input.payoutMethod,
       health_allowance_eligible: input.healthAllowanceEligible,
+      health_allowance_date: input.healthAllowanceDate ?? null,
       thirteenth_month_eligible: input.thirteenthMonthEligible,
       work_email: input.workEmail ?? null,
       work_number: input.workNumber ?? null,
@@ -382,9 +389,6 @@ export async function endAssignment(args: unknown): Promise<ActionResult> {
   }
 }
 
-/** Onboarding agreement kinds prefilled at hire time (IC first, then the rest). */
-const ONB_AGR_KINDS = ['ic_agreement', 'non_compete', 'confidentiality_nda', 'baa'] as const;
-
 /** Slugify an extra-document title to a stable kind key (legacy ocSlug). */
 const docSlug = (s: string): string =>
   String(s ?? '')
@@ -439,7 +443,7 @@ export async function listInvoiceClients(): Promise<ActionResult<ClientOption[]>
 
 export async function hireContractor(
   args: unknown,
-): Promise<ActionResult<{ workerId: string; tempPassword?: string }>> {
+): Promise<ActionResult<{ workerId: string; tempPassword?: string; emailSent?: boolean }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -624,6 +628,7 @@ export async function hireContractor(
     // 5) Portal login (only if invite). The edge create_login is the
     // authoritative duplicate-email guard (it can see ALL auth accounts).
     let tempPassword: string | undefined;
+    let emailSent = false;
     if (input.invite && input.email) {
       const loginRes = await createPortalLogin({
         workerId,
@@ -631,6 +636,7 @@ export async function hireContractor(
       });
       if (!loginRes.ok) throw new Error(loginRes.error);
       tempPassword = loginRes.data.tempPassword;
+      emailSent = loginRes.data.emailSent ?? false;
     }
 
     // --- Best-effort per-hire prep (own try/catch, EXCLUDED from rollback) ---
@@ -674,7 +680,7 @@ export async function hireContractor(
       // Same countersigner + company + engagement basis on the other agreements
       // so none show a blank line.
       if (csId || csName || coName || input.weeklyHours || input.shiftLabel) {
-        for (const k of ONB_AGR_KINDS) {
+        for (const k of AGREEMENT_KINDS) {
           if (k === 'ic_agreement') continue;
           await db.from('onboarding_agreements').upsert(
             {
@@ -744,7 +750,7 @@ export async function hireContractor(
 
     revalidatePath('/contractors');
     return tempPassword !== undefined
-      ? { ok: true, data: { workerId, tempPassword } }
+      ? { ok: true, data: { workerId, tempPassword, emailSent } }
       : { ok: true, data: { workerId } };
   } catch (err) {
     // ROLLBACK: delete the just-created worker (FK cascades clear the rest).
@@ -1033,4 +1039,145 @@ export async function unassignWorkerCompany(args: {
       error: humanizeError(err, 'Remove failed.'),
     };
   }
+}
+
+// ─── "Onboard Current Contractor" (invite an existing worker to the portal) ─────
+
+export interface OnboardCandidate {
+  workerId: string;
+  name: string;
+  email: string | null;
+}
+
+/**
+ * Active workers on this company with no portal login yet — the population the
+ * "Onboard Current Contractor" wizard serves. Service client: contractor_logins
+ * has SELECT-only self RLS, so the admin session can't read it directly.
+ */
+export async function listOnboardCandidates(
+  companyId: string,
+): Promise<ActionResult<OnboardCandidate[]>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  try {
+    const svc = createServiceClient();
+    const [linksRes, loginsRes] = await Promise.all([
+      svc
+        .from('worker_companies')
+        .select('worker_id, workers!inner(id, first_name, last_name, email, status)')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+        .eq('workers.status', 'active'),
+      svc.from('contractor_logins').select('worker_id'),
+    ]);
+    if (linksRes.error) return { ok: false, error: linksRes.error.message };
+    const hasLogin = new Set((loginsRes.data ?? []).map((l) => l.worker_id));
+    const out: OnboardCandidate[] = (linksRes.data ?? [])
+      .filter((l) => !hasLogin.has(l.worker_id))
+      .map((l) => ({
+        workerId: l.worker_id,
+        name: `${l.workers.first_name} ${l.workers.last_name}`.trim(),
+        email: l.workers.email,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return { ok: true, data: out };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Failed to load contractors.') };
+  }
+}
+
+/** Derived agreement terms for a candidate — prefills the wizard's form. */
+export async function getOnboardPrefill(
+  workerId: string,
+): Promise<ActionResult<DerivedAgreementPrefill>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  try {
+    const svc = createServiceClient();
+    return { ok: true, data: await deriveAgreementPrefill(svc, workerId) };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Failed to derive terms.') };
+  }
+}
+
+/**
+ * Onboard an EXISTING worker: create their portal login (welcome email, seeds
+ * the onboarding queue) and prepare the agreement prefill with the terms the
+ * admin confirmed in the wizard. Mirrors hireContractor's per-hire prep block,
+ * but touches no worker / link / rate rows. createPortalLogin is the gate —
+ * its duplicate-login/email guards apply; the prep after it is best-effort
+ * (fixable from the onboarding review panel), same stance as the hire wizard.
+ */
+export async function onboardCurrentContractor(
+  args: unknown,
+): Promise<ActionResult<{ tempPassword?: string; emailSent?: boolean; email?: string }>> {
+  const parsed = OnboardCurrentSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const loginRes = await createPortalLogin({ workerId: input.workerId, email: input.email });
+  if (!loginRes.ok) return loginRes;
+
+  try {
+    const svc = createServiceClient();
+    const now = new Date().toISOString();
+    const { data: co } = await svc
+      .from('companies')
+      .select('name')
+      .eq('id', input.companyId)
+      .maybeSingle();
+
+    // Overwrites the derived defaults createPortalLogin just seeded with the
+    // values the admin confirmed. Same field layout as the hire wizard: terms
+    // on the IC Agreement, engagement basis + countersigner on all four.
+    for (const kind of AGREEMENT_KINDS) {
+      await svc.from('onboarding_agreements').upsert(
+        {
+          worker_id: input.workerId,
+          agreement_kind: kind,
+          f_company_name: co?.name ?? null,
+          f_employment_type: input.employmentType,
+          f_hours_per_week: input.hoursPerWeek,
+          countersigner_user_id: input.countersignerUserId,
+          countersigner_name: input.countersignerName,
+          prepared_by: admin.userId,
+          prepared_at: now,
+          updated_at: now,
+          ...(kind === 'ic_agreement'
+            ? {
+                f_rate: input.ratePhp > 0 ? String(input.ratePhp) : null,
+                f_position: input.position,
+                f_start_date: input.startDate,
+                addendum_type: input.icAddendumType || null,
+                addendum_text: input.icAddendumText?.trim() || null,
+              }
+            : {}),
+        },
+        { onConflict: 'worker_id,agreement_kind' },
+      );
+    }
+
+    const tr = input.tools;
+    if (tr.gmail || tr.providersoft || tr.hubstaff || tr.zoom || tr.others.trim()) {
+      await svc.rpc('set_tools_requested', {
+        p_worker_id: input.workerId,
+        p_requested: tr as unknown as Json,
+      });
+    }
+  } catch {
+    /* non-fatal: the login/invite already succeeded */
+  }
+
+  await logEvent({
+    companyId: input.companyId,
+    action: 'onboard_current_contractor',
+    entity: input.workerId,
+    detail: { email: input.email, by: admin.email },
+  });
+  revalidatePath('/onboarding');
+  return loginRes;
 }

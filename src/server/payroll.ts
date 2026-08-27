@@ -7,10 +7,15 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import {
+  clearPeriodSessionsPaid,
+  countPendingTime,
+  lockPeriod as dbLockPeriod,
+  unlockPeriod as dbUnlockPeriod,
   deleteWorkerPayment,
   fetchApprovedTime,
   fetchLastPayoutMethods,
@@ -18,20 +23,29 @@ import {
   fetchPaymentForWorker,
   fetchPaymentRowsForRestore,
   fetchPeriodCalcFlags,
+  fetchProcessPayments,
   fetchRates,
   fetchRoster,
+  fetchSalariedCatchUpsForPeriodEnd,
   fetchSalariedCatchUpUnits,
   fetchSavedPayments,
+  fetchSessionUnitsByWorker,
   fetchSessionUnitsByWorkerByDate,
   fetchThirteenthAccrualPeriods,
   findPeriod,
+  lockBlockedReason,
+  lockWarningReason,
+  markPeriodSessionsPaid,
   mergeManualColumns,
   type PaymentSnapshotRow,
   pruneDraftPaymentsExcept,
   savePriorPayments,
+  sessionPaidWorkers,
+  unlockBlockedReason,
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
+import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
 import type { Centavos } from '@/lib/money';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
@@ -46,7 +60,29 @@ import {
 } from '@/lib/payroll/mappers';
 import { groupWorkersByPeriod } from '@/lib/time/grouping';
 import { logEvent } from '@/server/audit';
-import type { CalculateDraftInput } from '@/types/schemas/payroll';
+import type {
+  CalculateDraftInput,
+  LockPeriodInput,
+  UnlockPeriodInput,
+} from '@/types/schemas/payroll';
+
+/**
+ * DB seam: tests pass an in-memory fake (tests/fixtures/supabase-fake.ts);
+ * production callers omit it and get the real clients. The two-client split is
+ * part of the seam on purpose — which reads may bypass RLS stays visible at
+ * every call site (ADR-0004).
+ */
+export type PayrollDeps = {
+  /** RLS user client — every employer-scoped read/write. */
+  db: SupabaseClient<Database>;
+  /** Service-role client — ONLY the cross-company session reads (ADR-0004). */
+  serviceDb: SupabaseClient<Database>;
+};
+
+const realDeps = async (): Promise<PayrollDeps> => ({
+  db: await createServerSupabase(),
+  serviceDb: createServiceClient(),
+});
 
 export type CalculateDraftResult = {
   periodId: string;
@@ -78,8 +114,11 @@ export type CalculateDraftResult = {
  * has approved time (F5); the UI owns the typed-word warning, and the prior rows
  * are returned as `priorSnapshot` so the caller can offer an Undo (F6).
  */
-export const calculateDraft = async (input: CalculateDraftInput): Promise<CalculateDraftResult> => {
-  const db = await createServerSupabase();
+export const calculateDraft = async (
+  input: CalculateDraftInput,
+  deps?: PayrollDeps,
+): Promise<CalculateDraftResult> => {
+  const { db, serviceDb } = deps ?? (await realDeps());
 
   const existing = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
   if (existing && existing.state !== 'open') {
@@ -140,7 +179,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   const sessionUnitsByWorkerByDate = offCycleOnly
     ? new Map<string, Map<string, number>>()
     : await fetchSessionUnitsByWorkerByDate(
-        createServiceClient(),
+        serviceDb,
         roster.map((r) => r.workerId),
         input.periodStart,
         input.periodEnd,
@@ -244,21 +283,24 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
  * the surgical off_cycle_php-only write addSalariedCatchUp uses would double-pay
  * here.
  */
-export const recomputeWorkerDraft = async (args: {
-  companyId: string;
-  periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  workerId: string;
-  /**
-   * Off-cycle BATCH rows are built ONLY from the ledger — no hours, no in-window
-   * sessions, no health allowance (the batch's window is just a label). The
-   * worker's pay is the sum of their off_cycle_pay_items on this batch.
-   */
-  offCycleOnly?: boolean;
-}): Promise<{ netPhp: number | null }> => {
+export const recomputeWorkerDraft = async (
+  args: {
+    companyId: string;
+    periodId: string;
+    periodStart: string;
+    periodEnd: string;
+    workerId: string;
+    /**
+     * Off-cycle BATCH rows are built ONLY from the ledger — no hours, no in-window
+     * sessions, no health allowance (the batch's window is just a label). The
+     * worker's pay is the sum of their off_cycle_pay_items on this batch.
+     */
+    offCycleOnly?: boolean;
+  },
+  deps?: PayrollDeps,
+): Promise<{ netPhp: number | null }> => {
   const offCycleOnly = args.offCycleOnly ?? false;
-  const db = await createServerSupabase();
+  const { db, serviceDb } = deps ?? (await realDeps());
   // RP-20: replay the toggles the period's Calculate ran with. Hardcoding
   // "HA on, 13th off" here rebuilt this one worker under different rules than
   // the rest of the batch (a run with HA off silently regained it; a year-end
@@ -283,7 +325,7 @@ export const recomputeWorkerDraft = async (args: {
   const sessionUnitsByWorkerByDate = offCycleOnly
     ? new Map<string, Map<string, number>>()
     : await fetchSessionUnitsByWorkerByDate(
-        createServiceClient(),
+        serviceDb,
         [args.workerId],
         args.periodStart,
         args.periodEnd,
@@ -355,12 +397,13 @@ export const recomputeWorkerDraft = async (args: {
  * period only when there is something to put in it.
  */
 const reconcilePeriod = async (
-  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  deps: PayrollDeps,
   companyId: string,
   start: string,
   end: string,
   alsoWorkers: readonly string[],
 ): Promise<{ workers: number; closed: boolean }> => {
+  const { db } = deps;
   const approved = await fetchApprovedTime(db, companyId, start, end);
   const wanted = new Set(alsoWorkers);
   for (const e of approved) if (e.workerId) wanted.add(e.workerId);
@@ -382,14 +425,17 @@ const reconcilePeriod = async (
   const saved = await fetchSavedPayments(db, period.id);
 
   if (saved.length === 0) {
-    const result = await calculateDraft({
-      companyId,
-      periodStart: start,
-      periodEnd: end,
-      payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
-      includeHealthAllowance: flags.includeHa,
-      includeThirteenth: flags.includeThirteenth,
-    });
+    const result = await calculateDraft(
+      {
+        companyId,
+        periodStart: start,
+        periodEnd: end,
+        payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
+        includeHealthAllowance: flags.includeHa,
+        includeThirteenth: flags.includeThirteenth,
+      },
+      deps,
+    );
     return { workers: result.rows.length - result.skippedNoRate.length, closed: false };
   }
 
@@ -399,13 +445,16 @@ const reconcilePeriod = async (
   // is normally empty or tiny; hoist the shared reads into a batch variant if a
   // first reconcile of a big period ever feels slow.
   for (const workerId of todo) {
-    await recomputeWorkerDraft({
-      companyId,
-      periodId: period.id,
-      periodStart: start,
-      periodEnd: end,
-      workerId,
-    });
+    await recomputeWorkerDraft(
+      {
+        companyId,
+        periodId: period.id,
+        periodStart: start,
+        periodEnd: end,
+        workerId,
+      },
+      deps,
+    );
   }
   return { workers: todo.length, closed: false };
 };
@@ -416,16 +465,19 @@ const reconcilePeriod = async (
  * on the batch — their hours are exactly what changed, and a full retraction has
  * to shrink or drop the row rather than leave it waiting to be paid.
  */
-export const syncApprovedTimeToDrafts = async (args: {
-  companyId: string;
-  entries: readonly { workerId: string | null; workDate: string }[];
-}): Promise<{ workers: number; closedPeriods: string[] }> => {
-  const db = await createServerSupabase();
+export const syncApprovedTimeToDrafts = async (
+  args: {
+    companyId: string;
+    entries: readonly { workerId: string | null; workDate: string }[];
+  },
+  deps?: PayrollDeps,
+): Promise<{ workers: number; closedPeriods: string[] }> => {
+  const resolved = deps ?? (await realDeps());
   let workers = 0;
   const closedPeriods: string[] = [];
 
   for (const { start, end, workerIds } of groupWorkersByPeriod(args.entries)) {
-    const res = await reconcilePeriod(db, args.companyId, start, end, workerIds);
+    const res = await reconcilePeriod(resolved, args.companyId, start, end, workerIds);
     workers += res.workers;
     if (res.closed) closedPeriods.push(`${start} – ${end}`);
   }
@@ -439,13 +491,16 @@ export const syncApprovedTimeToDrafts = async (args: {
  * by any path that doesn't route through the approve buttons. A no-op once the
  * batch is complete.
  */
-export const reconcileApprovedTime = async (args: {
-  companyId: string;
-  periodStart: string;
-  periodEnd: string;
-}): Promise<{ workers: number }> => {
-  const db = await createServerSupabase();
-  const res = await reconcilePeriod(db, args.companyId, args.periodStart, args.periodEnd, []);
+export const reconcileApprovedTime = async (
+  args: {
+    companyId: string;
+    periodStart: string;
+    periodEnd: string;
+  },
+  deps?: PayrollDeps,
+): Promise<{ workers: number }> => {
+  const resolved = deps ?? (await realDeps());
+  const res = await reconcilePeriod(resolved, args.companyId, args.periodStart, args.periodEnd, []);
   return { workers: res.workers };
 };
 
@@ -472,14 +527,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * Priced with the strict engine cap (salariedCatchUpAmount) at that period's
  * rate and holiday-adjusted expected hours — exactly what the run would have paid.
  */
-export const salariedCatchUpCandidates = async (args: {
-  companyId: string;
-  periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  workerIds?: string[] | undefined;
-}): Promise<CatchUpCandidate[]> => {
-  const db = await createServerSupabase();
+export const salariedCatchUpCandidates = async (
+  args: {
+    companyId: string;
+    periodId: string;
+    periodStart: string;
+    periodEnd: string;
+    workerIds?: string[] | undefined;
+  },
+  deps?: PayrollDeps,
+): Promise<CatchUpCandidate[]> => {
+  const { db } = deps ?? (await realDeps());
   const [entries, roster, rates, holidaysConfig, saved] = await Promise.all([
     fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
@@ -531,5 +589,158 @@ export const salariedCatchUpCandidates = async (args: {
       rateCentavos: rate,
       amountCentavos: amount,
     };
+  });
+};
+
+/* ---------- Lock / unlock ---------- */
+
+/**
+ * Lock a pay period. Throws with the blocking reason: null-net rows, work the
+ * draft doesn't pay (F2/RP-22), negative nets, or unconfirmed RP-18 warnings
+ * (`confirmed` records that the admin saw them). Caller owns admin/company
+ * verification (ADR-0004) and cache revalidation.
+ */
+export const lockRun = async (
+  input: LockPeriodInput,
+  deps?: PayrollDeps,
+): Promise<{ lockedCount: number }> => {
+  const { db, serviceDb } = deps ?? (await realDeps());
+
+  const period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
+  if (!period) throw new Error('Period not found.');
+  if (period.state !== 'open') throw new Error(`Period is already ${period.state}.`);
+
+  const payments = await fetchSavedPayments(db, period.id);
+  const noRate = payments.filter((p) => p.netPhp == null);
+  if (noRate.length > 0) {
+    const names = noRate.map((p) => p.name).join(', ');
+    throw new Error(`${noRate.length} contractor(s) have no rate and cannot be locked: ${names}`);
+  }
+
+  // F2 / RP-22 / RP-34: refuse to lock while work exists in the window that
+  // this draft does not pay — time still pending approval, or approved unpaid
+  // sessions beyond the units the draft captured. Both are silent underpays.
+  // Skip the reads entirely for an off-cycle batch: its window is a label, so
+  // neither set is its work (the helper is exempt for the same reason).
+  const isOffCycle = period.kind === 'off_cycle';
+  let pendingCount = 0;
+  let sessionUnits = new Map<string, number>();
+  let ledgerSessionUnits = new Map<string, number>();
+  if (!isOffCycle) {
+    pendingCount = await countPendingTime(db, input.companyId, input.periodStart, input.periodEnd);
+    // Sessions are CLIENT-company RLS-scoped (invisible to the employer admin)
+    // — service client, restricted to this employer's per-session roster,
+    // which is exactly the set whose gross comes from sessions (ADR-0004).
+    const perSessionWorkerIds = (await fetchRoster(db, input.companyId))
+      .filter((r) => payModelFor(r.contract, r.payBasis) === 'per_session')
+      .map((r) => r.workerId);
+    sessionUnits = await fetchSessionUnitsByWorker(
+      serviceDb,
+      perSessionWorkerIds,
+      input.periodStart,
+      input.periodEnd,
+    );
+    // The ledger part of each row's session count — netted off below so the
+    // RP-22 comparison stays about the WINDOWED sessions the calc summed.
+    ({ perSessionUnitsByWorker: ledgerSessionUnits } = await fetchOffCycleItemsForPeriod(
+      db,
+      input.companyId,
+      period.id,
+      perSessionWorkerIds,
+    ));
+  }
+  const blockedByWork = lockBlockedReason(
+    period.kind ?? 'regular',
+    pendingCount,
+    payments,
+    sessionUnits,
+    ledgerSessionUnits,
+  );
+  if (blockedByWork) throw new Error(blockedByWork);
+
+  // New-2: a negative net (e.g. a deduction larger than earnings) would lock
+  // and pay through as a negative remittance. Refuse — the row must be fixed.
+  const negativeNet = payments.filter((p) => p.netPhp != null && p.netPhp < 0);
+  if (negativeNet.length > 0) {
+    const names = negativeNet.map((p) => p.name).join(', ');
+    throw new Error(
+      `${negativeNet.length} contractor(s) have a negative net and cannot be locked: ${names}`,
+    );
+  }
+
+  // RP-18: inactive contractors and rows with no payout method are legitimate
+  // to pay, but not silently — `confirmed` records that the admin saw them.
+  const warning = lockWarningReason(payments, input.confirmed === true);
+  if (warning) throw new Error(warning);
+
+  // RP-03: no pay date passed — the period already holds the correct arrears
+  // date from its creation; the lock must not overwrite it with period_end.
+  await dbLockPeriod(db, period.id);
+
+  // The calc pays approved in-window sessions by the windowed sum, but nothing
+  // stamped them paid — so they stayed in the pickers and were re-payable
+  // off-cycle in one click. Stamp exactly the set the calc summed. Off-cycle
+  // batches are ledger-only and stamp at add time, so they're skipped here.
+  // ponytail: no transaction across PostgREST calls — the lock is what matters;
+  // a failed stamp surfaces as an error and re-locking is idempotent.
+  if (period.kind !== 'off_cycle') {
+    await markPeriodSessionsPaid(
+      serviceDb,
+      sessionPaidWorkers(payments),
+      period.id,
+      input.periodStart,
+      input.periodEnd,
+      new Date().toISOString(),
+    );
+  }
+
+  const validCount = payments.filter((p) => p.netPhp != null).length;
+
+  await logEvent({
+    companyId: input.companyId,
+    action: 'lock',
+    entity: `${input.periodStart} → ${input.periodEnd}`,
+    detail: { contractors: validCount },
+  });
+
+  return { lockedCount: validCount };
+};
+
+/**
+ * Unlock a locked period back to open, releasing the sessions its lock stamped.
+ * Throws while a Wise draft or salaried catch-up still hangs off the run
+ * (RP-10/RP-12). Caller owns admin/company verification and revalidation.
+ */
+export const unlockRun = async (input: UnlockPeriodInput, deps?: PayrollDeps): Promise<void> => {
+  const { db, serviceDb } = deps ?? (await realDeps());
+
+  const period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
+  if (!period) throw new Error('Period not found.');
+  if (period.state === 'paid') throw new Error('Period is paid — mark all unpaid first.');
+  if (period.state !== 'locked') throw new Error(`Period is not locked (state: ${period.state}).`);
+
+  // RP-10/RP-12: reopening the draft lets a recalc rewrite (or prune) rows,
+  // which silently orphans a live Wise draft and re-pays hours a salaried
+  // catch-up already covered. Refuse while either is outstanding.
+  // Off-cycle batches don't recalc salaried gross, and their period_end is
+  // just "today", so only their Wise drafts matter.
+  const blocked = unlockBlockedReason(
+    await fetchProcessPayments(db, period.id),
+    period.kind === 'off_cycle'
+      ? []
+      : await fetchSalariedCatchUpsForPeriodEnd(db, input.companyId, input.periodEnd),
+  );
+  if (blocked) throw new Error(blocked);
+
+  await dbUnlockPeriod(db, period.id);
+  // Release the sessions the lock stamped so the reopened draft can pay them
+  // again (off-cycle ledger sessions are left held — see the query).
+  await clearPeriodSessionsPaid(serviceDb, period.id);
+
+  await logEvent({
+    companyId: input.companyId,
+    action: 'unlock_period',
+    entity: `${input.periodStart} → ${input.periodEnd}`,
+    detail: { reason: input.reason, previous_state: period.state },
   });
 };

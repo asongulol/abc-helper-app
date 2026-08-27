@@ -7,7 +7,7 @@ import { fetchPeriodSummaries } from '@/db/queries/payroll';
 import { fetchRosterIndex } from '@/db/queries/workers';
 import { fullName } from '@/lib/names';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { getSelectedCompanyId, listCompanies } from '@/server/company';
+import { getSelectedClientIds, getSelectedCompanyId, listCompanies } from '@/server/company';
 
 /**
  * Admin area layout: verifies the signed-in user is an admin (the proxy gate
@@ -19,15 +19,17 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   const admin = await getCurrentAdmin();
   if (!admin) redirect('/login');
 
-  const [allCompanies, selectedCompanyId] = await Promise.all([
+  const [allCompanies, selectedCompanyId, selectedClientIds] = await Promise.all([
     listCompanies(),
     getSelectedCompanyId(),
+    getSelectedClientIds(),
   ]);
   // Single-employer deployment: the admin context is ALWAYS the employer
-  // (Aaron Anderson). Feed the header switcher only the employer so it shows the
-  // tenant name and greys out (no switching into a client). Clients live in
-  // Invoicing + per-entry pickers, not the global switcher.
+  // (Aaron Anderson). The header dropdown is a CLIENT filter (multi-select,
+  // cookie-backed) scoping the people views; the AdminsModal still gets the
+  // employer as its company option.
   const companies = allCompanies.filter((c) => c.id === selectedCompanyId);
+  const clients = allCompanies.filter((c) => c.kind === 'client');
 
   let contractors: { id: string; name: string }[] = [];
   let periods: { id: string; label: string; start: string }[] = [];
@@ -42,7 +44,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
     ]);
     contractors = roster.map((w) => ({
       id: w.workerId,
-      name: fullName(w),
+      // Nickname rides in the label so the palette both shows and matches it.
+      name: w.nickname ? `${fullName(w)} “${w.nickname}”` : fullName(w),
     }));
     periods = periodRows.map((p) => ({
       id: p.id,
@@ -61,7 +64,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         isOwner: admin.isOwner,
       }}
       companies={companies}
-      selectedCompanyId={selectedCompanyId}
+      clients={clients}
+      selectedClientIds={selectedClientIds}
       contractors={contractors}
       periods={periods}
       admins={admins}

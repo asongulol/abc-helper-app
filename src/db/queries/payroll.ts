@@ -86,7 +86,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
   const { data, error } = await db
     .from('worker_companies')
     .select(
-      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible)',
+      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible)',
     )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
@@ -106,6 +106,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
         status: w?.status ?? null,
         payoutMethod: w?.payout_method ?? null,
         healthAllowanceEligible: w?.health_allowance_eligible ?? false,
+        healthAllowanceDate: w?.health_allowance_date ?? null,
         thirteenthMonthEligible: w?.thirteenth_month_eligible ?? false,
       },
     };
@@ -858,23 +859,29 @@ export const findOrCreateOffCycleBatch = async (
   companyId: string,
   today: string,
 ): Promise<OffCycleBatch> => {
-  const { data: open, error: findErr } = await db
-    .from('pay_periods')
-    .select('id, period_start, period_end')
-    .eq('company_id', companyId)
-    .eq('kind', 'off_cycle')
-    .eq('state', 'open')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (findErr) throw new Error(`off-cycle batch lookup: ${findErr.message}`);
-  if (open)
-    return {
-      id: open.id,
-      periodStart: open.period_start,
-      periodEnd: open.period_end,
-      isNew: false,
-    };
+  const findOpen = async (): Promise<OffCycleBatch | null> => {
+    const { data: open, error: findErr } = await db
+      .from('pay_periods')
+      .select('id, period_start, period_end')
+      .eq('company_id', companyId)
+      .eq('kind', 'off_cycle')
+      .eq('state', 'open')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findErr) throw new Error(`off-cycle batch lookup: ${findErr.message}`);
+    return open
+      ? {
+          id: open.id,
+          periodStart: open.period_start,
+          periodEnd: open.period_end,
+          isNew: false,
+        }
+      : null;
+  };
+
+  const open = await findOpen();
+  if (open) return open;
 
   const { data: created, error: insErr } = await db
     .from('pay_periods')
@@ -888,7 +895,15 @@ export const findOrCreateOffCycleBatch = async (
     })
     .select('id, period_start, period_end')
     .single();
-  if (insErr) throw new Error(`off-cycle batch create: ${insErr.message}`);
+  if (insErr) {
+    // pay_periods_off_cycle_open_uniq (migration 41): a concurrent open won the
+    // race between our lookup and this insert — adopt the batch it created.
+    if (insErr.code === '23505') {
+      const raced = await findOpen();
+      if (raced) return raced;
+    }
+    throw new Error(`off-cycle batch create: ${insErr.message}`);
+  }
   return {
     id: created.id,
     periodStart: created.period_start,
@@ -1808,6 +1823,15 @@ export type PaymentDetail = {
   status: Database['public']['Enums']['payment_status'];
   paidAt: string | null;
   note: string | null;
+  // Stored computation inputs for the "How this pay was computed" basis line
+  // (never recomputed).
+  workedHours: number | null;
+  expectedHours: number | null;
+  performanceRatio: number | null;
+  ratePhp: number | null;
+  computedGrossPhp: number | null;
+  units: number | null;
+  perSession: boolean;
 };
 
 /**
@@ -1827,7 +1851,7 @@ export const fetchPaymentDetail = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
+      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
     )
     .eq('id', paymentId)
     .maybeSingle();
@@ -1861,6 +1885,13 @@ export const fetchPaymentDetail = async (
     status: data.status,
     paidAt: data.paid_at,
     note: data.note,
+    workedHours: data.worked_hours == null ? null : Number(data.worked_hours),
+    expectedHours: data.expected_hours == null ? null : Number(data.expected_hours),
+    performanceRatio: data.performance_ratio == null ? null : Number(data.performance_ratio),
+    ratePhp: data.rate_php == null ? null : Number(data.rate_php),
+    computedGrossPhp: data.computed_gross_php == null ? null : Number(data.computed_gross_php),
+    units: data.units == null ? null : Number(data.units),
+    perSession: data.contract === 'PS' || data.pay_basis === 'per_session',
   };
 };
 

@@ -13,6 +13,7 @@
 
 import type { PaymentDetail } from '@/db/queries/payroll';
 import { fmtDate, money } from '@/lib/format';
+import { receiptModel } from '@/lib/pay/receipt';
 
 const cell = {
   borderBottom: '1px solid #ddd',
@@ -28,6 +29,40 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
   const deductionLines = pay.miscItems.filter(
     (m) => m.kind === 'deduction' && Number(m.amount) > 0,
   );
+
+  // "How this pay was computed" basis sentence from the stored inputs (the
+  // shared receipt model; only the basis is used — the table below already
+  // lists the components verbatim per WORKFLOWS.md §10.1). When the saved
+  // gross was manually adjusted away from the computed one, say so instead of
+  // implying the formula equals the printed Gross.
+  const receipt = receiptModel({
+    gross: pay.grossPhp,
+    net: pay.netPhp,
+    method: pay.payoutMethod,
+    workedPay: pay.workedHours,
+    worked: null,
+    pto: 0,
+    expected: pay.expectedHours,
+    ratio: pay.performanceRatio,
+    rate: pay.ratePhp,
+    computedGross: pay.computedGrossPhp,
+    ha: 0,
+    t13: 0,
+    lunch: 0,
+    bonus: 0,
+    offCycle: 0,
+    misc: [],
+    units: pay.units,
+    perSession: pay.perSession,
+    payout: null,
+    payoutCur: null,
+  });
+  const grossBasis =
+    receipt.basis &&
+    Math.abs(receipt.gross - pay.grossPhp) >= 0.01 &&
+    !receipt.basis.includes('shown as saved')
+      ? `${receipt.basis} = ${money(receipt.gross)}, manually adjusted to ${money(pay.grossPhp)}`
+      : receipt.basis;
 
   const labelFor = (kind: string, label?: string) =>
     label?.trim() ||
@@ -79,7 +114,14 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
         </thead>
         <tbody>
           <tr>
-            <td style={cell}>Gross</td>
+            <td style={cell}>
+              Gross
+              {grossBasis && (
+                <div style={{ color: '#677083', fontSize: 11, marginTop: 2 }}>
+                  How it was computed: {grossBasis}
+                </div>
+              )}
+            </td>
             <td style={cellRight}>{money(pay.grossPhp)}</td>
           </tr>
           {pay.haPhp > 0 && (

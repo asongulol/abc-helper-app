@@ -60,6 +60,8 @@ interface TimeApprovalTableProps {
   contractorOptions: ContractorOption[];
   /** worker_id → assigned active CLIENT companies (the invoicing target). */
   assignedClients: Record<string, { id: string; name: string }[]>;
+  /** worker_id → expected hours for this period (salaried only; absent = per-unit). */
+  expectedByWorker?: Record<string, number>;
   onRefresh: () => void;
 }
 
@@ -74,6 +76,7 @@ export const TimeApprovalTable = ({
   unmatchedNames,
   contractorOptions,
   assignedClients,
+  expectedByWorker = {},
   onRefresh,
 }: TimeApprovalTableProps) => {
   const { notify, dismiss } = useToast();
@@ -99,8 +102,8 @@ export const TimeApprovalTable = ({
     .map((e) => e.id);
 
   const visibleRows = reviewRows(rows, onlyPending);
-  // The unpaid view drops the two coverage columns.
-  const bodyColSpan = coverageHidden ? 7 : 9;
+  // The unpaid view drops the two coverage columns and Expected (period-scoped).
+  const bodyColSpan = coverageHidden ? 7 : 10;
 
   const showUndoToast = (undoEntries: ApprovalUndoEntry[], label: string) => {
     if (undoEntries.length === 0) return;
@@ -304,6 +307,14 @@ export const TimeApprovalTable = ({
                 <th scope="col" title="Tracked + PTO — used by payroll">
                   Total (h)
                 </th>
+                {!coverageHidden && (
+                  <th
+                    scope="col"
+                    title="Working days × contracted day-hours (8 FT / 4 PT). Per-unit contractors have none."
+                  >
+                    Expected (h)
+                  </th>
+                )}
                 <th scope="col">Status</th>
                 <th scope="col" />
               </tr>
@@ -452,6 +463,15 @@ export const TimeApprovalTable = ({
                       <td data-label="Total (h)" style={{ fontWeight: 600 }}>
                         {totalH}
                       </td>
+
+                      {/* Expected — salaried contracts only; per-unit have none. */}
+                      {!coverageHidden && (
+                        <td data-label="Expected (h)" style={{ color: 'var(--muted)' }}>
+                          {row.workerId && expectedByWorker[row.workerId] != null
+                            ? expectedByWorker[row.workerId]?.toFixed(2)
+                            : '—'}
+                        </td>
+                      )}
 
                       <td data-label="Status">
                         <Badge tone={statusTone}>{row.approvalStatus}</Badge>

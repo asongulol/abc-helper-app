@@ -13,7 +13,7 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
-import { seedOnboardingProgress } from '@/db/queries/onboarding';
+import { seedAgreementPrefill, seedOnboardingProgress } from '@/db/queries/onboarding';
 import { decryptWorkerTools } from '@/db/queries/secrets';
 import { endEngagement } from '@/db/queries/workers';
 import { humanizeError } from '@/lib/errors';
@@ -79,13 +79,15 @@ const fetchWorkerName = async (workerId: string): Promise<string> => {
 
 /**
  * Best-effort email send. Never throws; logs 'email_failed' on failure.
+ * Returns whether the email actually went out so callers can tell the admin —
+ * a silent no-op (unset SMTP creds) looks identical to success otherwise.
  */
 const trySend = async (
   to: string,
   subject: string,
   html: string,
   context: string,
-): Promise<void> => {
+): Promise<boolean> => {
   const result = await sendEmail({ to, subject, html });
   if (!result.ok) {
     await logEvent({
@@ -94,6 +96,7 @@ const trySend = async (
       detail: { context, error: result.error ?? 'unknown' },
     }).catch(() => {});
   }
+  return result.ok;
 };
 
 /**
@@ -104,7 +107,7 @@ const sendWelcomeEmail = async (
   to: string,
   workerId: string,
   tempPassword: string,
-): Promise<void> => {
+): Promise<boolean> => {
   const name = await fetchWorkerName(workerId);
   const cfg = DEFAULT_HIRE_EMAILS;
   const vars: Record<string, string> = {
@@ -116,7 +119,7 @@ const sendWelcomeEmail = async (
   };
   const subject = mergeTemplate(cfg.welcome.subject, vars);
   const html = mergeTemplate(cfg.welcome.html, vars);
-  await trySend(to, subject, html, 'welcome');
+  return trySend(to, subject, html, 'welcome');
 };
 
 /**
@@ -126,7 +129,7 @@ const sendCredentialsEmail = async (
   to: string,
   workerId: string,
   tempPassword: string,
-): Promise<void> => {
+): Promise<boolean> => {
   const name = await fetchWorkerName(workerId);
   const cfg = DEFAULT_HIRE_EMAILS;
   const vars: Record<string, string> = {
@@ -137,7 +140,7 @@ const sendCredentialsEmail = async (
   };
   const subject = mergeTemplate(cfg.credentials.subject, vars);
   const html = mergeTemplate(cfg.credentials.html, vars);
-  await trySend(to, subject, html, 'credentials');
+  return trySend(to, subject, html, 'credentials');
 };
 
 /**
@@ -164,7 +167,7 @@ const sendWithdrawEmail = async (to: string, workerId: string): Promise<void> =>
 export async function createPortalLogin(args: {
   workerId: string;
   email: string;
-}): Promise<ActionResult<{ tempPassword?: string }>> {
+}): Promise<ActionResult<{ tempPassword?: string; emailSent?: boolean; email?: string }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -228,16 +231,26 @@ export async function createPortalLogin(args: {
     // Seed onboarding_progress so new hire appears in the Onboarding queue.
     await seedOnboardingProgress(svc, args.workerId);
 
+    // Best-effort: derive agreement prefill for workers added outside the hire
+    // wizard so their contracts don't render blank rate/position/company lines
+    // (the wizard path overwrites these with its own values right after).
+    try {
+      await seedAgreementPrefill(svc, args.workerId, admin.userId);
+    } catch {
+      /* non-fatal: admin can fix prefill from the onboarding review panel */
+    }
+
     await logEvent({
       action: 'portal_login.created',
       entity: email,
       detail: { worker_id: args.workerId, by: admin.email },
     });
 
-    // Best-effort welcome email — failure does NOT fail the action.
-    await sendWelcomeEmail(email, args.workerId, pw);
+    // Best-effort welcome email — failure does NOT fail the action, but the
+    // admin is told (the banner offers the temp password as manual fallback).
+    const emailSent = await sendWelcomeEmail(email, args.workerId, pw);
 
-    return { ok: true, data: { tempPassword: pw } };
+    return { ok: true, data: { tempPassword: pw, emailSent, email } };
   } catch (err) {
     return {
       ok: false,
@@ -251,10 +264,14 @@ export async function createPortalLogin(args: {
  * Service client required for auth.admin.updateUserById.
  * Best-effort sends the credentials email after successful reset.
  */
-export async function resetPortalPassword(args: {
-  workerId: string;
-  email?: string;
-}): Promise<ActionResult<{ tempPassword?: string; email?: string; changed?: boolean }>> {
+export async function resetPortalPassword(args: { workerId: string; email?: string }): Promise<
+  ActionResult<{
+    tempPassword?: string;
+    email?: string;
+    changed?: boolean;
+    emailSent?: boolean;
+  }>
+> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
 
@@ -301,9 +318,9 @@ export async function resetPortalPassword(args: {
     });
 
     // Best-effort credentials email to the (possibly corrected) address.
-    if (effectiveEmail) {
-      await sendCredentialsEmail(effectiveEmail, args.workerId, pw);
-    }
+    const emailSent = effectiveEmail
+      ? await sendCredentialsEmail(effectiveEmail, args.workerId, pw)
+      : false;
 
     return {
       ok: true,
@@ -311,6 +328,7 @@ export async function resetPortalPassword(args: {
         tempPassword: pw,
         ...(effectiveEmail ? { email: effectiveEmail } : {}),
         changed,
+        emailSent,
       },
     };
   } catch (err) {
@@ -442,14 +460,17 @@ export async function resendHireEmails(args: {
     const which = args.which ?? 'welcome';
     const pw = args.password?.trim() ?? '';
 
-    const sends: Promise<void>[] = [];
+    const sends: Promise<boolean>[] = [];
     if (which === 'welcome' || which === 'both') {
       sends.push(sendWelcomeEmail(login.email, args.workerId, pw));
     }
     if ((which === 'credentials' || which === 'both') && pw) {
       sends.push(sendCredentialsEmail(login.email, args.workerId, pw));
     }
-    await Promise.all(sends);
+    const results = await Promise.all(sends);
+    if (results.some((sent) => !sent)) {
+      return { ok: false, error: 'The email could not be sent — check the audit log for details.' };
+    }
 
     await logEvent({
       action: 'portal_login.resend_hire_emails',

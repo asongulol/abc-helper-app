@@ -33,6 +33,35 @@ export const nameTokens = (raw: string | null | undefined): string[] => {
     .map((x) => x.toLowerCase());
 };
 
+/** True when `needle` appears in `hay` in order, gaps allowed ("tisha" ⊂ "trisha"). */
+const hasSubsequence = (needle: string, hay: string): boolean => {
+  let pos = 0;
+  for (const ch of needle) {
+    pos = hay.indexOf(ch, pos);
+    if (pos === -1) return false;
+    pos++;
+  }
+  return true;
+};
+
+/**
+ * Loose person-finder match for search boxes (⌘K palette, table filters):
+ * every whitespace token of `q` must appear in at least one of `values` as an
+ * in-order subsequence, so "tisha" finds "Trisha" and "trisha tag" still works.
+ * Case-insensitive; an empty query matches everything.
+ */
+// ponytail: subsequence can over-match on short tokens ("ana" hits many rows);
+// fine for rosters this size — add substring-first ranking if it gets noisy.
+export const matchesQuery = (
+  q: string,
+  values: ReadonlyArray<string | null | undefined>,
+): boolean => {
+  const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+  const hays = values.filter((v): v is string => !!v).map((v) => v.toLowerCase());
+  return tokens.every((t) => hays.some((h) => hasSubsequence(t, h)));
+};
+
 /** STRICT key: all tokens, sorted — word order / extra middle names don't break a match. */
 export const nameKey = (raw: string | null | undefined): string => {
   const t = nameTokens(raw);

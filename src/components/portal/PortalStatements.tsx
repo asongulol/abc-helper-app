@@ -1,18 +1,144 @@
 'use client';
 
 import { useState } from 'react';
-import type { PortalPaymentRow } from '@/db/queries/portal';
+import type { PortalPaymentRow, PortalTimeEntryRow } from '@/db/queries/portal';
+import { periodFor } from '@/lib/dates/periods';
 import { peso } from '@/lib/format';
+import { receiptModel } from '@/lib/pay/receipt';
 
 interface Props {
   payments: PortalPaymentRow[];
+  entries: PortalTimeEntryRow[];
 }
 
 /** Legacy "paid" = sent or reconciled (portal/index.html). */
 const isPaid = (status: string): boolean => status === 'sent' || status === 'reconciled';
 
-export const PortalStatements = ({ payments }: Props) => {
+/** Time entries bucketed into one pay period: totals + per-day rows. */
+type PeriodHours = {
+  worked: number;
+  pto: number;
+  days: Array<{ date: string; tracked: number; pto: number }>;
+};
+
+/**
+ * Bucket own time entries by semi-monthly period start (hours, not seconds).
+ * Approved entries only — the payroll engine pays approved time, so a payslip
+ * that explains the pay must count exactly the same hours. Exported for tests.
+ */
+export const bucketHours = (entries: PortalTimeEntryRow[]): Map<string, PeriodHours> => {
+  const map = new Map<string, PeriodHours>();
+  for (const e of entries) {
+    if (e.approval !== 'approved') continue;
+    const key = periodFor(e.workDate).start;
+    const b = map.get(key) ?? { worked: 0, pto: 0, days: [] };
+    const tracked = e.trackedSeconds / 3600;
+    const pto = e.ptoSeconds / 3600;
+    b.worked += tracked;
+    b.pto += pto;
+    if (tracked > 0 || pto > 0) {
+      const d = b.days.find((x) => x.date === e.workDate);
+      if (d) {
+        d.tracked += tracked;
+        d.pto += pto;
+      } else {
+        b.days.push({ date: e.workDate, tracked, pto });
+      }
+    }
+    map.set(key, b);
+  }
+  for (const b of map.values()) b.days.sort((a, z) => a.date.localeCompare(z.date));
+  return map;
+};
+
+const h = (n: number): string => `${n.toFixed(2)} h`;
+
+/**
+ * Expanded pay-slip breakdown: the shared "How this pay was computed" receipt
+ * (same model as the admin reports history) rendered with portal styling.
+ * Extras are signed and always sum from gross to net; the basis line explains
+ * how the gross was arrived at from the STORED statement inputs. Time entries
+ * for the period feed the worked/PTO split and the per-day hours list.
+ */
+const SlipReceipt = ({ p, hours }: { p: PortalPaymentRow; hours: PeriodHours | undefined }) => {
+  const { basis, gross, extras, paid } = receiptModel(
+    { ...p.receipt, worked: hours ? hours.worked : null, pto: hours?.pto ?? 0 },
+    peso,
+  );
+  const divider = {
+    borderTop: '1px solid var(--line)',
+    marginTop: 4,
+    paddingTop: 6,
+  } as const;
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        borderTop: '1px solid var(--line)',
+        paddingTop: 8,
+      }}
+    >
+      <div className="row" style={{ fontWeight: 600, ...divider }}>
+        <span>Gross pay</span>
+        <span>{peso(gross)}</span>
+      </div>
+      {basis && (
+        <div className="sub" style={{ marginBottom: 4 }}>
+          How it was computed: {basis}
+        </div>
+      )}
+      {extras.map(([label, v], i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: derived static list, never reordered
+        <div className="row" key={`${label}-${i}`}>
+          <span className="k">{label}</span>
+          <span>{v < 0 ? `− ${peso(-v)}` : `+ ${peso(v)}`}</span>
+        </div>
+      ))}
+      <div className="row" style={{ fontWeight: 700, ...divider }}>
+        <span>Net pay</span>
+        <span>{peso(p.netPhp)}</span>
+      </div>
+      {isPaid(p.status) && paid ? (
+        <div className="sub" style={divider}>
+          {paid}
+        </div>
+      ) : (
+        <div className="row" style={divider}>
+          <span className="k">Paid via</span>
+          <span>{p.payoutMethod || '—'}</span>
+        </div>
+      )}
+      {p.paidAt && (
+        <div className="row">
+          <span className="k">Date sent</span>
+          <span>{p.paidAt.slice(0, 10)}</span>
+        </div>
+      )}
+      {hours && hours.days.length > 0 && (
+        <>
+          {/* Owner: column labels only, no worked/PTO sum — the day rows speak for themselves. */}
+          <div className="row" style={{ fontWeight: 600, ...divider }}>
+            <span>Day</span>
+            <span>Hours/PTO</span>
+          </div>
+          {hours.days.map((d) => (
+            <div className="row" key={d.date}>
+              <span className="k">{d.date}</span>
+              <span>
+                {h(d.tracked)}
+                {d.pto > 0 ? ` + ${h(d.pto)} PTO` : ''}
+              </span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+};
+
+export const PortalStatements = ({ payments, entries }: Props) => {
   const [open, setOpen] = useState<string | null>(null);
+  const hoursByPeriod = bucketHours(entries);
 
   if (!payments.length) {
     return <div className="empty">No pay slips yet.</div>;
@@ -87,81 +213,7 @@ export const PortalStatements = ({ payments }: Props) => {
               </div>
               <div className="net">{peso(p.netPhp)}</div>
             </div>
-            {isOpen && (
-              <div
-                style={{
-                  marginTop: 10,
-                  borderTop: '1px solid var(--line)',
-                  paddingTop: 8,
-                }}
-              >
-                <div
-                  className="row"
-                  style={{
-                    fontWeight: 600,
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span>Gross pay</span>
-                  <span>{peso(p.grossPhp)}</span>
-                </div>
-                {p.haPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Health allowance</span>
-                    <span>{peso(p.haPhp)}</span>
-                  </div>
-                )}
-                {p.t13Php > 0 && (
-                  <div className="row">
-                    <span className="k">13th month</span>
-                    <span>{peso(p.t13Php)}</span>
-                  </div>
-                )}
-                {p.pddPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Lunch</span>
-                    <span>{peso(p.pddPhp)}</span>
-                  </div>
-                )}
-                {p.bonusPhp > 0 && (
-                  <div className="row">
-                    <span className="k">Bonus</span>
-                    <span>{peso(p.bonusPhp)}</span>
-                  </div>
-                )}
-                <div
-                  className="row"
-                  style={{
-                    fontWeight: 700,
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span>Net pay</span>
-                  <span>{peso(p.netPhp)}</span>
-                </div>
-                <div
-                  className="row"
-                  style={{
-                    borderTop: '1px solid var(--line)',
-                    marginTop: 4,
-                    paddingTop: 6,
-                  }}
-                >
-                  <span className="k">Paid via</span>
-                  <span>{p.payoutMethod || '—'}</span>
-                </div>
-                {p.paidAt && (
-                  <div className="row">
-                    <span className="k">Date sent</span>
-                    <span>{p.paidAt.slice(0, 10)}</span>
-                  </div>
-                )}
-              </div>
-            )}
+            {isOpen && <SlipReceipt p={p} hours={hoursByPeriod.get(p.periodStart)} />}
           </div>
         );
       })}
