@@ -859,23 +859,29 @@ export const findOrCreateOffCycleBatch = async (
   companyId: string,
   today: string,
 ): Promise<OffCycleBatch> => {
-  const { data: open, error: findErr } = await db
-    .from('pay_periods')
-    .select('id, period_start, period_end')
-    .eq('company_id', companyId)
-    .eq('kind', 'off_cycle')
-    .eq('state', 'open')
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (findErr) throw new Error(`off-cycle batch lookup: ${findErr.message}`);
-  if (open)
-    return {
-      id: open.id,
-      periodStart: open.period_start,
-      periodEnd: open.period_end,
-      isNew: false,
-    };
+  const findOpen = async (): Promise<OffCycleBatch | null> => {
+    const { data: open, error: findErr } = await db
+      .from('pay_periods')
+      .select('id, period_start, period_end')
+      .eq('company_id', companyId)
+      .eq('kind', 'off_cycle')
+      .eq('state', 'open')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (findErr) throw new Error(`off-cycle batch lookup: ${findErr.message}`);
+    return open
+      ? {
+          id: open.id,
+          periodStart: open.period_start,
+          periodEnd: open.period_end,
+          isNew: false,
+        }
+      : null;
+  };
+
+  const open = await findOpen();
+  if (open) return open;
 
   const { data: created, error: insErr } = await db
     .from('pay_periods')
@@ -889,7 +895,15 @@ export const findOrCreateOffCycleBatch = async (
     })
     .select('id, period_start, period_end')
     .single();
-  if (insErr) throw new Error(`off-cycle batch create: ${insErr.message}`);
+  if (insErr) {
+    // pay_periods_off_cycle_open_uniq (migration 41): a concurrent open won the
+    // race between our lookup and this insert — adopt the batch it created.
+    if (insErr.code === '23505') {
+      const raced = await findOpen();
+      if (raced) return raced;
+    }
+    throw new Error(`off-cycle batch create: ${insErr.message}`);
+  }
   return {
     id: created.id,
     periodStart: created.period_start,
