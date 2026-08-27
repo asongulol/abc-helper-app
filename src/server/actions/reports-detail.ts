@@ -465,11 +465,14 @@ export async function getContractorHistory(
       .eq('company_id', companyId);
     if (pe) throw new Error(pe.message);
 
+    // Approved only — the engine pays approved time, so the history's hours
+    // explanation must count the same rows (getUtilization below already does).
     const { data: te, error: te_e } = await db
       .from('time_entries')
       .select('work_date,tracked_seconds,pto_seconds')
       .eq('worker_id', workerId)
       .eq('company_id', companyId)
+      .eq('approval', 'approved')
       .order('work_date', { ascending: true })
       .limit(5000);
     if (te_e) throw new Error(te_e.message);
