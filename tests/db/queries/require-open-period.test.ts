@@ -65,17 +65,15 @@ describe('requireOpenPeriod — refusals (the one closed-period message)', () =>
       { periodId: 'p-1', companyId: 'c-other' },
       'Period not in this company.',
     ],
-  ] as [
-    string,
-    Record<string, unknown>[],
-    RequireOpenPeriodKey,
-    string,
-  ][])('%s', async (_name, rows, key, message) => {
-    const { client, tables } = fakeSupabase(seeded(rows));
-    await expect(requireOpenPeriod(client, key, 'unlock first')).rejects.toThrow(message);
-    // A refusal never writes — the seed is exactly what remains.
-    expect(tables.pay_periods).toHaveLength(rows.length);
-  });
+  ] as [string, Record<string, unknown>[], RequireOpenPeriodKey, string][])(
+    '%s',
+    async (_name, rows, key, message) => {
+      const { client, tables } = fakeSupabase(seeded(rows));
+      await expect(requireOpenPeriod(client, key, 'unlock first')).rejects.toThrow(message);
+      // A refusal never writes — the seed is exactly what remains.
+      expect(tables.pay_periods).toHaveLength(rows.length);
+    },
+  );
 
   it('throws a typed PeriodClosedError so soft callers (reconcile) can branch on it', async () => {
     const { client } = fakeSupabase(seeded([period({ state: 'paid' })]));
@@ -90,20 +88,18 @@ describe('requireOpenPeriod — resolution and create', () => {
     ['window, open regular', [period()], byWindow(), 'regular'],
     ['window, open off-cycle batch', [period({ kind: 'off_cycle' })], byWindow(), 'off_cycle'],
     ['by id, open', [period()], { periodId: 'p-1', companyId: COMPANY }, 'regular'],
-  ] as [
-    string,
-    Record<string, unknown>[],
-    RequireOpenPeriodKey,
-    string,
-  ][])('%s → the ref with its window and kind', async (_name, rows, key, kind) => {
-    const { client } = fakeSupabase(seeded(rows));
-    await expect(requireOpenPeriod(client, key, 'unlock first')).resolves.toEqual({
-      id: 'p-1',
-      kind,
-      periodStart: START,
-      periodEnd: END,
-    });
-  });
+  ] as [string, Record<string, unknown>[], RequireOpenPeriodKey, string][])(
+    '%s → the ref with its window and kind',
+    async (_name, rows, key, kind) => {
+      const { client } = fakeSupabase(seeded(rows));
+      await expect(requireOpenPeriod(client, key, 'unlock first')).resolves.toEqual({
+        id: 'p-1',
+        kind,
+        periodStart: START,
+        periodEnd: END,
+      });
+    },
+  );
 
   it('create "missing": inserts OPEN with the derived ARREARS pay date and the given flags', async () => {
     const { client, tables } = fakeSupabase(seeded([]));
