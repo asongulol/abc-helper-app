@@ -47,6 +47,8 @@ export type RosterRow = {
     status: string | null;
     payoutMethod: string | null;
     healthAllowanceEligible: boolean;
+    /** Annual HA pay date override (month/day only); null = hire anniversary. */
+    healthAllowanceDate?: string | null;
     thirteenthMonthEligible: boolean;
   };
 };
@@ -289,6 +291,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       ...(perUnitGrossOverride !== undefined ? { perUnitGrossOverride } : {}),
       hireDate: w.hireDate,
       healthAllowanceEligible: w.healthAllowanceEligible,
+      healthAllowanceDate: w.healthAllowanceDate ?? null,
       thirteenthMonthEligible: w.thirteenthMonthEligible,
       includeHealthAllowance: (args.includeHealthAllowance ?? true) && !inactive,
       includeThirteenth: (args.includeThirteenth ?? true) && !inactive,
@@ -353,7 +356,15 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       // day, but reading it here would only matter with status history to go
       // with it — see the note on the flags in `build`.
       if (isInactiveWorker(r.worker.status, r.linkStatus)) continue;
-      if (healthAllowance(r.worker.hireDate, args.periodStart, args.periodEnd) <= 0) continue;
+      if (
+        healthAllowance(
+          r.worker.hireDate,
+          args.periodStart,
+          args.periodEnd,
+          r.worker.healthAllowanceDate,
+        ) <= 0
+      )
+        continue;
       build(r.workerId, 0);
     }
   }

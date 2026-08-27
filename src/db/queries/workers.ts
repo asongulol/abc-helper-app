@@ -35,6 +35,8 @@ export type RosterWorker = {
   workerStatus: Database['public']['Enums']['worker_status'];
   payoutMethod: Database['public']['Enums']['payout_method'] | null;
   healthAllowanceEligible: boolean;
+  /** Annual HA pay date override (month/day only); null = hire anniversary. */
+  healthAllowanceDate: string | null;
   thirteenthMonthEligible: boolean;
   // Personal / HR (workers table)
   workEmail: string | null;
@@ -89,7 +91,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = cache(async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -119,6 +121,7 @@ export const fetchRoster = cache(async (db: Db, companyId: string): Promise<Rost
         workerStatus: w.status,
         payoutMethod: w.payout_method,
         healthAllowanceEligible: w.health_allowance_eligible,
+        healthAllowanceDate: w.health_allowance_date,
         thirteenthMonthEligible: w.thirteenth_month_eligible,
         workEmail: w.work_email,
         workNumber: w.work_number,
@@ -206,7 +209,7 @@ export const fetchWorkerLink = async (
   // treat it as "no such worker" so callers' existing notFound() runs.
   if (!uuid().safeParse(workerId).success) return null;
   const SEL2 =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -232,6 +235,7 @@ export const fetchWorkerLink = async (
     workerStatus: w.status,
     payoutMethod: w.payout_method,
     healthAllowanceEligible: w.health_allowance_eligible,
+    healthAllowanceDate: w.health_allowance_date,
     thirteenthMonthEligible: w.thirteenth_month_eligible,
     workEmail: w.work_email,
     workNumber: w.work_number,
@@ -368,6 +372,7 @@ export const updateWorkerProfile = async (
     postal_code: string | null;
     payout_method: Database['public']['Enums']['payout_method'] | null;
     health_allowance_eligible: boolean;
+    health_allowance_date?: string | null;
     thirteenth_month_eligible: boolean;
     work_email?: string | null;
     work_number?: string | null;

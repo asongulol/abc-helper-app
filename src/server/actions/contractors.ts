@@ -150,6 +150,7 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       postal_code: input.postalCode,
       payout_method: input.payoutMethod,
       health_allowance_eligible: input.healthAllowanceEligible,
+      health_allowance_date: input.healthAllowanceDate ?? null,
       thirteenth_month_eligible: input.thirteenthMonthEligible,
       work_email: input.workEmail ?? null,
       work_number: input.workNumber ?? null,
