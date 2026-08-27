@@ -7,6 +7,7 @@
  */
 
 import 'server-only';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { fetchHolidaysConfig } from '@/db/queries/holidays';
@@ -32,6 +33,7 @@ import {
   upsertDraftPayments,
   upsertOpenPeriod,
 } from '@/db/queries/payroll';
+import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
 import type { Centavos } from '@/lib/money';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
@@ -47,6 +49,24 @@ import {
 import { groupWorkersByPeriod } from '@/lib/time/grouping';
 import { logEvent } from '@/server/audit';
 import type { CalculateDraftInput } from '@/types/schemas/payroll';
+
+/**
+ * DB seam: tests pass an in-memory fake (tests/fixtures/supabase-fake.ts);
+ * production callers omit it and get the real clients. The two-client split is
+ * part of the seam on purpose — which reads may bypass RLS stays visible at
+ * every call site (ADR-0004).
+ */
+export type PayrollDeps = {
+  /** RLS user client — every employer-scoped read/write. */
+  db: SupabaseClient<Database>;
+  /** Service-role client — ONLY the cross-company session reads (ADR-0004). */
+  serviceDb: SupabaseClient<Database>;
+};
+
+const realDeps = async (): Promise<PayrollDeps> => ({
+  db: await createServerSupabase(),
+  serviceDb: createServiceClient(),
+});
 
 export type CalculateDraftResult = {
   periodId: string;
@@ -78,8 +98,11 @@ export type CalculateDraftResult = {
  * has approved time (F5); the UI owns the typed-word warning, and the prior rows
  * are returned as `priorSnapshot` so the caller can offer an Undo (F6).
  */
-export const calculateDraft = async (input: CalculateDraftInput): Promise<CalculateDraftResult> => {
-  const db = await createServerSupabase();
+export const calculateDraft = async (
+  input: CalculateDraftInput,
+  deps?: PayrollDeps,
+): Promise<CalculateDraftResult> => {
+  const { db, serviceDb } = deps ?? (await realDeps());
 
   const existing = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
   if (existing && existing.state !== 'open') {
@@ -140,7 +163,7 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
   const sessionUnitsByWorkerByDate = offCycleOnly
     ? new Map<string, Map<string, number>>()
     : await fetchSessionUnitsByWorkerByDate(
-        createServiceClient(),
+        serviceDb,
         roster.map((r) => r.workerId),
         input.periodStart,
         input.periodEnd,
@@ -244,21 +267,24 @@ export const calculateDraft = async (input: CalculateDraftInput): Promise<Calcul
  * the surgical off_cycle_php-only write addSalariedCatchUp uses would double-pay
  * here.
  */
-export const recomputeWorkerDraft = async (args: {
-  companyId: string;
-  periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  workerId: string;
-  /**
-   * Off-cycle BATCH rows are built ONLY from the ledger — no hours, no in-window
-   * sessions, no health allowance (the batch's window is just a label). The
-   * worker's pay is the sum of their off_cycle_pay_items on this batch.
-   */
-  offCycleOnly?: boolean;
-}): Promise<{ netPhp: number | null }> => {
+export const recomputeWorkerDraft = async (
+  args: {
+    companyId: string;
+    periodId: string;
+    periodStart: string;
+    periodEnd: string;
+    workerId: string;
+    /**
+     * Off-cycle BATCH rows are built ONLY from the ledger — no hours, no in-window
+     * sessions, no health allowance (the batch's window is just a label). The
+     * worker's pay is the sum of their off_cycle_pay_items on this batch.
+     */
+    offCycleOnly?: boolean;
+  },
+  deps?: PayrollDeps,
+): Promise<{ netPhp: number | null }> => {
   const offCycleOnly = args.offCycleOnly ?? false;
-  const db = await createServerSupabase();
+  const { db, serviceDb } = deps ?? (await realDeps());
   // RP-20: replay the toggles the period's Calculate ran with. Hardcoding
   // "HA on, 13th off" here rebuilt this one worker under different rules than
   // the rest of the batch (a run with HA off silently regained it; a year-end
@@ -283,7 +309,7 @@ export const recomputeWorkerDraft = async (args: {
   const sessionUnitsByWorkerByDate = offCycleOnly
     ? new Map<string, Map<string, number>>()
     : await fetchSessionUnitsByWorkerByDate(
-        createServiceClient(),
+        serviceDb,
         [args.workerId],
         args.periodStart,
         args.periodEnd,
@@ -355,12 +381,13 @@ export const recomputeWorkerDraft = async (args: {
  * period only when there is something to put in it.
  */
 const reconcilePeriod = async (
-  db: Awaited<ReturnType<typeof createServerSupabase>>,
+  deps: PayrollDeps,
   companyId: string,
   start: string,
   end: string,
   alsoWorkers: readonly string[],
 ): Promise<{ workers: number; closed: boolean }> => {
+  const { db } = deps;
   const approved = await fetchApprovedTime(db, companyId, start, end);
   const wanted = new Set(alsoWorkers);
   for (const e of approved) if (e.workerId) wanted.add(e.workerId);
@@ -382,14 +409,17 @@ const reconcilePeriod = async (
   const saved = await fetchSavedPayments(db, period.id);
 
   if (saved.length === 0) {
-    const result = await calculateDraft({
-      companyId,
-      periodStart: start,
-      periodEnd: end,
-      payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
-      includeHealthAllowance: flags.includeHa,
-      includeThirteenth: flags.includeThirteenth,
-    });
+    const result = await calculateDraft(
+      {
+        companyId,
+        periodStart: start,
+        periodEnd: end,
+        payDate: periodFor(start).payDate, // display-only; the server derives it (RP-66)
+        includeHealthAllowance: flags.includeHa,
+        includeThirteenth: flags.includeThirteenth,
+      },
+      deps,
+    );
     return { workers: result.rows.length - result.skippedNoRate.length, closed: false };
   }
 
@@ -399,13 +429,16 @@ const reconcilePeriod = async (
   // is normally empty or tiny; hoist the shared reads into a batch variant if a
   // first reconcile of a big period ever feels slow.
   for (const workerId of todo) {
-    await recomputeWorkerDraft({
-      companyId,
-      periodId: period.id,
-      periodStart: start,
-      periodEnd: end,
-      workerId,
-    });
+    await recomputeWorkerDraft(
+      {
+        companyId,
+        periodId: period.id,
+        periodStart: start,
+        periodEnd: end,
+        workerId,
+      },
+      deps,
+    );
   }
   return { workers: todo.length, closed: false };
 };
@@ -416,16 +449,19 @@ const reconcilePeriod = async (
  * on the batch — their hours are exactly what changed, and a full retraction has
  * to shrink or drop the row rather than leave it waiting to be paid.
  */
-export const syncApprovedTimeToDrafts = async (args: {
-  companyId: string;
-  entries: readonly { workerId: string | null; workDate: string }[];
-}): Promise<{ workers: number; closedPeriods: string[] }> => {
-  const db = await createServerSupabase();
+export const syncApprovedTimeToDrafts = async (
+  args: {
+    companyId: string;
+    entries: readonly { workerId: string | null; workDate: string }[];
+  },
+  deps?: PayrollDeps,
+): Promise<{ workers: number; closedPeriods: string[] }> => {
+  const resolved = deps ?? (await realDeps());
   let workers = 0;
   const closedPeriods: string[] = [];
 
   for (const { start, end, workerIds } of groupWorkersByPeriod(args.entries)) {
-    const res = await reconcilePeriod(db, args.companyId, start, end, workerIds);
+    const res = await reconcilePeriod(resolved, args.companyId, start, end, workerIds);
     workers += res.workers;
     if (res.closed) closedPeriods.push(`${start} – ${end}`);
   }
@@ -439,13 +475,16 @@ export const syncApprovedTimeToDrafts = async (args: {
  * by any path that doesn't route through the approve buttons. A no-op once the
  * batch is complete.
  */
-export const reconcileApprovedTime = async (args: {
-  companyId: string;
-  periodStart: string;
-  periodEnd: string;
-}): Promise<{ workers: number }> => {
-  const db = await createServerSupabase();
-  const res = await reconcilePeriod(db, args.companyId, args.periodStart, args.periodEnd, []);
+export const reconcileApprovedTime = async (
+  args: {
+    companyId: string;
+    periodStart: string;
+    periodEnd: string;
+  },
+  deps?: PayrollDeps,
+): Promise<{ workers: number }> => {
+  const resolved = deps ?? (await realDeps());
+  const res = await reconcilePeriod(resolved, args.companyId, args.periodStart, args.periodEnd, []);
   return { workers: res.workers };
 };
 
@@ -472,14 +511,17 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * Priced with the strict engine cap (salariedCatchUpAmount) at that period's
  * rate and holiday-adjusted expected hours — exactly what the run would have paid.
  */
-export const salariedCatchUpCandidates = async (args: {
-  companyId: string;
-  periodId: string;
-  periodStart: string;
-  periodEnd: string;
-  workerIds?: string[] | undefined;
-}): Promise<CatchUpCandidate[]> => {
-  const db = await createServerSupabase();
+export const salariedCatchUpCandidates = async (
+  args: {
+    companyId: string;
+    periodId: string;
+    periodStart: string;
+    periodEnd: string;
+    workerIds?: string[] | undefined;
+  },
+  deps?: PayrollDeps,
+): Promise<CatchUpCandidate[]> => {
+  const { db } = deps ?? (await realDeps());
   const [entries, roster, rates, holidaysConfig, saved] = await Promise.all([
     fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
