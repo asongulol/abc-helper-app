@@ -17,7 +17,12 @@ vi.mock('@/server/audit', () => ({ logEvent: async () => {} }));
 vi.mock('@/db/queries/payroll', async (orig) => ({
   ...(await orig<typeof import('@/db/queries/payroll')>()),
   // Off-cycle: the lock skips every session / pending-time read for this kind.
-  findPeriod: async () => ({ id: 'period-1', state: 'open', kind: 'off_cycle' }),
+  requireOpenPeriod: async () => ({
+    id: 'period-1',
+    kind: 'off_cycle',
+    periodStart: '2026-07-16',
+    periodEnd: '2026-07-31',
+  }),
   fetchSavedPayments: async () => [
     { paymentId: 'pay-1', name: 'Ana', netPhp: 1000, payoutMethod: 'wise', inactive: false },
   ],

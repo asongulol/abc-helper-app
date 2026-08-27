@@ -12,6 +12,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { deleteAllStatements, fetchPeriodsOverlapping } from '@/db/queries/payroll';
 import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin, requireAdmin } from '@/server/auth/admin';
@@ -371,20 +372,9 @@ export async function dryRunDeleteRange(args: unknown): Promise<ImportActionResu
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    const { data: pps } = await db
-      .from('pay_periods')
-      .select('period_start, period_end, state')
-      .eq('company_id', companyId)
-      .in('state', ['locked', 'paid'])
-      .lte('period_start', stop)
-      .gte('period_end', start);
-    const overlap: RangeOverlapPeriod[] = (pps ?? [])
-      .filter((p) => p.period_start <= stop && p.period_end >= start)
-      .map((p) => ({
-        periodStart: p.period_start,
-        periodEnd: p.period_end,
-        state: p.state,
-      }));
+    const overlap: RangeOverlapPeriod[] = (
+      await fetchPeriodsOverlapping(db, companyId, start, stop, ['locked', 'paid'])
+    ).map((p) => ({ periodStart: p.periodStart, periodEnd: p.periodEnd, state: p.state }));
 
     return { ok: true, data: { count, preview, overlap } };
   } catch (e) {
@@ -417,14 +407,7 @@ export async function deleteImportRange(
 
     // Re-check overlap server-side; if the range overlaps locked/paid periods,
     // require the typed-DELETE confirmation.
-    const { data: pps } = await db
-      .from('pay_periods')
-      .select('period_start, period_end, state')
-      .eq('company_id', companyId)
-      .in('state', ['locked', 'paid'])
-      .lte('period_start', stop)
-      .gte('period_end', start);
-    const overlap = (pps ?? []).filter((p) => p.period_start <= stop && p.period_end >= start);
+    const overlap = await fetchPeriodsOverlapping(db, companyId, start, stop, ['locked', 'paid']);
     if (overlap.length > 0 && confirmText !== 'DELETE') {
       return fail('Type DELETE to confirm — this range overlaps locked/paid period(s).');
     }
@@ -438,19 +421,11 @@ export async function deleteImportRange(
     if (error) return fail(error.message);
 
     // Clear payments for OPEN periods overlapping the range.
-    let clearedBatches = 0;
-    const { data: openPps } = await db
-      .from('pay_periods')
-      .select('id, period_start, period_end')
-      .eq('company_id', companyId)
-      .eq('state', 'open')
-      .lte('period_start', stop)
-      .gte('period_end', start);
-    const open = (openPps ?? []).filter((p) => p.period_start <= stop && p.period_end >= start);
+    const open = await fetchPeriodsOverlapping(db, companyId, start, stop, ['open']);
     for (const p of open) {
-      await db.from('payments').delete().eq('pay_period_id', p.id);
+      await deleteAllStatements(db, p.id);
     }
-    clearedBatches = open.length;
+    const clearedBatches = open.length;
 
     await logEvent({
       companyId,

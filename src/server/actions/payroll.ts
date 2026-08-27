@@ -32,6 +32,7 @@ import {
   fetchPeriodById,
   fetchPeriodIdsForPayments,
   fetchPeriodState,
+  fetchPeriodStatesByWindow,
   fetchPeriodStatesForPayments,
   fetchPeriodSummaries,
   fetchPreviousRegularPeriodId,
@@ -49,6 +50,7 @@ import {
   markPaymentsUnpaid,
   markSessionsPaid,
   officeToday,
+  requireOpenPeriod,
   restorePaymentRows,
   setPaymentOffCycle,
   setWiseRowLock,
@@ -56,7 +58,6 @@ import {
   syncPeriodPaidState,
   unpayablePeriodReason,
   updatePaymentRow,
-  upsertOpenPeriod,
 } from '@/db/queries/payroll';
 import type { RateHistoryRow } from '@/db/queries/rates';
 import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
@@ -247,15 +248,11 @@ export async function restorePaymentsSnapshot(
 
   try {
     const db = await createServerSupabase();
-    const { data: pp } = await db
-      .from('pay_periods')
-      .select('state, company_id')
-      .eq('id', input.periodId)
-      .maybeSingle();
-    if (!pp || pp.company_id !== input.companyId)
-      return { ok: false, error: 'Period not in this company.' };
-    if (pp.state !== 'open')
-      return { ok: false, error: 'Period is not open — cannot undo recalculation.' };
+    await requireOpenPeriod(
+      db,
+      { periodId: input.periodId, companyId: input.companyId },
+      'cannot undo recalculation',
+    );
 
     const snapshot = await fetchPriorPayments(db, input.periodId);
     if (snapshot.length === 0)
@@ -364,18 +361,14 @@ export async function shouldAutoRecalcDraft(args: {
     return { ok: false, error: 'No access to this company.' };
   try {
     const db = await createServerSupabase();
-    const { data: pp } = await db
-      .from('pay_periods')
-      .select('period_start, period_end, state, kind')
-      .eq('id', args.periodId)
-      .maybeSingle();
+    const pp = await fetchPeriodById(db, args.periodId);
     if (pp?.state !== 'open' || pp.kind !== 'regular') return { ok: true, data: { auto: false } };
     // Already calculated in this app → never auto-recalc again (protects edits).
-    if (await hasInAppRecalc(db, args.companyId, pp.period_start, pp.period_end))
+    if (await hasInAppRecalc(db, args.companyId, pp.periodStart, pp.periodEnd))
       return { ok: true, data: { auto: false } };
     const current = await fetchSavedPayments(db, args.periodId);
     if (current.length === 0) return { ok: true, data: { auto: false } };
-    const prevId = await fetchPreviousRegularPeriodId(db, args.companyId, pp.period_start);
+    const prevId = await fetchPreviousRegularPeriodId(db, args.companyId, pp.periodStart);
     const previous = prevId ? await fetchSavedPayments(db, prevId) : [];
     return { ok: true, data: { auto: isCarriedOverClone(current, previous) } };
   } catch (err) {
@@ -490,15 +483,12 @@ export async function updatePaymentRowAction(
       .maybeSingle();
     if (fe || !cur) return { ok: false, error: 'Payment not found.' };
 
-    // Verify period is open
-    const { data: pp } = await db
-      .from('pay_periods')
-      .select('state, company_id')
-      .eq('id', cur.pay_period_id)
-      .maybeSingle();
-    if (!pp || pp.company_id !== input.companyId)
-      return { ok: false, error: 'Payment not in this company.' };
-    if (pp.state !== 'open') return { ok: false, error: 'Period is not open for editing.' };
+    // Verify period is open (and the payment's period is this company's).
+    await requireOpenPeriod(
+      db,
+      { periodId: cur.pay_period_id, companyId: input.companyId },
+      'unlock it to edit payments',
+    );
 
     // Determine new field values
     const grossCur = phpToCentavos(cur.gross_php) ?? centavos(0);
@@ -686,10 +676,11 @@ export async function deleteAllStatements(
 
   try {
     const db = await createServerSupabase();
-    const period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
-    if (!period) return { ok: false, error: 'Period not found.' };
-    if (period.state !== 'open')
-      return { ok: false, error: `Period is ${period.state} — unlock first.` };
+    const period = await requireOpenPeriod(
+      db,
+      { companyId: input.companyId, start: input.periodStart, end: input.periodEnd },
+      'unlock first',
+    );
 
     const deleted = await dbDeleteAllStatements(db, period.id);
     const released = await releaseSessionsForDeletedStatements(db, period.id);
@@ -968,13 +959,7 @@ export async function getSessionsInLockedPeriods(args: {
     if (error) throw new Error(error.message);
 
     const db = await createServerSupabase();
-    const { data: periods, error: pErr } = await db
-      .from('pay_periods')
-      .select('period_start, period_end, state')
-      .eq('company_id', args.companyId);
-    if (pErr) throw new Error(pErr.message);
-    const stateByRange = new Map<string, string>();
-    for (const p of periods ?? []) stateByRange.set(`${p.period_start}|${p.period_end}`, p.state);
+    const stateByRange = await fetchPeriodStatesByWindow(db, args.companyId);
 
     const out: LockedPeriodSession[] = [];
     for (const r of rows ?? []) {
@@ -1099,18 +1084,16 @@ export async function addOffCyclePayItem(
     const db = await createServerSupabase();
 
     // Resolve the target period — must be open (money columns freeze otherwise).
-    let period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
-    if (period && period.state !== 'open')
-      return { ok: false, error: `Period is ${period.state} — unlock it to add off-cycle pay.` };
-    if (!period) {
-      period = await upsertOpenPeriod(
-        db,
-        input.companyId,
-        input.periodStart,
-        input.periodEnd,
-        periodFor(input.periodStart).payDate,
-      );
-    }
+    const period = await requireOpenPeriod(
+      db,
+      {
+        companyId: input.companyId,
+        start: input.periodStart,
+        end: input.periodEnd,
+        create: 'missing',
+      },
+      'unlock it to add off-cycle pay',
+    );
 
     // Worker must be on the employer roster and paid per-session/per-hour.
     const roster = await fetchRoster(db, input.companyId);
@@ -1348,18 +1331,16 @@ export async function addSalariedCatchUp(
     const db = await createServerSupabase();
 
     // Target period — must be open (money columns freeze otherwise).
-    let period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
-    if (period && period.state !== 'open')
-      return { ok: false, error: `Period is ${period.state} — unlock it to add catch-up pay.` };
-    if (!period) {
-      period = await upsertOpenPeriod(
-        db,
-        input.companyId,
-        input.periodStart,
-        input.periodEnd,
-        periodFor(input.periodStart).payDate,
-      );
-    }
+    const period = await requireOpenPeriod(
+      db,
+      {
+        companyId: input.companyId,
+        start: input.periodStart,
+        end: input.periodEnd,
+        create: 'missing',
+      },
+      'unlock it to add catch-up pay',
+    );
 
     const roster = await fetchRoster(db, input.companyId);
     const link = roster.find((r) => r.workerId === input.workerId);
@@ -1635,8 +1616,8 @@ export async function payApprovedSessions(args: {
  *
  * An EARLIER period is refused outright: a run whose window closed before the
  * work happened cannot be the one that pays for it. A period that is already
- * locked/paid is refused rather than reopened (upsertOpenPeriod would force
- * state back to 'open'); the off-period batch is how you pay into a closed cycle.
+ * locked/paid is refused rather than reopened (requireOpenPeriod guards before
+ * it creates); the off-period batch is how you pay into a closed cycle.
  */
 export async function payApprovedSessionsToNextPeriod(args: {
   companyId: string;
@@ -1675,13 +1656,11 @@ export async function payApprovedSessionsToNextPeriod(args: {
         };
       p = chosen;
     }
-    const existing = await findPeriod(db, args.companyId, p.start, p.end);
-    if (existing && existing.state !== 'open')
-      return {
-        ok: false,
-        error: `The ${p.start} – ${p.end} period is already ${existing.state}. Use the off-period batch to pay these now.`,
-      };
-    const period = await upsertOpenPeriod(db, args.companyId, p.start, p.end, p.payDate);
+    const period = await requireOpenPeriod(
+      db,
+      { companyId: args.companyId, start: p.start, end: p.end, create: 'missing' },
+      'use the off-period batch to pay these now',
+    );
     const res = await addApprovedSessionsToPeriod(
       db,
       args.companyId,
@@ -1808,14 +1787,11 @@ export async function removeOffCyclePayItem(
     const item = await fetchOffCycleItem(db, input.companyId, input.itemId);
     if (!item) return { ok: false, error: 'Off-cycle item not found.' };
 
-    const { data: period } = await db
-      .from('pay_periods')
-      .select('id, state, kind, period_start, period_end')
-      .eq('id', item.payPeriodId)
-      .maybeSingle();
-    if (!period) return { ok: false, error: 'Period not found.' };
-    if (period.state !== 'open')
-      return { ok: false, error: `Period is ${period.state} — unlock it to remove off-cycle pay.` };
+    const period = await requireOpenPeriod(
+      db,
+      { periodId: item.payPeriodId, companyId: input.companyId },
+      'unlock it to remove off-cycle pay',
+    );
 
     await deleteOffCycleItem(db, input.companyId, input.itemId);
     if (item.sessionId) await clearSessionsPaid(createServiceClient(), [item.sessionId]);
@@ -1823,8 +1799,8 @@ export async function removeOffCyclePayItem(
     const { netPhp } = await recomputeWorkerDraft({
       companyId: input.companyId,
       periodId: period.id,
-      periodStart: period.period_start,
-      periodEnd: period.period_end,
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
       workerId: item.workerId,
       offCycleOnly: period.kind === 'off_cycle',
     });

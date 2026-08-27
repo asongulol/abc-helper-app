@@ -10,6 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { cache } from 'react';
 import { selectAll } from '@/db/queries/paging';
 import type { Database, Json } from '@/db/types';
+import { periodFor } from '@/lib/dates/periods';
 import { type Centavos, centavos, majorToMinor, sumMinor } from '@/lib/money';
 import { type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
@@ -658,10 +659,10 @@ export const findPeriod = async (
 export const fetchPeriodById = async (
   db: Db,
   periodId: string,
-): Promise<(PeriodRef & { periodStart: string; periodEnd: string }) | null> => {
+): Promise<(PeriodRef & { companyId: string; periodStart: string; periodEnd: string }) | null> => {
   const { data, error } = await db
     .from('pay_periods')
-    .select('id, state, kind, period_start, period_end')
+    .select('id, state, kind, company_id, period_start, period_end')
     .eq('id', periodId)
     .maybeSingle();
   if (error) throw new Error(`pay_periods: ${error.message}`);
@@ -670,6 +671,7 @@ export const fetchPeriodById = async (
         id: data.id,
         state: data.state,
         kind: data.kind === 'off_cycle' ? 'off_cycle' : 'regular',
+        companyId: data.company_id,
         periodStart: data.period_start,
         periodEnd: data.period_end,
       }
@@ -708,6 +710,94 @@ export const upsertOpenPeriod = async (
     .single();
   if (error) throw new Error(`pay_periods upsert: ${error.message}`);
   return { id: data.id, state: data.state };
+};
+
+/** Thrown when the period exists but is locked/paid — the one closed-period
+ *  message shape. Soft callers (reconcile) branch on it by type. */
+export class PeriodClosedError extends Error {
+  constructor(
+    readonly state: 'locked' | 'paid',
+    fix: string,
+  ) {
+    super(`Period is ${state} — ${fix}.`);
+    this.name = 'PeriodClosedError';
+  }
+}
+
+export type OpenPeriodRef = {
+  id: string;
+  kind: 'regular' | 'off_cycle';
+  periodStart: string;
+  periodEnd: string;
+};
+
+export type RequireOpenPeriodKey =
+  | {
+      /** By id; `companyId` additionally asserts the period belongs to it. */
+      periodId: string;
+      companyId?: string;
+    }
+  | {
+      /** By window. Omitting `create` requires the period to exist. */
+      companyId: string;
+      start: string;
+      end: string;
+      /** 'missing' inserts an open period when absent; 'always' also refreshes
+       *  an existing row's arrears pay_date and calc flags (Calculate — RP-66/RP-20). */
+      create?: 'missing' | 'always';
+      /** Recorded on insert/refresh only; omitted, an existing row keeps its own. */
+      flags?: PeriodCalcFlags;
+    };
+
+/**
+ * The single open-period gate: look the period up, refuse a locked/paid one
+ * with the canonical message (`Period is <state> — <fix>.`), and — by window —
+ * create it with the derived ARREARS pay date (periodFor, RP-66), never a
+ * caller-supplied one. The guard always runs before any upsert, so a closed
+ * period can never be forced back to 'open'.
+ */
+export const requireOpenPeriod = async (
+  db: Db,
+  key: RequireOpenPeriodKey,
+  fix: string,
+): Promise<OpenPeriodRef> => {
+  if ('periodId' in key) {
+    const p = await fetchPeriodById(db, key.periodId);
+    if (!p) throw new Error('Period not found.');
+    if (key.companyId && p.companyId !== key.companyId)
+      throw new Error('Period not in this company.');
+    if (p.state !== 'open') throw new PeriodClosedError(p.state, fix);
+    return {
+      id: p.id,
+      kind: p.kind ?? 'regular',
+      periodStart: p.periodStart,
+      periodEnd: p.periodEnd,
+    };
+  }
+  const existing = await findPeriod(db, key.companyId, key.start, key.end);
+  if (existing && existing.state !== 'open') throw new PeriodClosedError(existing.state, fix);
+  if (existing && key.create !== 'always')
+    return {
+      id: existing.id,
+      kind: existing.kind ?? 'regular',
+      periodStart: key.start,
+      periodEnd: key.end,
+    };
+  if (!existing && !key.create) throw new Error('Period not found.');
+  const made = await upsertOpenPeriod(
+    db,
+    key.companyId,
+    key.start,
+    key.end,
+    periodFor(key.start).payDate,
+    key.flags,
+  );
+  return {
+    id: made.id,
+    kind: existing?.kind ?? 'regular',
+    periodStart: key.start,
+    periodEnd: key.end,
+  };
 };
 
 /** The toggles the period's last Calculate used (RP-20). Falls back to the
@@ -753,6 +843,45 @@ export const fetchThirteenthAccrualPeriods = async (
     .order('period_start');
   if (error) throw new Error(`13th-month periods: ${error.message}`);
   return (data ?? []).map((p) => `${p.period_start} → ${p.period_end}`);
+};
+
+/** Every period's state keyed by `start|end` — maps session dates onto
+ *  locked/paid runs for the approve-flow warning. */
+export const fetchPeriodStatesByWindow = async (
+  db: Db,
+  companyId: string,
+): Promise<Map<string, Database['public']['Enums']['pay_period_state']>> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('period_start, period_end, state')
+    .eq('company_id', companyId);
+  if (error) throw new Error(`pay_periods: ${error.message}`);
+  return new Map((data ?? []).map((p) => [`${p.period_start}|${p.period_end}`, p.state]));
+};
+
+/** Periods in the given states whose window overlaps [start, stop] — the
+ *  imports range-delete guard. */
+export const fetchPeriodsOverlapping = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  stop: string,
+  states: Database['public']['Enums']['pay_period_state'][],
+): Promise<{ id: string; periodStart: string; periodEnd: string; state: PeriodRef['state'] }[]> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .select('id, period_start, period_end, state')
+    .eq('company_id', companyId)
+    .in('state', states)
+    .lte('period_start', stop)
+    .gte('period_end', start);
+  if (error) throw new Error(`pay_periods: ${error.message}`);
+  return (data ?? []).map((p) => ({
+    id: p.id,
+    periodStart: p.period_start,
+    periodEnd: p.period_end,
+    state: p.state,
+  }));
 };
 
 export type OpenDraft = { id: string; periodStart: string; periodEnd: string };

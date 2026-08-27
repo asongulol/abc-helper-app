@@ -37,13 +37,15 @@ import {
   lockWarningReason,
   markPeriodSessionsPaid,
   mergeManualColumns,
+  type OpenPeriodRef,
   type PaymentSnapshotRow,
+  PeriodClosedError,
   pruneDraftPaymentsExcept,
+  requireOpenPeriod,
   savePriorPayments,
   sessionPaidWorkers,
   unlockBlockedReason,
   upsertDraftPayments,
-  upsertOpenPeriod,
 } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
@@ -120,14 +122,30 @@ export const calculateDraft = async (
 ): Promise<CalculateDraftResult> => {
   const { db, serviceDb } = deps ?? (await realDeps());
 
-  const existing = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
-  if (existing && existing.state !== 'open') {
-    throw new Error(`Period is ${existing.state} — unlock it before recalculating.`);
-  }
+  // Ensure the period exists & is open up-front so its id is known for the
+  // off-cycle ledger read below (employer-scoped — RLS user client).
+  // create:'always' re-derives the arrears pay date (RP-66: never trust
+  // input.payDate) and records the toggles this run used, so rebuilding ONE
+  // row later (an off-cycle / catch-up add) replays them instead of guessing
+  // (RP-20).
+  const period = await requireOpenPeriod(
+    db,
+    {
+      companyId: input.companyId,
+      start: input.periodStart,
+      end: input.periodEnd,
+      create: 'always',
+      flags: {
+        includeHa: input.includeHealthAllowance,
+        includeThirteenth: input.includeThirteenth,
+      },
+    },
+    'unlock it before recalculating',
+  );
   // An off-period batch is paid ONLY from its added sessions (the ledger): no
   // tracked hours, no in-window sessions, no health allowance. It still appears
   // on Calculate and recalculates fine — it just rebuilds the ledger rows.
-  const offCycleOnly = existing?.kind === 'off_cycle';
+  const offCycleOnly = period.kind === 'off_cycle';
 
   const [entries, roster, rates, lastMethod, holidaysConfig] = await Promise.all([
     offCycleOnly
@@ -141,23 +159,6 @@ export const calculateDraft = async (
   // Custom observed holidays (or code defaults for unconfigured years) — reduce
   // FT/PT expected hours. THIS is what makes the Configuration editor affect pay.
   const holidays = resolveHolidaysForRange(holidaysConfig, input.periodStart, input.periodEnd);
-
-  // Ensure the period exists & is open up-front so its id is known for the
-  // off-cycle ledger read below (employer-scoped — RLS user client).
-  const period = await upsertOpenPeriod(
-    db,
-    input.companyId,
-    input.periodStart,
-    input.periodEnd,
-    // RP-66: derive the arrears pay date, never trust input.payDate — the schema
-    // canonicalizes the period window but not this field, so a client posting
-    // payDate '2026-12-25' for Mar 1–15 would be stored verbatim and inherited
-    // by payslips, statements, reports and the Wise matcher anchor.
-    periodFor(input.periodStart).payDate,
-    // RP-20: remember the toggles this run used, so rebuilding ONE row later
-    // (an off-cycle / catch-up add) replays them instead of guessing.
-    { includeHa: input.includeHealthAllowance, includeThirteenth: input.includeThirteenth },
-  );
 
   // Off-cycle per-session/per-hour pay lines, re-applied here so they survive
   // recalc (misc_items would not). byWorkerCentavos adds to net; perHourDates
@@ -210,7 +211,7 @@ export const calculateDraft = async (
   });
 
   // F6: snapshot the prior rows (incl. manual overrides) before we overwrite
-  // them, so the caller can offer an Undo. Captured after upsertOpenPeriod so
+  // them, so the caller can offer an Undo. Captured after requireOpenPeriod so
   // period.id is known; before prune/upsert so the old values are still present.
   const priorSnapshot = await fetchPaymentRowsForRestore(db, period.id);
   // RP-23: park it on the period. The Undo used to post these rows back from
@@ -409,18 +410,26 @@ const reconcilePeriod = async (
   for (const e of approved) if (e.workerId) wanted.add(e.workerId);
   if (wanted.size === 0) return { workers: 0, closed: false };
 
-  const existing = await findPeriod(db, companyId, start, end);
-  if (existing && existing.state !== 'open') return { workers: 0, closed: true };
-  if (existing?.kind === 'off_cycle') return { workers: 0, closed: false };
-
   // Created with the same defaults the Calculate card ticks; an existing period
-  // keeps whatever toggles its last run stored (upsert would overwrite them).
-  const period =
-    existing ??
-    (await upsertOpenPeriod(db, companyId, start, end, periodFor(start).payDate, {
-      includeHa: true,
-      includeThirteenth: false,
-    }));
+  // keeps whatever toggles its last run stored (create:'missing' never touches it).
+  let period: OpenPeriodRef;
+  try {
+    period = await requireOpenPeriod(
+      db,
+      {
+        companyId,
+        start,
+        end,
+        create: 'missing',
+        flags: { includeHa: true, includeThirteenth: false },
+      },
+      'approved time waits for the catch-up card',
+    );
+  } catch (e) {
+    if (e instanceof PeriodClosedError) return { workers: 0, closed: true };
+    throw e;
+  }
+  if (period.kind === 'off_cycle') return { workers: 0, closed: false };
   const flags = await fetchPeriodCalcFlags(db, period.id);
   const saved = await fetchSavedPayments(db, period.id);
 
@@ -606,9 +615,11 @@ export const lockRun = async (
 ): Promise<{ lockedCount: number }> => {
   const { db, serviceDb } = deps ?? (await realDeps());
 
-  const period = await findPeriod(db, input.companyId, input.periodStart, input.periodEnd);
-  if (!period) throw new Error('Period not found.');
-  if (period.state !== 'open') throw new Error(`Period is already ${period.state}.`);
+  const period = await requireOpenPeriod(
+    db,
+    { companyId: input.companyId, start: input.periodStart, end: input.periodEnd },
+    'unlock it before locking again',
+  );
 
   const payments = await fetchSavedPayments(db, period.id);
   const noRate = payments.filter((p) => p.netPhp == null);
