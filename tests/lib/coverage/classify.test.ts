@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { classifyCoverage } from '@/lib/coverage/classify';
+import { classifyCoverage, coverageStatus } from '@/lib/coverage/classify';
 
 const exp = (workerId: string, expectedHours: number, workerName = workerId) => ({
   workerId,
   workerName,
   expectedHours,
+});
+
+const act = (workerId: string, workedHours: number, ptoHours = 0) => ({
+  workerId,
+  workedHours,
+  ptoHours,
 });
 
 describe('classifyCoverage', () => {
@@ -17,8 +23,8 @@ describe('classifyCoverage', () => {
   it('flags under-coverage below the threshold, not above', () => {
     const expectations = [exp('low', 40), exp('ok', 40)];
     const actuals = [
-      { workerId: 'low', workedHours: 10 }, // 25% → under
-      { workerId: 'ok', workedHours: 30 }, // 75% → fine
+      act('low', 10), // 25% → under
+      act('ok', 30), // 75% → fine
     ];
     const gaps = classifyCoverage(expectations, actuals, 0.6);
     expect(gaps.map((g) => g.workerId)).toEqual(['low']);
@@ -31,19 +37,70 @@ describe('classifyCoverage', () => {
   });
 
   it('treats meeting/exceeding the target as covered', () => {
-    const gaps = classifyCoverage([exp('w1', 40)], [{ workerId: 'w1', workedHours: 40 }]);
-    expect(gaps).toHaveLength(0);
-    const over = classifyCoverage([exp('w2', 40)], [{ workerId: 'w2', workedHours: 50 }]);
-    expect(over).toHaveLength(0);
+    expect(classifyCoverage([exp('w1', 40)], [act('w1', 40)])).toHaveLength(0);
+    expect(classifyCoverage([exp('w2', 40)], [act('w2', 50)])).toHaveLength(0);
   });
 
   it('sorts worst (lowest ratio) first', () => {
     const expectations = [exp('a', 40), exp('b', 40)];
     const actuals = [
-      { workerId: 'a', workedHours: 8 }, // 20%
-      { workerId: 'b', workedHours: 0 }, // 0%
+      act('a', 8), // 20%
+      act('b', 0), // 0%
     ];
     const gaps = classifyCoverage(expectations, actuals, 0.6);
     expect(gaps.map((g) => g.workerId)).toEqual(['b', 'a']);
+  });
+});
+
+describe('classifyCoverage — PTO counts toward coverage', () => {
+  it('does not flag a contractor who was on approved leave all period', () => {
+    expect(classifyCoverage([exp('w1', 40)], [act('w1', 0, 40)])).toHaveLength(0);
+  });
+
+  it('does not flag when worked + PTO clears the target, though worked alone would not', () => {
+    expect(classifyCoverage([exp('w1', 40)], [act('w1', 8)], 0.6)).toHaveLength(1); // 20%
+    expect(classifyCoverage([exp('w1', 40)], [act('w1', 8, 24)], 0.6)).toHaveLength(0); // 80%
+  });
+
+  it('still flags when worked + PTO is short, and reports the two separately', () => {
+    const gaps = classifyCoverage([exp('w1', 40)], [act('w1', 4, 4)], 0.6); // 20%
+    expect(gaps[0]).toMatchObject({
+      kind: 'under_coverage',
+      workedHours: 4,
+      ptoHours: 4,
+      ratio: 0.2,
+    });
+  });
+
+  it('zero_time means nothing at all recorded — PTO-only is under_coverage, not zero', () => {
+    const [gap] = classifyCoverage([exp('w1', 40)], [act('w1', 0, 4)], 0.6);
+    expect(gap).toMatchObject({ kind: 'under_coverage', workedHours: 0, ptoHours: 4 });
+  });
+});
+
+describe('coverageStatus — the one predicate /overview and /coverage share', () => {
+  it('separates "nothing to measure" from "on track" — 0 expected is never all-clear', () => {
+    expect(coverageStatus(0, 0)).toBe('not_measured');
+    expect(coverageStatus(0, 120)).toBe('not_measured');
+    expect(coverageStatus(86, 86)).toBe('on_track');
+  });
+
+  it('agrees with classifyCoverage on every boundary it drives', () => {
+    const cases: Array<[number, number]> = [
+      [40, 0],
+      [40, 4],
+      [40, 23.9],
+      [40, 24],
+      [40, 40],
+      [0, 0],
+    ];
+    for (const [expected, covered] of cases) {
+      const status = coverageStatus(expected, covered);
+      const gaps = classifyCoverage([exp('w1', expected)], [act('w1', covered)], 0.6);
+      // A gap kind from the classifier must be exactly what the pill shows; no
+      // gap must mean the pill says on_track or not_measured, never a gap kind.
+      expect(gaps[0]?.kind ?? status).toBe(status);
+      expect(gaps).toHaveLength(status === 'on_track' || status === 'not_measured' ? 0 : 1);
+    }
   });
 });

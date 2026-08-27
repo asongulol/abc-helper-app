@@ -377,6 +377,76 @@ describe('F7: HA-eligible worker with zero approved time in their anniversary pe
     expect(draft?.net_php).toBe(20000);
   });
 
+  it('does NOT conjure the allowance for a contractor who has ended', () => {
+    // The repro: hire date 2019-07-09, both statuses "ended", rate never
+    // end-dated — a recalc of the anniversary period paid ₱20,000 to someone
+    // who had already left.
+    const ended = roster({
+      workerId: 'w1',
+      linkStatus: 'ended',
+      worker: { ...haWorker.worker, status: 'ended' },
+    });
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution: attributeTimeEntries([], [ended]),
+      roster: [ended],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('pays the gross but no allowance to a non-active contractor who worked (RP-18)', () => {
+    // Work done is owed, so the row still surfaces and still pays — flagged
+    // inactive so the lock makes the admin acknowledge it. The allowances are
+    // for people currently engaged, so both go to zero: HA even in the
+    // anniversary period, 13th even on a salaried rate.
+    const worked = [entry({ workerId: 'w1', workDate: '2026-06-02', trackedSeconds: 8 * 3600 })];
+    for (const status of ['inactive', 'ended'] as const) {
+      const off = roster({
+        workerId: 'w1',
+        linkStatus: status,
+        worker: { ...haWorker.worker, status, thirteenthMonthEligible: true },
+      });
+      const rows = buildStatements({
+        periodStart: '2026-06-01',
+        periodEnd: '2026-06-15',
+        attribution: attributeTimeEntries(worked, [off]),
+        roster: [off],
+        rates: haRates,
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.inactive).toBe(true);
+      expect(rows[0]?.result.gross ?? 0).toBeGreaterThan(0);
+      expect(rows[0]?.result.healthAllowance).toBe(0);
+      expect(rows[0]?.result.thirteenth).toBe(0);
+      expect(rows[0]?.result.net).toBe(rows[0]?.result.gross);
+    }
+  });
+
+  it('still pays both allowances to an active contractor in the same period', () => {
+    // The control: same period, same rate, same worked time — only the status
+    // differs, so the zeroes above are the status rule and not a broken engine.
+    const active = roster({
+      workerId: 'w1',
+      worker: { ...haWorker.worker, thirteenthMonthEligible: true },
+    });
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution: attributeTimeEntries(
+        [entry({ workerId: 'w1', workDate: '2026-06-02', trackedSeconds: 8 * 3600 })],
+        [active],
+      ),
+      roster: [active],
+      rates: haRates,
+    });
+    expect(rows[0]?.inactive).toBe(false);
+    expect(rows[0]?.result.healthAllowance).toBe(2_000_000);
+    // (monthsWorkedInYear 2026-01-01 → 2026-06-15 = 5 + 14/30) / 12 × ₱15,000
+    expect(rows[0]?.result.thirteenth).toBe(683_333);
+  });
+
   it('does NOT build a zero-time row outside the anniversary period', () => {
     const attribution = attributeTimeEntries([], [haWorker]);
     const rows = buildStatements({

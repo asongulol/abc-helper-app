@@ -123,6 +123,9 @@ export interface WorkerMatchIndex {
   byLoose: Map<string, string>;
   /** workerId → WorkerLink[] (all links for that worker) */
   byWorker: Map<string, WorkerLink[]>;
+  /** Name keys shared by two different workers — never resolved (see below). */
+  ambiguousStrict: Set<string>;
+  ambiguousLoose: Set<string>;
 }
 
 /**
@@ -136,6 +139,18 @@ export function buildWorkerMatchIndex(links: WorkerLink[]): WorkerMatchIndex {
   const byStrict = new Map<string, string>();
   const byLoose = new Map<string, string>();
   const byWorker = new Map<string, WorkerLink[]>();
+  const ambiguousStrict = new Set<string>();
+  const ambiguousLoose = new Set<string>();
+
+  // First write wins, but a SECOND worker on the same key marks it ambiguous:
+  // "Maria A. Santos" and "Maria L. Santos" both loose-key to "maria santos",
+  // and first-wins would silently pay one for the other's tracked hours.
+  const put = (map: Map<string, string>, ambiguous: Set<string>, key: string, workerId: string) => {
+    if (!key) return;
+    const prior = map.get(key);
+    if (prior === undefined) map.set(key, workerId);
+    else if (prior !== workerId) ambiguous.add(key);
+  };
 
   for (const l of links) {
     const existing = byWorker.get(l.workerId) ?? [];
@@ -149,31 +164,36 @@ export function buildWorkerMatchIndex(links: WorkerLink[]): WorkerMatchIndex {
     const realName = [l.workerFirstName, l.workerLastName].filter(Boolean).join(' ');
     const sources = [l.hubstaffName, realName].filter(Boolean) as string[];
     for (const src of sources) {
-      const sk = nameKey(src);
-      const lk = looseKey(src);
-      if (sk && !byStrict.has(sk)) byStrict.set(sk, l.workerId);
-      if (lk && !byLoose.has(lk)) byLoose.set(lk, l.workerId);
+      put(byStrict, ambiguousStrict, nameKey(src), l.workerId);
+      put(byLoose, ambiguousLoose, looseKey(src), l.workerId);
     }
   }
 
-  return { byId, byStrict, byLoose, byWorker };
+  return { byId, byStrict, byLoose, byWorker, ambiguousStrict, ambiguousLoose };
 }
 
 /**
  * Match a Hubstaff user to a worker id.
- * Returns null for unmatched users; the caller adds them to the unmatched set.
+ * Returns null for unmatched AND for ambiguous names — the caller adds them to
+ * the unmatched set, where an admin resolves them, rather than guessing which
+ * of two same-named workers gets paid. The numeric id is never ambiguous.
  */
 export function matchWorker(
   uid: number,
   hubstaffName: string,
   idx: WorkerMatchIndex,
 ): string | null {
-  return (
-    idx.byId.get(uid) ??
-    idx.byStrict.get(nameKey(hubstaffName)) ??
-    idx.byLoose.get(looseKey(hubstaffName)) ??
-    null
-  );
+  const byId = idx.byId.get(uid);
+  if (byId !== undefined) return byId;
+
+  const sk = nameKey(hubstaffName);
+  const strict = idx.byStrict.get(sk);
+  // A shared strict key means the loose key is shared too — don't fall through.
+  if (strict !== undefined) return idx.ambiguousStrict.has(sk) ? null : strict;
+
+  const lk = looseKey(hubstaffName);
+  if (idx.ambiguousLoose.has(lk)) return null;
+  return idx.byLoose.get(lk) ?? null;
 }
 
 // ─── Decided-entry guards ──────────────────────────────────────────────────
@@ -269,31 +289,39 @@ export function transformActivities(opts: {
   const matchedWorkerIds = new Set<string>();
   const idsToPersist: TransformResult['idsToPersist'] = [];
   const divergences: TransformResult['divergences'] = [];
+  let skippedDecided = 0;
 
   for (const [uid, dayMap] of accum) {
     const hubstaffName = nameById.get(uid) ?? `user ${uid}`;
     const workerId = matchWorker(uid, hubstaffName, idx);
 
-    if (!workerId) {
+    if (workerId) {
+      matchedWorkerIds.add(workerId);
+
+      // If the link matched by name but has no hubstaff_user_id stored,
+      // record for the caller to persist back (id-first on next run).
+      const workerLinks = idx.byWorker.get(workerId) ?? [];
+      const linkForCo = workerLinks.find((l) => l.companyId === targetCompanyId);
+      if (linkForCo && linkForCo.hubstaffUserId == null) {
+        idsToPersist.push({
+          workerId,
+          companyId: targetCompanyId,
+          hubstaffUserId: uid,
+        });
+      }
+    } else {
+      // Unmatched users still get their rows written, with worker_id = null
+      // (docs/pay-pipeline.md:65-66). Dropping them left a new hire's tracked
+      // hours nowhere but a dismissable toast; persisted, they show in /time's
+      // unmatched banner and attributeTimeEntries picks them up by name the
+      // moment the worker profile exists. Unattributed rows are never paid.
       unmatched.add(hubstaffName);
-      continue;
     }
 
-    matchedWorkerIds.add(workerId);
-
-    // If the link matched by name but has no hubstaff_user_id stored,
-    // record for the caller to persist back (id-first on next run).
-    const workerLinks = idx.byWorker.get(workerId) ?? [];
-    const linkForCo = workerLinks.find((l) => l.companyId === targetCompanyId);
-    if (linkForCo && linkForCo.hubstaffUserId == null) {
-      idsToPersist.push({
-        workerId,
-        companyId: targetCompanyId,
-        hubstaffUserId: uid,
-      });
-    }
-
-    const src = resolveSourceName(targetCompanyId, workerId, hubstaffName, canonical);
+    // No worker → no prior rows to hit, so the Hubstaff display name IS the key.
+    const src = workerId
+      ? resolveSourceName(targetCompanyId, workerId, hubstaffName, canonical)
+      : hubstaffName;
 
     for (const day of days) {
       const d = dayMap.get(day);
@@ -305,9 +333,11 @@ export function transformActivities(opts: {
       // seconds differ from the frozen stored value, surface a divergence (F3)
       // so an admin can re-open + correct. The row is still NOT overwritten.
       const srcKey = `${targetCompanyId}|${src}|${day}`;
-      const workerKey = `${targetCompanyId}|${workerId}|${day}`;
-      if (decidedBySrc.has(srcKey) || decidedByWorker.has(workerKey)) {
-        const stored = decidedValues?.get(srcKey) ?? decidedValues?.get(workerKey);
+      const workerKey = workerId ? `${targetCompanyId}|${workerId}|${day}` : null;
+      if (decidedBySrc.has(srcKey) || (workerKey !== null && decidedByWorker.has(workerKey))) {
+        skippedDecided += 1;
+        const stored =
+          decidedValues?.get(srcKey) ?? (workerKey ? decidedValues?.get(workerKey) : undefined);
         if (stored && (stored.tracked !== tracked || stored.pto !== pto)) {
           divergences.push({
             workerId,
@@ -345,6 +375,7 @@ export function transformActivities(opts: {
     matchedWorkerIds: [...matchedWorkerIds],
     idsToPersist,
     divergences,
+    skippedDecided,
   };
 }
 

@@ -32,6 +32,12 @@ export type MiscItem = {
   label?: string;
   amount?: number | string | null;
   hours?: number | string | null;
+  /** Client this line is billed to (companies.id), when the operator attributed
+   *  it to one. Queryable data rather than prose inside `label`. */
+  companyId?: string | null;
+  /** Where the line came from. 'reconcile' = attributed to explain the gap
+   *  between the payroll net and what Wise actually sent. */
+  source?: string | null;
 };
 
 /**
@@ -53,6 +59,15 @@ export type ContractorRowInput = {
   workedSeconds: number;
   /** Σ approved session units in the period — used for per-session pay. */
   sessionUnits?: number;
+  /**
+   * Σ session units already paid through the off-cycle ledger on this period.
+   * DISPLAY ONLY — never priced here (their money arrives via
+   * `offCycleEarnings`, which is folded into gross below). They exist because
+   * `sessionUnits` counts only sessions with `paid_at IS NULL`, so a session
+   * this row pays off-cycle leaves the count the moment it is stamped paid —
+   * and the row then showed "2 sessions" against a gross covering 5.
+   */
+  offCycleSessionUnits?: number;
   contract: Contract;
   /**
    * worker_companies.pay_basis — the per-unit discriminator for a `PHS`
@@ -76,8 +91,25 @@ export type ContractorRowInput = {
   perUnitGrossOverride?: Centavos | null;
   hireDate?: string | null;
   healthAllowanceEligible?: boolean;
+  /** Annual HA pay date override (month/day only); null/absent = hire anniversary. */
+  healthAllowanceDate?: string | null;
   thirteenthMonthEligible?: boolean;
-  /** Batch-level toggles (legacy `includeHA` / `include13`). */
+  /**
+   * Batch-level toggles (legacy `includeHA` / `include13`).
+   *
+   * RP-29 — caller precondition on `includeThirteenth`: the accrual is STATELESS
+   * (see `thirteenthAccrual`), so every run with the toggle on accrues afresh.
+   * Recalculating the SAME period is safe — the payment row is recomputed, not
+   * added to. Turning it on for a SECOND period accrues a second time, and this
+   * function cannot detect that: a once-per-year guard needs to know what other
+   * periods already accrued, which is cross-period state a pure function does not
+   * have. The guard therefore lives where the toggle is applied per period:
+   * `calculateDraft` reads `fetchThirteenthAccrualPeriods` and returns
+   * `thirteenthAlsoOn`, which the shell renders as a warning banner. It warns
+   * rather than blocks — a 13th month paid in two installments is normal.
+   * `includeHealthAllowance` does NOT have this shape: `healthAllowance` is
+   * anniversary-period-gated, so extra runs pay 0.
+   */
   includeHealthAllowance?: boolean;
   includeThirteenth?: boolean;
   /** Manual per-period add-ons (0 on a fresh calculate; edited in the UI). */
@@ -180,7 +212,12 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
 
   const ha =
     (input.includeHealthAllowance ?? true) && input.healthAllowanceEligible
-      ? healthAllowance(input.hireDate, input.periodStart, input.periodEnd)
+      ? healthAllowance(
+          input.hireDate,
+          input.periodStart,
+          input.periodEnd,
+          input.healthAllowanceDate,
+        )
       : zeroCentavos();
   // 13th-month accrues on a salaried period rate only — never for a per-unit
   // (or unset) PHS/PH/PS engagement, whose rate is not a monthly salary.
@@ -232,7 +269,12 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
     payBasisUnset,
     // Parity with the originals' payments.units: the approved session COUNT for a
     // per_session row, null otherwise (per_hour keeps its quantity in workedHours).
-    units: model === 'per_session' ? (input.sessionUnits ?? 0) : null,
+    // Includes the off-cycle-paid sessions whose money `perUnit` folded into
+    // gross above, so units × rate still checks out against the gross shown.
+    units:
+      model === 'per_session'
+        ? (input.sessionUnits ?? 0) + (input.offCycleSessionUnits ?? 0)
+        : null,
   };
 };
 

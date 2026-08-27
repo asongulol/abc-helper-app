@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { TimeEntryRaw } from '@/lib/time/grouping';
-import { groupByContractor, periodStats } from '@/lib/time/grouping';
+import { groupByContractor, groupWorkersByPeriod, periodStats } from '@/lib/time/grouping';
 
 const makeEntry = (
   overrides: Partial<TimeEntryRaw> & Pick<TimeEntryRaw, 'sourceName' | 'workDate'>,
@@ -106,5 +106,34 @@ describe('periodStats', () => {
     expect(stats.periodDays).toBe(15);
     expect(stats.workingDays).toBeGreaterThan(0);
     expect(stats.workingDays).toBeLessThanOrEqual(11);
+  });
+
+  // Jul 1–15 2026 has 11 weekdays, but Jul 4 (Sat) is observed Fri Jul 3.
+  it('excludes observed holidays: Jul 1–15 2026 is 10 working days', () => {
+    const stats = periodStats('2026-07-01', '2026-07-15');
+    expect(stats.periodDays).toBe(15);
+    expect(stats.workingDays).toBe(10);
+  });
+
+  it('honours a company override that clears the year', () => {
+    expect(periodStats('2026-07-01', '2026-07-15', []).workingDays).toBe(11);
+  });
+});
+
+describe('groupWorkersByPeriod', () => {
+  it('buckets days into their pay period and dedupes workers', () => {
+    const groups = groupWorkersByPeriod([
+      { workerId: 'w1', workDate: '2026-07-02' },
+      { workerId: 'w1', workDate: '2026-07-14' },
+      { workerId: 'w2', workDate: '2026-07-15' },
+      { workerId: 'w1', workDate: '2026-07-16' },
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toEqual({ start: '2026-07-01', end: '2026-07-15', workerIds: ['w1', 'w2'] });
+    expect(groups[1]).toEqual({ start: '2026-07-16', end: '2026-07-31', workerIds: ['w1'] });
+  });
+
+  it('drops unmatched import names — nobody to pay yet', () => {
+    expect(groupWorkersByPeriod([{ workerId: null, workDate: '2026-07-02' }])).toEqual([]);
   });
 });

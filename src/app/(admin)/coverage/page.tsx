@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { CoverageClient } from '@/components/coverage/CoverageClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchCoverageRoster } from '@/db/queries/coverage';
+import { previousPeriod } from '@/lib/dates/periods';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getSelectedCompanyId } from '@/server/company';
 
@@ -24,8 +25,13 @@ export default async function CoveragePage() {
     );
   }
 
-  const supabase = await createServerSupabase();
-  const roster = await fetchCoverageRoster(supabase, companyId);
+  // Same arrears period the Overview measures gaps against — this page is where
+  // its "Under expected hours → Investigate" link lands, so it must show that
+  // period, not the one still accruing.
+  const period = previousPeriod(new Date().toISOString().slice(0, 10));
 
-  return <CoverageClient companyId={companyId} roster={roster} />;
+  const supabase = await createServerSupabase();
+  const roster = await fetchCoverageRoster(supabase, companyId, period.start, period.end);
+
+  return <CoverageClient companyId={companyId} roster={roster} period={period} />;
 }

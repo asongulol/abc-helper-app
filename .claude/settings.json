@@ -1,0 +1,13 @@
+{
+	"permissions": {
+		"defaultMode": "bypassPermissions",
+		"allow": [
+			"Bash(cd /Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app && echo \"=== WORKFLOWS §1.2 ===\" && grep -n \"§1.2\\\\|1.2 \\\\|Add a contractor\\\\|Hire\\\\|hire\\\\|wizard\\\\|Wizard\\\\|Step 1\\\\|Step 2\\\\|Step 3\\\\|countersign\\\\|canCountersign\" docs/WORKFLOWS.md | head -50)",
+			"Read(//Users/olivertrinidad/Documents/GitHub/abc-work-app-payroll-wis-hubstaff-app/**)",
+			"Bash(xargs sed -n '1,60p')",
+			"Bash(pnpm exec *)",
+			"Bash(pnpm typecheck *)",
+			"Bash(gh pr merge:*)"
+		]
+	}
+}

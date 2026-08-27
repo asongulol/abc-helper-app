@@ -4,16 +4,15 @@
  */
 
 import type { ReportPaymentRow, ReportPeriodRow } from '@/db/queries/reports';
+import { csvEscape } from '@/lib/csv';
 import { centavosToPhp } from '@/lib/format';
 
-const esc = (v: string | number | null | undefined): string => {
-  const s = v == null ? '' : String(v);
-  // Wrap in quotes if it contains a comma, double-quote, or newline
-  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-};
+// Re-exported for the Reports and Invoicing screens, which build CSVs inline
+// and already import from here.
+export { csvEscape };
 
-const row = (cells: (string | number | null | undefined)[]): string => cells.map(esc).join(',');
+const row = (cells: (string | number | null | undefined)[]): string =>
+  cells.map(csvEscape).join(',');
 
 const phpFmt = (centavos: number): string => centavosToPhp(centavos).toFixed(2);
 

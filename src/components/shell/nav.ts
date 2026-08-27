@@ -14,6 +14,20 @@ export interface NavItem {
 export interface NavGroup {
   label: string;
   items: ReadonlyArray<NavItem>;
+  /**
+   * Fully prefetch this group's routes (`<Link prefetch>`), so clicking between
+   * them paints from the client cache instead of waiting on a round trip.
+   *
+   * Every admin route is dynamic, and Next's DEFAULT prefetch on a dynamic route
+   * fetches only the `loading.tsx` boundary — which is exactly why these tabs
+   * showed an instant spinner and then stalled. `prefetch` fetches the whole
+   * route and parks it in the client cache's `static` bucket (5 min).
+   *
+   * Only on the tabs an admin cycles through mid-run. It is NOT free: each
+   * prefetched route is a real server render, fired whenever the sidebar is on
+   * screen. Three cheap pages is a fair trade; fifteen would not be.
+   */
+  prefetch?: true;
 }
 
 /**
@@ -37,6 +51,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
   },
   {
     label: 'Run payroll',
+    prefetch: true,
     items: [
       { href: '/time', label: 'Time & Approval', icon: '⏱' },
       { href: '/payroll', label: 'Calculate', icon: '🧮' },

@@ -8,18 +8,13 @@
  * exactly as stored — no float accumulation.
  */
 
+import { escapeCsvField } from '@/lib/csv';
+
 export type BankExportRow = {
   name: string;
   /** PHP major units (from the DB). */
   netPhp: number;
   payoutMethod: string | null;
-};
-
-const escapeCsvField = (v: string): string => {
-  if (v.includes(',') || v.includes('"') || v.includes('\n')) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
 };
 
 /**

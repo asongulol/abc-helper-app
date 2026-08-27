@@ -6,8 +6,8 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { selectAll } from '@/db/queries/paging';
 import type { Database } from '@/db/types';
-import { isDateInAnyPeriod } from '@/lib/dates/periods';
 import type { RosterLink } from '@/lib/time/attribution';
 import type { TimeEntryRaw } from '@/lib/time/grouping';
 
@@ -15,6 +15,9 @@ type Db = SupabaseClient<Database>;
 
 const ENTRY_COLS =
   'id, worker_id, source_name, work_date, tracked_seconds, pto_seconds, approval, import_batch_id';
+
+/** Unpaid review also needs the approval timestamp — see isEntryUnpaid. */
+const UNPAID_COLS = `${ENTRY_COLS}, approved_at`;
 
 const mapEntry = (t: {
   id: string;
@@ -45,45 +48,380 @@ export const fetchPeriodEntries = async (
   start: string,
   end: string,
 ): Promise<TimeEntryRaw[]> => {
-  const { data, error } = await db
-    .from('time_entries')
-    .select(ENTRY_COLS)
-    .eq('company_id', companyId)
-    .gte('work_date', start)
-    .lte('work_date', end)
-    .order('work_date', { ascending: true });
-  if (error) throw new Error(`time_entries: ${error.message}`);
-  return (data ?? []).map(mapEntry);
+  // Paged: an unbounded select is silently truncated at the server's max_rows
+  // and the missing days just don't get paid (63 contractors × 16 days ≈ 1,008).
+  const rows = await selectAll(
+    (from, to) =>
+      db
+        .from('time_entries')
+        .select(ENTRY_COLS)
+        .eq('company_id', companyId)
+        .gte('work_date', start)
+        .lte('work_date', end)
+        .order('work_date', { ascending: true })
+        // id breaks work_date ties: paging needs a total order or rows can
+        // shuffle between pages and be missed.
+        .order('id', { ascending: true })
+        .range(from, to),
+    'time_entries',
+  );
+  return rows.map(mapEntry);
+};
+
+/**
+ * Is this entry still owed money?
+ *
+ * Pending is always unpaid. Approved is unpaid while its day sits in an OPEN
+ * period — and ALSO when it was approved AFTER that period was locked, because
+ * the run that closed the period never saw it. That case is real: the nightly
+ * sync keeps writing new pending rows into a locked window (the decided-day
+ * guard only protects rows that already exist) and approving isn't lock-blocked.
+ *
+ * Unknown timing — a pre-F8 row with no approved_at, or a period locked without
+ * a locked_at stamp — counts as PAID: resurrecting an old approved row into the
+ * unpaid view risks paying it a second time, which is the worse failure.
+ */
+export const isEntryUnpaid = (
+  entry: { approval: string; workDate: string; approvedAt: string | null },
+  closed: readonly PeriodLockInfo[],
+): boolean => {
+  if (entry.approval === 'pending') return true;
+  const period = closed.find(
+    (p) => entry.workDate >= p.periodStart && entry.workDate <= p.periodEnd,
+  );
+  if (!period) return true;
+  if (!period.lockedAt || !entry.approvedAt) return false;
+  return Date.parse(entry.approvedAt) > Date.parse(period.lockedAt);
 };
 
 /**
  * Cross-period "unpaid" review set:
  *   - every PENDING entry (any date), plus
- *   - APPROVED entries whose work_date is NOT inside a locked or paid pay period
- *     (i.e. still in an OPEN period — not yet on a run, not yet paid).
+ *   - APPROVED entries not yet covered by a run (see isEntryUnpaid).
  * Rejected entries are excluded by the query.
  */
 export const fetchUnpaidEntries = async (db: Db, companyId: string): Promise<TimeEntryRaw[]> => {
-  const { data, error } = await db
-    .from('time_entries')
-    .select(ENTRY_COLS)
-    .eq('company_id', companyId)
-    .in('approval', ['pending', 'approved'])
-    .order('work_date', { ascending: true });
-  if (error) throw new Error(`time_entries unpaid: ${error.message}`);
-  const rows = (data ?? []).map(mapEntry);
-  const first = rows[0];
-  const last = rows[rows.length - 1];
-  if (!first || !last) return rows;
+  // Paged — this one is cross-period, so it hits the row cap soonest, and a
+  // truncated read would also narrow the lock lookup below.
+  const raw = await selectAll(
+    (from, to) =>
+      db
+        .from('time_entries')
+        .select(UNPAID_COLS)
+        .eq('company_id', companyId)
+        .in('approval', ['pending', 'approved'])
+        .order('work_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    'time_entries unpaid',
+  );
+  const first = raw[0];
+  const last = raw[raw.length - 1];
+  if (!first || !last) return [];
 
-  // Approved time already sitting in a locked/paid period is on a run / already
-  // paid — drop it. Pending stays regardless of the period's state. Rows are
-  // ordered by work_date, so first/last bound the span.
-  const closed = await fetchLockedPeriodsInRange(db, companyId, first.workDate, last.workDate);
-  return rows.filter((r) => r.approval === 'pending' || !isDateInAnyPeriod(r.workDate, closed));
+  // Rows are ordered by work_date, so first/last bound the span.
+  const closed = await fetchLockedPeriodsInRange(db, companyId, first.work_date, last.work_date);
+  return raw
+    .filter((r) =>
+      isEntryUnpaid(
+        { approval: r.approval, workDate: r.work_date, approvedAt: r.approved_at },
+        closed,
+      ),
+    )
+    .map(mapEntry);
 };
 
-/** Upsert time entries (conflict on company_id,source_name,work_date). */
+export interface ExistingDay {
+  sourceName: string;
+  workDate: string;
+  approval: 'pending' | 'approved' | 'rejected';
+  trackedSeconds: number;
+  ptoSeconds: number;
+  clientCompanyId: string | null;
+  importBatchId: string | null;
+}
+
+/** Everything already stored for a set of source_names over a date window.
+ *  Feeds the CSV decided-day guard and the "add hours" merge below. */
+export const fetchExistingDays = async (
+  db: Db,
+  companyId: string,
+  sourceNames: string[],
+  dateMin: string,
+  dateMax: string,
+): Promise<ExistingDay[]> => {
+  if (sourceNames.length === 0) return [];
+  const rows = await selectAll(
+    (from, to) =>
+      db
+        .from('time_entries')
+        .select(
+          'source_name, work_date, approval, tracked_seconds, pto_seconds, client_company_id, import_batch_id',
+        )
+        .eq('company_id', companyId)
+        .in('source_name', sourceNames)
+        .gte('work_date', dateMin)
+        .lte('work_date', dateMax)
+        .order('work_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    'time_entries existing days',
+  );
+  return rows.map((r) => ({
+    sourceName: r.source_name,
+    workDate: r.work_date,
+    approval: r.approval as ExistingDay['approval'],
+    trackedSeconds: Number(r.tracked_seconds ?? 0),
+    ptoSeconds: Number(r.pto_seconds ?? 0),
+    clientCompanyId: r.client_company_id,
+    importBatchId: r.import_batch_id,
+  }));
+};
+
+/** work_date for a set of entry ids, scoped to the company (edit-total bounds
+ *  check — also means an id from another company simply isn't found). */
+export const fetchEntryDates = async (
+  db: Db,
+  companyId: string,
+  ids: string[],
+): Promise<Array<{ id: string; workDate: string }>> => {
+  if (ids.length === 0) return [];
+  const { data, error } = await db
+    .from('time_entries')
+    .select('id, work_date')
+    .eq('company_id', companyId)
+    .in('id', ids);
+  if (error) throw new Error(`entry dates: ${error.message}`);
+  return (data ?? []).map((r) => ({ id: r.id, workDate: r.work_date }));
+};
+
+/** Latest day that has any imported time — null on a company with none yet.
+ *  Drives the default review period (see nextUnimportedPeriod). */
+export const fetchLastImportedDate = async (db: Db, companyId: string): Promise<string | null> => {
+  const { data, error } = await db
+    .from('time_entries')
+    .select('work_date')
+    .eq('company_id', companyId)
+    .order('work_date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`last imported date: ${error.message}`);
+  return data?.work_date ?? null;
+};
+
+/** Pending entries OUTSIDE the shown period. The default period is now the next
+ *  unimported one, so hours still awaiting approval in an earlier period would
+ *  otherwise sit off-screen with nothing pointing at them. */
+export const countPendingOutside = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  end: string,
+): Promise<number> => {
+  const { count, error } = await db
+    .from('time_entries')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .eq('approval', 'pending')
+    .or(`work_date.lt.${start},work_date.gt.${end}`);
+  if (error) throw new Error(`pending outside period: ${error.message}`);
+  return count ?? 0;
+};
+
+const dayKey = (sourceName: string, workDate: string) => `${sourceName}|${workDate}`;
+
+export interface CsvRow {
+  sourceName: string;
+  workerId: string | null;
+  workDate: string;
+  trackedSeconds: number;
+  activityPct: number | null;
+}
+
+/**
+ * Re-key CSV rows onto what the SERVER resolved, before anything is written.
+ *
+ * Two problems, one pass:
+ *  - RP-46: the client sends its own name→workerId mapping, so a tampered
+ *    payload could attribute hours to any worker. `resolved` is built from the
+ *    company roster server-side; the client's workerId is discarded.
+ *  - RP-38: after a Hubstaff rename, re-importing the CSV inserts a SECOND set
+ *    of rows for the same days under the new name. Both name-match to the same
+ *    worker and attributeTimeEntries sums both — the worker is paid twice.
+ *    Rewriting source_name to the one that worker's existing rows already use
+ *    makes the upsert hit the same (company_id, source_name, work_date) key,
+ *    the way the Hubstaff API path already does via resolveSourceName.
+ *
+ * Rows whose name resolves to nobody keep their name and land unattributed
+ * (worker_id null) — same contract as an unmatched Hubstaff sync row.
+ */
+export const canonicalizeCsvRows = (
+  rows: readonly CsvRow[],
+  resolved: ReadonlyMap<string, { workerId: string; sourceName: string }>,
+): CsvRow[] => {
+  const out = new Map<string, CsvRow>();
+  for (const r of rows) {
+    const hit = resolved.get(r.sourceName);
+    const row: CsvRow = {
+      ...r,
+      workerId: hit?.workerId ?? null,
+      sourceName: hit?.sourceName ?? r.sourceName,
+    };
+    const k = dayKey(row.sourceName, row.workDate);
+    const prior = out.get(k);
+    // Both spellings of one worker in the SAME file now collapse onto one key.
+    // Sum them: a duplicate key inside one upsert batch is a hard Postgres
+    // error ("cannot affect row a second time"), and dropping one loses hours.
+    if (prior) prior.trackedSeconds += row.trackedSeconds;
+    else out.set(k, row);
+  }
+  return [...out.values()];
+};
+
+/**
+ * Which CSV rows may actually be written. Two rules apply in BOTH modes:
+ *   - a zero-second day carries no information, and in overwrite mode writing
+ *     one blanks the day's PTO and re-opens its approval;
+ *   - never overwrite a day a human already decided — the same invariant the
+ *     Hubstaff sync enforces via fetchExistingDecided, which the CSV path
+ *     bypassed entirely.
+ * Skip mode additionally drops every key that already exists at all.
+ */
+export const csvRowsToWrite = <
+  T extends { sourceName: string; workDate: string; trackedSeconds: number },
+>(
+  rows: readonly T[],
+  existing: readonly { sourceName: string; workDate: string; approval: string }[],
+  mode: 'upsert' | 'skip',
+): T[] => {
+  const blocked = new Set(
+    existing
+      .filter((e) => mode === 'skip' || e.approval !== 'pending')
+      .map((e) => dayKey(e.sourceName, e.workDate)),
+  );
+  return rows.filter((r) => r.trackedSeconds > 0 && !blocked.has(dayKey(r.sourceName, r.workDate)));
+};
+
+export interface MergedDay {
+  sourceName: string;
+  workDate: string;
+  trackedSeconds: number;
+  ptoSeconds: number;
+  clientCompanyId: string | null;
+  importBatchId: string | null;
+}
+
+/**
+ * "Add hours" merge. The button says Add: hours SUM onto whatever the day
+ * already holds, and its PTO / client attribution survive — a plain upsert on
+ * (company_id, source_name, work_date) replaced all three, which mattered
+ * because total mode always targets periodStart and that day usually exists.
+ *
+ * A day someone already approved or rejected is refused rather than silently
+ * re-opened; its date comes back in `decided` for the caller to surface.
+ */
+export const mergeAddedHours = (
+  additions: readonly {
+    sourceName: string;
+    workDate: string;
+    seconds: number;
+    clientCompanyId: string | null;
+    importBatchId: string;
+  }[],
+  existing: readonly ExistingDay[],
+): { merged: MergedDay[]; decided: string[] } => {
+  const byKey = new Map(existing.map((e) => [dayKey(e.sourceName, e.workDate), e]));
+  const merged: MergedDay[] = [];
+  const decided: string[] = [];
+  for (const a of additions) {
+    const prior = byKey.get(dayKey(a.sourceName, a.workDate));
+    if (prior && prior.approval !== 'pending') {
+      decided.push(a.workDate);
+      continue;
+    }
+    merged.push({
+      sourceName: a.sourceName,
+      workDate: a.workDate,
+      trackedSeconds: (prior?.trackedSeconds ?? 0) + a.seconds,
+      ptoSeconds: prior?.ptoSeconds ?? 0,
+      clientCompanyId: a.clientCompanyId ?? prior?.clientCompanyId ?? null,
+      // ponytail: a merged day keeps the batch id it already had, so deleting
+      // the new "import" can't rip out hours it didn't add. The added hours are
+      // therefore not separately undoable — upgrade path is a per-add adjustment
+      // row instead of summing in place.
+      importBatchId: prior?.importBatchId ?? a.importBatchId,
+    });
+  }
+  return { merged, decided: [...new Set(decided)].sort() };
+};
+
+/** Entry dates that fall outside the period being edited. The "all unpaid" view
+ *  aggregates several periods into one row and edit-total writes the whole
+ *  total onto the earliest entry — across periods that moves hours into a
+ *  closed period and zeroes the current one. */
+export const datesOutsidePeriod = (
+  entries: readonly { workDate: string }[],
+  start: string,
+  end: string,
+): string[] =>
+  [
+    ...new Set(
+      entries.filter((e) => e.workDate < start || e.workDate > end).map((e) => e.workDate),
+    ),
+  ].sort();
+
+/**
+ * The last day these workers may still log time at these companies, keyed
+ * "companyId|workerId". Absent = the engagement is open, nothing to bound.
+ *
+ * Scoped to the link the hours land on, not to the worker: everyone is linked
+ * to the employer company (which holds all time) AND to the client companies
+ * they are assigned to. `endAssignment` closes ONE client link and leaves the
+ * employer link open, so those hours keep importing — which is the point, they
+ * are still working. `terminateContractor` closes every link, employer
+ * included, and that is the one that stops the clock.
+ *
+ * An 'ended' link that was never stamped (the #79 drift, written before
+ * `endEngagement` existed) has no last day to measure against and is left
+ * alone: dropping real tracked hours on a guess is the expensive mistake here.
+ */
+const fetchLastWorkDays = async (
+  db: Db,
+  rows: readonly { company_id: string; worker_id: string | null }[],
+): Promise<Map<string, string>> => {
+  const workerIds = [
+    ...new Set(rows.map((r) => r.worker_id).filter((id): id is string => id !== null)),
+  ];
+  if (workerIds.length === 0) return new Map();
+
+  // Only closed links can bound anything, so let Postgres drop the rest — in
+  // the common case (nobody has left) this comes back empty.
+  const { data, error } = await db
+    .from('worker_companies')
+    .select('company_id, worker_id, ended_on')
+    .not('ended_on', 'is', null)
+    .in('company_id', [...new Set(rows.map((r) => r.company_id))])
+    .in('worker_id', workerIds);
+  if (error) throw new Error(`worker_companies (ended_on): ${error.message}`);
+
+  const lastDays = new Map<string, string>();
+  for (const link of data ?? []) {
+    if (link.ended_on) lastDays.set(`${link.company_id}|${link.worker_id}`, link.ended_on);
+  }
+  return lastDays;
+};
+
+/**
+ * Upsert time entries (conflict on company_id,source_name,work_date), dropping
+ * any day that falls AFTER the worker's last day. Returns how many were dropped
+ * so the caller can say so — a silent drop reads as "imported 0 entries".
+ *
+ * The guard lives here because this is the one door into time_entries: the CSV
+ * upload, the Hubstaff sync and manual hours all come through it, and Hubstaff
+ * keeps reporting a departed contractor's org membership long after they leave.
+ * Everything up to and including the last day still imports, still approves and
+ * still pays — arrears are owed whether or not someone is still engaged.
+ */
 export const upsertTimeEntries = async (
   db: Db,
   rows: Array<{
@@ -99,25 +437,64 @@ export const upsertTimeEntries = async (
     /** CLIENT these hours bill to (invoicing attribution); null = unattributed. */
     client_company_id?: string | null;
   }>,
-): Promise<void> => {
-  if (rows.length === 0) return;
-  const { error } = await db
-    .from('time_entries')
-    .upsert(rows, { onConflict: 'company_id,source_name,work_date' });
-  if (error) throw new Error(`time_entries upsert: ${error.message}`);
+): Promise<number> => {
+  if (rows.length === 0) return 0;
+
+  const lastDays = await fetchLastWorkDays(db, rows);
+  // An unattributed row (worker_id null) carries no last day and is written as
+  // it always was — it is never paid until someone attributes it anyway.
+  const keep = rows.filter((r) => {
+    const lastDay =
+      r.worker_id === null ? undefined : lastDays.get(`${r.company_id}|${r.worker_id}`);
+    return lastDay === undefined || r.work_date <= lastDay;
+  });
+
+  if (keep.length > 0) {
+    const { error } = await db
+      .from('time_entries')
+      .upsert(keep, { onConflict: 'company_id,source_name,work_date' });
+    if (error) throw new Error(`time_entries upsert: ${error.message}`);
+  }
+  return rows.length - keep.length;
 };
 
-/** Fetch the current approval values for a set of ids (for undo snapshots). */
+/**
+ * Fetch the current approval values for a set of ids (for undo snapshots).
+ *
+ * Company-scoped like every write below it: RLS already blocks a genuine
+ * cross-tenant read, but a multi-company admin can pass company A with company
+ * B's ids, and then the action logs the change against the wrong company. The
+ * count the caller gets back is what makes that visible.
+ */
+/**
+ * Prior approval values for a set of ids, plus the worker + day each row belongs
+ * to — the approve → Calculate transfer needs those to know which batch to build
+ * (see groupWorkersByPeriod). They come free: it's the same row read.
+ */
 export const fetchApprovalSnapshot = async (
   db: Db,
+  companyId: string,
   ids: string[],
-): Promise<Array<{ id: string; approval: 'pending' | 'approved' | 'rejected' }>> => {
+): Promise<
+  Array<{
+    id: string;
+    approval: 'pending' | 'approved' | 'rejected';
+    workerId: string | null;
+    workDate: string;
+  }>
+> => {
   if (ids.length === 0) return [];
-  const { data, error } = await db.from('time_entries').select('id, approval').in('id', ids);
+  const { data, error } = await db
+    .from('time_entries')
+    .select('id, approval, worker_id, work_date')
+    .eq('company_id', companyId)
+    .in('id', ids);
   if (error) throw new Error(`approval snapshot: ${error.message}`);
   return (data ?? []).map((r) => ({
     id: r.id,
     approval: r.approval as 'pending' | 'approved' | 'rejected',
+    workerId: r.worker_id,
+    workDate: r.work_date,
   }));
 };
 
@@ -130,6 +507,7 @@ export const fetchApprovalSnapshot = async (
  */
 export const updateApproval = async (
   db: Db,
+  companyId: string,
   ids: string[],
   status: 'approved' | 'rejected',
   actorId?: string | null,
@@ -141,14 +519,53 @@ export const updateApproval = async (
   const CHUNK = 100;
   for (let i = 0; i < ids.length; i += CHUNK) {
     const chunk = ids.slice(i, i + CHUNK);
-    const { error } = await db.from('time_entries').update(patch).in('id', chunk);
+    const { error } = await db
+      .from('time_entries')
+      .update(patch)
+      .eq('company_id', companyId)
+      .in('id', chunk);
     if (error) throw new Error(`approval update: ${error.message}`);
   }
+};
+
+/**
+ * Send a window's APPROVED time back to the approval queue (pending), scoped to
+ * one worker when given. Returns how many entries moved.
+ *
+ * This is what makes removing a statement stick. Approved hours belong on the
+ * Calculate batch (see reconcilePeriod), so deleting the row while the hours
+ * stay approved just means the next visit to Calculate rebuilds it — the
+ * removal silently reverts. Un-approving is the retraction: the hours land back
+ * on Time & Approval to be edited or re-approved, and reconcile has nothing to
+ * pull.
+ *
+ * Rejected entries are left alone — they were already decided against, and
+ * re-opening them would resurrect work someone deliberately threw out.
+ */
+export const unapproveWindow = async (
+  db: Db,
+  companyId: string,
+  start: string,
+  end: string,
+  workerId?: string,
+): Promise<number> => {
+  let q = db
+    .from('time_entries')
+    .update({ approval: 'pending', approved_at: null, approved_by: null })
+    .eq('company_id', companyId)
+    .eq('approval', 'approved')
+    .gte('work_date', start)
+    .lte('work_date', end);
+  if (workerId) q = q.eq('worker_id', workerId);
+  const { data, error } = await q.select('id');
+  if (error) throw new Error(`unapprove window: ${error.message}`);
+  return (data ?? []).length;
 };
 
 /** Restore approval values for a set of id+status pairs (used by undo). */
 export const restoreApprovals = async (
   db: Db,
+  companyId: string,
   entries: Array<{ id: string; approval: 'pending' | 'approved' | 'rejected' }>,
 ): Promise<void> => {
   const CHUNK = 100;
@@ -176,7 +593,11 @@ export const restoreApprovals = async (
               approved_at: null,
               approved_by: null,
             };
-      const { error } = await db.from('time_entries').update(patch).in('id', ids);
+      const { error } = await db
+        .from('time_entries')
+        .update(patch)
+        .eq('company_id', companyId)
+        .in('id', ids);
       if (error) throw new Error(`restore approvals: ${error.message}`);
     }
   }
@@ -185,12 +606,14 @@ export const restoreApprovals = async (
 /** Update tracked_seconds for a set of ids (used by edit-total). */
 export const updateTrackedSeconds = async (
   db: Db,
+  companyId: string,
   updates: Array<{ id: string; trackedSeconds: number }>,
 ): Promise<void> => {
   for (const u of updates) {
     const { error } = await db
       .from('time_entries')
       .update({ tracked_seconds: u.trackedSeconds })
+      .eq('company_id', companyId)
       .eq('id', u.id);
     if (error) throw new Error(`tracked_seconds update: ${error.message}`);
   }
@@ -218,7 +641,9 @@ export const deleteByBatch = async (
 export const fetchRosterLinks = async (db: Db, companyId: string): Promise<RosterLink[]> => {
   const { data, error } = await db
     .from('worker_companies')
-    .select('worker_id, hubstaff_name, status, workers(first_name, middle_name, last_name, status)')
+    .select(
+      'worker_id, hubstaff_name, status, contract, workers(first_name, middle_name, last_name, status)',
+    )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
   return (data ?? []).map((l) => {
@@ -232,6 +657,7 @@ export const fetchRosterLinks = async (db: Db, companyId: string): Promise<Roste
       middleName: w?.middle_name ?? null,
       lastName: w?.last_name ?? null,
       isInactive: linkInactive || workerInactive,
+      contract: l.contract,
     };
   });
 };
@@ -337,6 +763,8 @@ export interface PeriodLockInfo {
   periodStart: string;
   periodEnd: string;
   state: 'open' | 'locked' | 'paid';
+  /** When the period was locked — the cutoff isEntryUnpaid compares against. */
+  lockedAt: string | null;
 }
 
 /** Check whether any locked/paid periods overlap the given date range. */
@@ -348,7 +776,7 @@ export const fetchLockedPeriodsInRange = async (
 ): Promise<PeriodLockInfo[]> => {
   const { data, error } = await db
     .from('pay_periods')
-    .select('id, period_start, period_end, state')
+    .select('id, period_start, period_end, state, locked_at')
     .eq('company_id', companyId)
     .in('state', ['locked', 'paid'])
     .lte('period_start', dateMax)
@@ -359,6 +787,7 @@ export const fetchLockedPeriodsInRange = async (
     periodStart: p.period_start,
     periodEnd: p.period_end,
     state: p.state as PeriodLockInfo['state'],
+    lockedAt: p.locked_at,
   }));
 };
 

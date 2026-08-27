@@ -10,14 +10,17 @@
  *   wise_recipient_uuid  text    the manual Batch-CSV UUID (separate; Wise API
  *                                 never returns it)
  *
- * Identifiers only — never bank details. No money moves here. Admin-gated;
- * writes via the service client (same pattern as wisePullRecipientIds).
+ * Identifiers only — never bank details. No money moves here. But changing a
+ * recipient changes WHERE the money lands, so the writes are OWNER-only (RP-56),
+ * matching wiseDraft/wiseBatch; the read/lookup paths stay admin. Writes go via
+ * the service client (same pattern as wisePullRecipientIds).
  */
 
 import { createServiceClient } from '@/db/clients/service';
 import { humanizeError } from '@/lib/errors';
+import { otherHolderName } from '@/lib/wise/recipient-match';
 import { logEvent } from '@/server/audit';
-import { requireAdmin } from '@/server/auth/admin';
+import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
   explainMissingRecipient,
   serviceGetRecipient,
@@ -76,6 +79,33 @@ async function readWorker(db: ReturnType<typeof createServiceClient>, workerId: 
   return data as WorkerWiseRow;
 }
 
+/**
+ * RP-55: the partial unique indexes (migration 00000000000031) are the real
+ * guard against two contractors sharing one Wise recipient. This pre-check runs
+ * first only so the owner sees WHO holds it instead of a duplicate-key error.
+ * Returns the blocking message, or null when the write is safe.
+ *
+ * ponytail: covers the two indexed columns (default id + batch UUID) — the same
+ * id sitting unused in another worker's wise_recipients LIST isn't caught until
+ * they try to make it their default. Index the jsonb list if that ever bites.
+ */
+async function recipientTaken(
+  db: ReturnType<typeof createServiceClient>,
+  workerId: string,
+  col: 'wise_recipient_id' | 'wise_recipient_uuid',
+  value: number | string,
+): Promise<string | null> {
+  const { data } = await db
+    .from('workers')
+    .select('id, first_name, last_name')
+    .eq(col, value as never)
+    .limit(5);
+  const holder = otherHolderName(data ?? [], workerId);
+  if (!holder) return null;
+  const what = col === 'wise_recipient_id' ? `Recipient #${value}` : 'That Wise UUID';
+  return `${what} is already linked to ${holder}. One recipient is one bank account — remove it there first.`;
+}
+
 export async function getWorkerWisePayout(workerId: string): Promise<Result<WisePayoutState>> {
   try {
     await requireAdmin();
@@ -92,7 +122,7 @@ export async function addWorkerWiseRecipient(args: {
   label?: string;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const id = Number(args.recipientId);
     if (!Number.isInteger(id) || id <= 0) return fail('Recipient ID must be a positive number.');
 
@@ -100,6 +130,9 @@ export async function addWorkerWiseRecipient(args: {
     const w = await readWorker(db, args.workerId);
     const state = toState(w);
     if (state.recipients.some((r) => r.id === id)) return ok(state); // already added
+
+    const taken = await recipientTaken(db, args.workerId, 'wise_recipient_id', id);
+    if (taken) return fail(taken);
 
     const next = [...state.recipients, { id, label: args.label?.trim() || `Recipient ${id}` }];
     const nextDefault = state.defaultId ?? id; // first one becomes default
@@ -124,7 +157,7 @@ export async function removeWorkerWiseRecipient(args: {
   recipientId: number;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const db = createServiceClient();
     const state = toState(await readWorker(db, args.workerId));
     const next = state.recipients.filter((r) => r.id !== args.recipientId);
@@ -151,12 +184,14 @@ export async function setDefaultWiseRecipient(args: {
   recipientId: number;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const db = createServiceClient();
     const state = toState(await readWorker(db, args.workerId));
     if (!state.recipients.some((r) => r.id === args.recipientId)) {
       return fail('That recipient is not on this contractor.');
     }
+    const taken = await recipientTaken(db, args.workerId, 'wise_recipient_id', args.recipientId);
+    if (taken) return fail(taken);
     const { error } = await db
       .from('workers')
       .update({ wise_recipient_id: args.recipientId })
@@ -178,9 +213,13 @@ export async function saveWorkerWiseUuid(args: {
   uuid: string;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const uuid = args.uuid.trim() || null;
     const db = createServiceClient();
+    if (uuid) {
+      const taken = await recipientTaken(db, args.workerId, 'wise_recipient_uuid', uuid);
+      if (taken) return fail(taken);
+    }
     const { error } = await db
       .from('workers')
       .update({ wise_recipient_uuid: uuid })
@@ -241,13 +280,19 @@ export async function addWorkerWiseContact(args: {
   label?: string;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const uuid = args.uuid.trim();
     if (!uuid) return fail('That Wisetag contact has no UUID.');
     const id = Number(args.recipientId);
     const hasId = Number.isInteger(id) && id > 0;
 
     const db = createServiceClient();
+    const takenUuid = await recipientTaken(db, args.workerId, 'wise_recipient_uuid', uuid);
+    if (takenUuid) return fail(takenUuid);
+    if (hasId) {
+      const takenId = await recipientTaken(db, args.workerId, 'wise_recipient_id', id);
+      if (takenId) return fail(takenId);
+    }
     const state = toState(await readWorker(db, args.workerId));
     const label = args.label?.trim() || `Recipient ${hasId ? id : uuid.slice(0, 8)}`;
     const recipients =
@@ -286,7 +331,7 @@ export async function applyWiseDriftToWorker(args: {
   recipientId: number;
 }): Promise<Result<WisePayoutState>> {
   try {
-    await requireAdmin();
+    await requireOwner();
     const rec = await serviceGetRecipient(Number(args.recipientId));
     if (!rec) return fail(await explainMissingRecipient(Number(args.recipientId)));
 

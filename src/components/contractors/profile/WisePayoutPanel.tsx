@@ -27,11 +27,15 @@ import { SECTION_H4 } from './types';
 
 const norm = (v: string | null | undefined): string => (v ?? '').trim().toLowerCase();
 
-export function WisePayoutPanel({ workerId }: { workerId: string }) {
+export function WisePayoutPanel({ workerId, isOwner }: { workerId: string; isOwner: boolean }) {
   const { notify } = useToast();
   const [state, setState] = useState<WisePayoutState | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [busy, startBusy] = useTransition();
+  // RP-55: every write in wise-recipients.ts is owner-only, so disable the
+  // write controls instead of letting a non-owner click into an error toast.
+  // Reads (drift check, Wise lookup) stay open to any admin.
+  const locked = busy || !isOwner;
 
   // Add-recipient form
   const [newId, setNewId] = useState('');
@@ -180,6 +184,12 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
   return (
     <section className="modal-section" style={{ marginTop: 24 }}>
       <h4 style={SECTION_H4}>Wise recipients (for payouts)</h4>
+      {!isOwner && (
+        <p className="muted" style={{ fontSize: 12, margin: '6px 0' }}>
+          Read-only — only the owner can change payout identifiers, because they decide where this
+          contractor&apos;s pay is sent.
+        </p>
+      )}
       {state.recipients.length === 0 ? (
         <p className="muted" style={{ fontSize: 12, margin: '6px 0' }}>
           None yet. Add a recipient ID from your Wise account below.
@@ -200,7 +210,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
                       <button
                         type="button"
                         className="btn ghost sm"
-                        disabled={busy}
+                        disabled={locked}
                         onClick={() =>
                           startBusy(async () =>
                             apply(
@@ -218,7 +228,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
                     <button
                       type="button"
                       className="btn danger-outline sm"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() =>
                         startBusy(async () =>
                           apply(
@@ -250,7 +260,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
             value={newId}
             onChange={(e) => setNewId(e.target.value)}
             placeholder="numeric ID"
-            disabled={busy}
+            disabled={locked}
           />
         </div>
         <div className="field" style={{ minWidth: 150 }}>
@@ -260,10 +270,10 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
             value={newLabel}
             onChange={(e) => setNewLabel(e.target.value)}
             placeholder="e.g. BPI peso"
-            disabled={busy}
+            disabled={locked}
           />
         </div>
-        <button type="button" className="btn sm" onClick={addRecipient} disabled={busy}>
+        <button type="button" className="btn sm" onClick={addRecipient} disabled={locked}>
           Add
         </button>
       </div>
@@ -285,13 +295,13 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
             value={uuidDraft}
             onChange={(e) => setUuidDraft(e.target.value)}
             placeholder="e.g. 33e5a8b1-…  (Wise → Batch payments → Download all templates)"
-            disabled={busy}
+            disabled={locked}
           />
         </div>
         <button
           type="button"
           className="btn sm"
-          disabled={busy || uuidDraft.trim() === (state.uuid ?? '')}
+          disabled={locked || uuidDraft.trim() === (state.uuid ?? '')}
           onClick={() =>
             startBusy(async () =>
               apply(
@@ -346,7 +356,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
                     <button
                       type="button"
                       className="btn ghost sm"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() => pullDrift('name')}
                     >
                       Use Wise&apos;s name
@@ -364,7 +374,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
                     <button
                       type="button"
                       className="btn ghost sm"
-                      disabled={busy}
+                      disabled={locked}
                       onClick={() => pullDrift('email')}
                     >
                       Use Wise&apos;s email
@@ -448,7 +458,7 @@ export function WisePayoutPanel({ workerId }: { workerId: string }) {
                       <button
                         type="button"
                         className="btn sm"
-                        disabled={busy || added}
+                        disabled={locked || added}
                         onClick={() => addFromLookup(r)}
                       >
                         {added ? 'Added' : 'Add'}

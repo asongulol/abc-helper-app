@@ -8,11 +8,15 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cache } from 'react';
 import type { Database } from '@/db/types';
 import {
+  type CoverageActual,
   type CoverageExpectation,
   type CoverageGap,
+  type CoverageStatus,
   classifyCoverage,
+  coverageStatus,
 } from '@/lib/coverage/classify';
 
 type Db = SupabaseClient<Database>;
@@ -51,9 +55,13 @@ const resolveTargetHours = (rows: TargetRow[], companyId: string, weeks: number)
 };
 
 /**
- * Expected hours per active contractor for the period: an effective explicit target
- * if one exists, otherwise weekly_hours × weeks. Workers with neither resolve to 0
- * (the classifier ignores them).
+ * Expected hours per active, time-tracked contractor for the period: an effective
+ * explicit target if one exists, otherwise weekly_hours × weeks. Workers with
+ * neither resolve to 0 (the classifier ignores them).
+ *
+ * Scope is narrower than the roster below: ended workers on stale-active links and
+ * anyone with no Hubstaff identity (administrators who never log time) are excluded
+ * — they can only ever produce a false zero_time gap.
  */
 export const fetchCoverageExpectations = async (
   db: Db,
@@ -63,9 +71,15 @@ export const fetchCoverageExpectations = async (
 ): Promise<CoverageExpectation[]> => {
   const { data: links, error } = await db
     .from('worker_companies')
-    .select('worker_id, weekly_hours, workers(first_name, last_name)')
+    .select('worker_id, weekly_hours, workers!inner(first_name, last_name, status)')
     .eq('company_id', companyId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    // A link left active on an ended worker is stale, not coverage.
+    .eq('workers.status', 'active')
+    // Coverage is measured from Hubstaff time, so a link with no Hubstaff identity
+    // can never register hours — admins and other untracked staff would sit in the
+    // gap list forever as zero_time. Not measurable → not a gap.
+    .or('hubstaff_user_id.not.is.null,hubstaff_name.not.is.null');
   if (error) throw new Error(`coverage roster: ${error.message}`);
 
   const active = (links ?? []).filter((l): l is typeof l & { worker_id: string } =>
@@ -104,18 +118,18 @@ export const fetchCoverageExpectations = async (
   });
 };
 
-/** Actual tracked hours per worker for the period (PTO excluded is upstream of time_entries). */
+/** Actual tracked hours + PTO per worker for the period — both count as coverage. */
 export const fetchActualHours = async (
   db: Db,
   companyId: string,
   workerIds: string[],
   periodStart: string,
   periodEnd: string,
-): Promise<{ workerId: string; workedHours: number }[]> => {
+): Promise<CoverageActual[]> => {
   if (workerIds.length === 0) return [];
   const { data, error } = await db
     .from('time_entries')
-    .select('worker_id, tracked_seconds')
+    .select('worker_id, tracked_seconds, pto_seconds')
     .eq('company_id', companyId)
     .in('worker_id', workerIds)
     .gte('work_date', periodStart)
@@ -123,45 +137,74 @@ export const fetchActualHours = async (
     .limit(100000);
   if (error) throw new Error(`coverage actuals: ${error.message}`);
 
-  const secByWorker = new Map<string, number>();
+  const secByWorker = new Map<string, { worked: number; pto: number }>();
   for (const r of data ?? []) {
     if (!r.worker_id) continue;
-    secByWorker.set(
-      r.worker_id,
-      (secByWorker.get(r.worker_id) ?? 0) + (Number(r.tracked_seconds) || 0),
-    );
+    const acc = secByWorker.get(r.worker_id) ?? { worked: 0, pto: 0 };
+    acc.worked += Number(r.tracked_seconds) || 0;
+    acc.pto += Number(r.pto_seconds) || 0;
+    secByWorker.set(r.worker_id, acc);
   }
-  return [...secByWorker.entries()].map(([workerId, sec]) => ({
+  return [...secByWorker.entries()].map(([workerId, s]) => ({
     workerId,
-    workedHours: sec / 3600,
+    workedHours: s.worked / 3600,
+    ptoHours: s.pto / 3600,
   }));
 };
 
 export interface CoverageRosterRow {
   workerId: string;
   workerName: string;
-  /** Informational fallback target (weekly_hours) when no explicit target is set. */
   weeklyHours: number | null;
-  /** The current open, company-specific target for this worker, if any. */
+  /** weekly_hours × weeks in THIS period — the hours that apply when no target is set. */
+  defaultHours: number | null;
+  /** What the Overview actually measures this worker against; 0 = not measured. */
+  expectedHours: number;
+  workedHours: number;
+  ptoHours: number;
+  status: CoverageStatus;
+  /** False when the link has no Hubstaff identity — can never log time, so never a gap. */
+  tracked: boolean;
+  /** The current open, company-specific semi-monthly target, if any. */
   targetId: string | null;
   targetHours: number | null;
-  periodKind: string;
 }
 
+/** Worst first: gaps, then thin coverage, then on-track, then the unmeasurable. */
+const STATUS_ORDER: Record<CoverageStatus, number> = {
+  zero_time: 0,
+  under_coverage: 1,
+  on_track: 2,
+  not_measured: 3,
+};
+
 /**
- * Active contractors for a company with their current OPEN company-specific
- * coverage target (the management surface). weekly_hours is shown as the
- * effective fallback when no explicit target exists.
+ * The /coverage management surface: every active contractor with BOTH the knob
+ * (their open semi-monthly target) and the reading it produces (expected vs
+ * actual hours for `periodStart`–`periodEnd`, and the resulting status).
+ *
+ * The reading is not recomputed here — it reuses `fetchCoverageExpectations` and
+ * `fetchActualHours`, the same two functions the Overview's gap count runs on, so
+ * the page an admin reaches via "Under expected hours → Investigate" always shows
+ * exactly the rows that produced that count.
+ *
+ * Roster scope is deliberately WIDER than the gap scope: contractors with no
+ * Hubstaff identity are excluded from expectations (they can never log time) but
+ * still listed here as `tracked: false`, because an admin needs to see the people
+ * the gap count is silently ignoring — and may want to set their target anyway.
  */
 export const fetchCoverageRoster = async (
   db: Db,
   companyId: string,
+  periodStart: string,
+  periodEnd: string,
 ): Promise<CoverageRosterRow[]> => {
   const { data: links, error } = await db
     .from('worker_companies')
-    .select('worker_id, weekly_hours, workers(first_name, last_name)')
+    .select('worker_id, weekly_hours, workers!inner(first_name, last_name, status)')
     .eq('company_id', companyId)
-    .eq('status', 'active');
+    .eq('status', 'active')
+    .eq('workers.status', 'active');
   if (error) throw new Error(`coverage roster: ${error.message}`);
 
   const active = (links ?? []).filter((l): l is typeof l & { worker_id: string } =>
@@ -169,54 +212,86 @@ export const fetchCoverageRoster = async (
   );
   if (active.length === 0) return [];
 
-  const { data: targets, error: tErr } = await db
-    .from('coverage_targets')
-    .select('id, worker_id, period_kind, target_hours')
-    .eq('company_id', companyId)
-    .is('effective_to', null)
-    .in(
-      'worker_id',
-      active.map((l) => l.worker_id),
-    );
-  if (tErr) throw new Error(`coverage targets: ${tErr.message}`);
+  const workerIds = active.map((l) => l.worker_id);
 
-  const byWorker = new Map(targets?.map((t) => [t.worker_id, t]) ?? []);
+  const [expectations, actuals, targetsRes] = await Promise.all([
+    fetchCoverageExpectations(db, companyId, periodStart, periodEnd),
+    fetchActualHours(db, companyId, workerIds, periodStart, periodEnd),
+    db
+      .from('coverage_targets')
+      .select('id, worker_id, target_hours')
+      .eq('company_id', companyId)
+      // Only the kind this editor writes — a weekly target's raw number would
+      // otherwise be read as per-period hours and silently overwritten on Save.
+      .eq('period_kind', 'semi_monthly')
+      .is('effective_to', null)
+      .in('worker_id', workerIds),
+  ]);
+  if (targetsRes.error) throw new Error(`coverage targets: ${targetsRes.error.message}`);
+
+  const expectedBy = new Map(expectations.map((e) => [e.workerId, e.expectedHours]));
+  const actualBy = new Map(actuals.map((a) => [a.workerId, a]));
+  const targetBy = new Map(targetsRes.data?.map((t) => [t.worker_id, t]) ?? []);
+  const weeks = weeksInPeriod(periodStart, periodEnd);
 
   return active
     .map((l) => {
-      const t = byWorker.get(l.worker_id);
+      const t = targetBy.get(l.worker_id);
+      const weeklyHours = l.weekly_hours === null ? null : Number(l.weekly_hours);
+      const expectedHours = expectedBy.get(l.worker_id) ?? 0;
+      const worked = actualBy.get(l.worker_id)?.workedHours ?? 0;
+      const pto = actualBy.get(l.worker_id)?.ptoHours ?? 0;
       return {
         workerId: l.worker_id,
         workerName: joinName(l.workers) || l.worker_id,
-        weeklyHours: l.weekly_hours === null ? null : Number(l.weekly_hours),
+        weeklyHours,
+        defaultHours: weeklyHours === null ? null : weeklyHours * weeks,
+        expectedHours,
+        workedHours: worked,
+        ptoHours: pto,
+        status: coverageStatus(expectedHours, worked + pto),
+        tracked: expectedBy.has(l.worker_id),
         targetId: t?.id ?? null,
         targetHours:
           t?.target_hours === null || t?.target_hours === undefined ? null : Number(t.target_hours),
-        periodKind: t?.period_kind ?? 'semi_monthly',
       };
     })
-    .sort((a, b) => a.workerName.localeCompare(b.workerName));
+    .sort(
+      (a, b) =>
+        STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
+        (a.expectedHours > 0 ? (a.workedHours + a.ptoHours) / a.expectedHours : 0) -
+          (b.expectedHours > 0 ? (b.workedHours + b.ptoHours) / b.expectedHours : 0) ||
+        a.workerName.localeCompare(b.workerName),
+    );
 };
 
-/** End-to-end: expected vs actual → coverage gaps for the period (worst first). */
-export const getCoverageGaps = async (
-  db: Db,
-  companyId: string,
-  periodStart: string,
-  periodEnd: string,
-  underThreshold = 0.6,
-): Promise<{ gaps: CoverageGap[]; measured: number }> => {
-  const expectations = await fetchCoverageExpectations(db, companyId, periodStart, periodEnd);
-  const expected = expectations.filter((e) => e.expectedHours > 0);
-  // `measured` = contractors with an expected-hours baseline. 0 means nothing is
-  // being measured — the caller must not read that as "all on track" (#029).
-  if (expected.length === 0) return { gaps: [], measured: 0 };
-  const actuals = await fetchActualHours(
-    db,
-    companyId,
-    expected.map((e) => e.workerId),
-    periodStart,
-    periodEnd,
-  );
-  return { gaps: classifyCoverage(expected, actuals, underThreshold), measured: expected.length };
-};
+/**
+ * End-to-end: expected vs actual → coverage gaps for the period (worst first).
+ *
+ * `cache()`-wrapped: /overview asks for the same period from two independently
+ * streamed blocks (the queue row and the KPI tile), and the request-scoped
+ * Supabase client is itself cached — so identical args mean one round-trip.
+ */
+export const getCoverageGaps = cache(
+  async (
+    db: Db,
+    companyId: string,
+    periodStart: string,
+    periodEnd: string,
+    underThreshold = 0.6,
+  ): Promise<{ gaps: CoverageGap[]; measured: number }> => {
+    const expectations = await fetchCoverageExpectations(db, companyId, periodStart, periodEnd);
+    const expected = expectations.filter((e) => e.expectedHours > 0);
+    // `measured` = contractors with an expected-hours baseline. 0 means nothing is
+    // being measured — the caller must not read that as "all on track" (#029).
+    if (expected.length === 0) return { gaps: [], measured: 0 };
+    const actuals = await fetchActualHours(
+      db,
+      companyId,
+      expected.map((e) => e.workerId),
+      periodStart,
+      periodEnd,
+    );
+    return { gaps: classifyCoverage(expected, actuals, underThreshold), measured: expected.length };
+  },
+);

@@ -13,27 +13,46 @@
  * Time Approval table (pending); there is no preview for the API path.
  */
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
+import type { PayPeriod } from '@/lib/dates/periods';
 import { periodFor } from '@/lib/dates/periods';
 import type { HubstaffOrg } from '@/server/actions/hubstaff-sync';
-import { importHubstaffTime, listHubstaffOrgs } from '@/server/actions/hubstaff-sync';
+import {
+  getDefaultHubstaffOrgId,
+  importHubstaffTime,
+  listHubstaffOrgs,
+} from '@/server/actions/hubstaff-sync';
 
 interface OptionBPanelProps {
   companyId: string;
+  /** Window to pull — the next unimported period, resolved server-side. */
+  period: PayPeriod;
   /** Called on a successful import to refresh the approval table. */
   onImported: () => void;
 }
 
-export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
+export const OptionBPanel = ({ companyId, period, onImported }: OptionBPanelProps) => {
   const { notify } = useToast();
   const [orgId, setOrgId] = useState('');
-  const [syncStart, setSyncStart] = useState('');
-  const [syncStop, setSyncStop] = useState('');
+  const [syncStart, setSyncStart] = useState(period.start);
+  const [syncStop, setSyncStop] = useState(period.end);
   // null = unloaded, [] = loaded (zero orgs), [...] = loaded.
   const [orgs, setOrgs] = useState<HubstaffOrg[] | null>(null);
   const [loadingOrgs, startListing] = useTransition();
   const [syncing, startSync] = useTransition();
+
+  // Default to the org the sync actually uses (companies.hubstaff_org_id —
+  // Aaron Anderson E.H.S. LLC), so Import Time works without listing orgs first.
+  useEffect(() => {
+    let alive = true;
+    void getDefaultHubstaffOrgId(companyId).then((id) => {
+      if (alive && id != null) setOrgId((cur) => cur || String(id));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [companyId]);
 
   const listOrgs = () => {
     startListing(async () => {
@@ -64,20 +83,43 @@ export const OptionBPanel = ({ companyId, onImported }: OptionBPanelProps) => {
         notify(res.error, { type: 'error' });
         return;
       }
-      const { rowsWritten, membersSeen, unmatched } = res.data;
+      const { rowsWritten, membersSeen, unmatched, droppedAfterEnd } = res.data;
       if (rowsWritten === 0 && membersSeen === 0) {
         notify(`Hubstaff returned no activity for ${syncStart} → ${syncStop}.`, { type: 'info' });
         return;
       }
+      // The sync protects already-decided days and only logged it, so a
+      // 4h → 8h change on an approved day read as "Synced 0 entries" (RP-36).
+      // ponytail: counted loosely — the server half may report a count or the
+      // divergence list itself.
+      const extra = res.data as unknown as { divergences?: unknown; skippedDecided?: unknown };
+      const asCount = (v: unknown) => (Array.isArray(v) ? v.length : typeof v === 'number' ? v : 0);
+      const divergences = asCount(extra.divergences);
+      const skippedDecided = asCount(extra.skippedDecided);
+
       const unmatchedNote =
         unmatched.length > 0
           ? ` ${unmatched.length} member(s) couldn't be matched to a contractor and were skipped.`
           : '';
+      const decidedNote =
+        skippedDecided > 0
+          ? ` ${skippedDecided} already approved/rejected day(s) were left untouched.`
+          : '';
+      // Hubstaff keeps reporting a departed member's days — say so, or the
+      // hours look like they simply went missing.
+      const endedNote =
+        droppedAfterEnd > 0
+          ? ` ${droppedAfterEnd} day(s) fell after a contractor's last day and were not imported.`
+          : '';
+      const divergenceNote =
+        divergences > 0
+          ? ` ⚠ ${divergences} of them now report DIFFERENT hours in Hubstaff — the approved value was kept. Check the audit log (time_divergence) and re-approve if the new number is right.`
+          : '';
       notify(
-        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}`,
+        `Synced ${rowsWritten} daily entr${rowsWritten === 1 ? 'y' : 'ies'} for ${membersSeen} member(s).${unmatchedNote}${decidedNote}${endedNote}${divergenceNote}`,
         {
-          type: rowsWritten > 0 ? 'success' : 'info',
-          persistent: unmatched.length > 0,
+          type: divergences > 0 ? 'warn' : rowsWritten > 0 ? 'success' : 'info',
+          persistent: unmatched.length > 0 || divergences > 0 || droppedAfterEnd > 0,
         },
       );
       onImported();

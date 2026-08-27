@@ -42,6 +42,9 @@ export interface SyncHubstaffResult {
   rowsWritten: number;
   membersSeen: number;
   unmatched: string[];
+  /** Days dropped for falling after a contractor's last day. Without this a sync
+   *  over a departed contractor's window reads as "Synced 0 time row(s)". */
+  droppedAfterEnd: number;
   window: { start: string; stop: string };
   importBatchId: string;
 }
@@ -85,6 +88,7 @@ export async function syncHubstaffNow(args: unknown): Promise<ActionResult<SyncH
         rows_written: summary.rowsWritten,
         members_seen: summary.membersSeen,
         ids_persisted: summary.idsPersisted,
+        dropped_after_end: summary.droppedAfterEnd,
         unmatched: summary.unmatched,
         batch: summary.importBatchId,
       },
@@ -96,6 +100,7 @@ export async function syncHubstaffNow(args: unknown): Promise<ActionResult<SyncH
         rowsWritten: summary.rowsWritten,
         membersSeen: summary.membersSeen,
         unmatched: summary.unmatched,
+        droppedAfterEnd: summary.droppedAfterEnd,
         window: summary.window,
         importBatchId: summary.importBatchId,
       },

@@ -108,6 +108,37 @@ describe('buildStatements offCycleByWorker', () => {
     expect(rows[0].result.offCycle).toBe(0);
     expect(rows[0].result.net).toBe(150_000);
   });
+
+  it('counts the ledger sessions in units, so units × rate still equals gross', () => {
+    // The repro: paying sessions off-cycle stamps them paid, so the windowed
+    // read returns 1 while the ledger pays 3 more. The row showed "1 session"
+    // against a gross of 4 × ₱500.
+    const rows = buildStatements({
+      ...PERIOD,
+      attribution: attributeTimeEntries([], [roster({ workerId: 'w1' })]),
+      roster: [roster({ workerId: 'w1' })],
+      rates: [{ workerId: 'w1', amountPhp: 500, effectiveStart: '2026-01-01', effectiveEnd: null }],
+      sessionsByWorker: new Map([['w1', 1]]),
+      offCycleByWorker: new Map([['w1', centavos(150_000)]]),
+      offCycleSessionUnitsByWorker: new Map([['w1', 3]]),
+    });
+    expect(rows[0].result.gross).toBe(200_000);
+    expect(rows[0].result.units).toBe(4);
+    expect((rows[0].result.units ?? 0) * 50_000).toBe(rows[0].result.gross);
+  });
+
+  it('leaves the count alone for a per-hour worker (hours live in workedHours)', () => {
+    const r = calcContractorRow({
+      workedSeconds: 3600,
+      contract: 'PHS',
+      payBasis: 'hourly',
+      rate: centavos(50_000),
+      offCycleEarnings: centavos(150_000),
+      offCycleSessionUnits: 3,
+      ...PERIOD,
+    });
+    expect(r.units).toBeNull();
+  });
 });
 
 describe('attributeTimeEntries per-hour off-cycle date exclusion', () => {

@@ -6,7 +6,9 @@
  *     linked" (an ended contractor that holds the id is still linked; excluding
  *     ended contractors mislabels it "unmatched" and risks a double-link).
  *  2. else by normalized full name, among ACTIVE unlinked contractors only →
- *     "matched" (the caller writes the id onto contractor.id).
+ *     "matched" — a PROPOSAL only. The caller writes the id onto contractor.id
+ *     for explicitly confirmed rows (RP-56): two contractors can share a name,
+ *     and a wrong link sends their pay to the other one's bank account.
  *  3. else → "unmatched" (e.g. a company recipient with no contractor).
  *
  * Pure on purpose: the caller fetches recipients + workers and performs the
@@ -33,7 +35,24 @@ export interface PullRecipientRow {
   account: string;
   contractor: { id: string; name: string } | null;
   status: PullRecipientStatus;
+  /** True when this call actually wrote the link (confirmed rows only). */
+  linked?: boolean;
 }
+
+/**
+ * RP-55: the OTHER contractor already holding a Wise recipient id/uuid, or null.
+ * One recipient is one bank account, so two contractors sharing it pay both nets
+ * into that account — and the matcher (recipient + amount) still reconciles the
+ * shortchanged one. The worker's own row is never a conflict, so re-saving the
+ * same identifier stays idempotent.
+ */
+export const otherHolderName = (
+  holders: { id: string; first_name: string; last_name: string }[],
+  workerId: string,
+): string | null => {
+  const other = holders.find((h) => h.id !== workerId);
+  return other ? `${other.first_name} ${other.last_name}`.trim() || 'another contractor' : null;
+};
 
 const norm = (s: string): string =>
   s

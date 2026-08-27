@@ -66,3 +66,52 @@ describe('buildWiseBatch', () => {
     expect(line).toContain(',12000,'); // no .00
   });
 });
+
+describe('buildWiseBatch — a zero net never reaches the file (RP-60)', () => {
+  const opts = { periodStart: '2026-06-01', periodEnd: '2026-06-15' };
+
+  it('drops a zero-net row — Wise rejects amount 0, sometimes the whole upload', () => {
+    // Lock refuses a null or negative net, but zero passes; the API path already
+    // skips it (`triageDraftRow`: "no amount") and the manual file now agrees.
+    const { included, dropped, csv } = buildWiseBatch(
+      [row({ name: 'Pays 12000' }), row({ name: 'Pays Nothing', netPhp: 0 })],
+      opts,
+    );
+    expect(included.map((r) => r.name)).toEqual(['Pays 12000']);
+    expect(csv).not.toContain('Pays Nothing');
+    expect(dropped.map((d) => [d.name, d.reason])).toEqual([['Pays Nothing', 'no amount']]);
+  });
+
+  it('drops a negative net too, and says why per row rather than lumping them', () => {
+    const { dropped } = buildWiseBatch(
+      [row({ name: 'Negative', netPhp: -500 }), row({ name: 'No UUID', wiseRecipientUuid: null })],
+      opts,
+    );
+    expect(dropped.map((d) => d.reason)).toEqual(['no amount', 'no Wise recipient UUID']);
+  });
+
+  it('still writes a row worth centavos — the guard is > 0, not >= 1 peso', () => {
+    const { included } = buildWiseBatch([row({ name: 'Tiny', netPhp: 0.01 })], opts);
+    expect(included.map((r) => r.name)).toEqual(['Tiny']);
+  });
+});
+
+describe('buildWiseBatch — target currency must be PHP (RP-02)', () => {
+  it('throws on a non-PHP target instead of denominating peso amounts as dollars', () => {
+    // amountCurrency is 'target' and amount is netPhp, so a USD target would
+    // send ₱50,000 as $50,000 — roughly 58x, on every row in the file.
+    expect(() =>
+      buildWiseBatch([row({ netPhp: 50000 })], {
+        periodStart: '2026-06-01',
+        periodEnd: '2026-06-15',
+        targetCurrency: 'USD',
+      }),
+    ).toThrow(/must be PHP/);
+  });
+
+  it('still builds with an explicit PHP target and with the default', () => {
+    const opts = { periodStart: '2026-06-01', periodEnd: '2026-06-15' };
+    expect(buildWiseBatch([row({})], { ...opts, targetCurrency: 'PHP' }).included).toHaveLength(1);
+    expect(buildWiseBatch([row({})], opts).included).toHaveLength(1);
+  });
+});

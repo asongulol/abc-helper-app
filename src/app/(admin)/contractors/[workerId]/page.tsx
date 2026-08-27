@@ -23,6 +23,7 @@ export default async function ContractorDetailPage({
       companyId={data.companyId}
       companyName={data.companyName}
       companies={data.companies}
+      isOwner={data.isOwner}
     />
   );
 }

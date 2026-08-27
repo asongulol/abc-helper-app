@@ -3,9 +3,12 @@
  *
  * Given each contractor's expected hours for a period (resolved upstream from an
  * explicit coverage_targets row, or falling back to worker_companies.weekly_hours)
- * and their actual tracked hours, flag the gaps:
- *   - zero_time       — expected to work but logged nothing
- *   - under_coverage  — logged less than `underThreshold` of expected (default 60%)
+ * and their actual hours, flag the gaps:
+ *   - zero_time       — expected to work but recorded nothing at all
+ *   - under_coverage  — recorded less than `underThreshold` of expected (default 60%)
+ *
+ * Coverage counts tracked hours + PTO: approved leave is time the contractor was
+ * accounted for, so someone on vacation for the period is covered, not a gap.
  *
  * Workers with no expected hours (no target, no weekly_hours) are not flagged —
  * there's nothing to measure against. See audit/proposals/coverage-gap-detection.md.
@@ -21,16 +24,40 @@ export interface CoverageExpectation {
 export interface CoverageActual {
   workerId: string;
   workedHours: number;
+  /** Approved leave in the period — counts toward coverage. */
+  ptoHours: number;
 }
 
 export type CoverageGapKind = 'zero_time' | 'under_coverage';
+
+/** Every state a contractor can be in, including the two that aren't gaps. */
+export type CoverageStatus = CoverageGapKind | 'on_track' | 'not_measured';
+
+/**
+ * The single definition of "is this person short?" — `classifyCoverage` (which
+ * feeds the Overview's gap count) and /coverage's per-row pill both read it, so
+ * the page an admin lands on can't contradict the badge that sent them there.
+ *
+ * `not_measured` is its own state, never "on track": no target and no
+ * weekly_hours means there is nothing to be short OF (#029).
+ */
+export const coverageStatus = (
+  expectedHours: number,
+  coveredHours: number,
+  underThreshold = 0.6,
+): CoverageStatus => {
+  if (!(expectedHours > 0)) return 'not_measured';
+  if (!(coveredHours > 0)) return 'zero_time';
+  return coveredHours / expectedHours < underThreshold ? 'under_coverage' : 'on_track';
+};
 
 export interface CoverageGap {
   workerId: string;
   workerName: string;
   expectedHours: number;
   workedHours: number;
-  /** worked / expected, in [0, 1+). */
+  ptoHours: number;
+  /** (worked + PTO) / expected, in [0, 1+). */
   ratio: number;
   kind: CoverageGapKind;
 }
@@ -40,32 +67,24 @@ export const classifyCoverage = (
   actuals: CoverageActual[],
   underThreshold = 0.6,
 ): CoverageGap[] => {
-  const workedByWorker = new Map(actuals.map((a) => [a.workerId, a.workedHours]));
+  const byWorker = new Map(actuals.map((a) => [a.workerId, a]));
   const gaps: CoverageGap[] = [];
 
   for (const e of expectations) {
-    if (!(e.expectedHours > 0)) continue; // no target → nothing to compare against
-    const worked = workedByWorker.get(e.workerId) ?? 0;
-    const ratio = worked / e.expectedHours;
-    if (worked <= 0) {
-      gaps.push({
-        workerId: e.workerId,
-        workerName: e.workerName,
-        expectedHours: e.expectedHours,
-        workedHours: 0,
-        ratio: 0,
-        kind: 'zero_time',
-      });
-    } else if (ratio < underThreshold) {
-      gaps.push({
-        workerId: e.workerId,
-        workerName: e.workerName,
-        expectedHours: e.expectedHours,
-        workedHours: worked,
-        ratio,
-        kind: 'under_coverage',
-      });
-    }
+    const worked = byWorker.get(e.workerId)?.workedHours ?? 0;
+    const pto = byWorker.get(e.workerId)?.ptoHours ?? 0;
+    const covered = worked + pto;
+    const status = coverageStatus(e.expectedHours, covered, underThreshold);
+    if (status !== 'zero_time' && status !== 'under_coverage') continue;
+    gaps.push({
+      workerId: e.workerId,
+      workerName: e.workerName,
+      expectedHours: e.expectedHours,
+      workedHours: worked,
+      ptoHours: pto,
+      ratio: status === 'zero_time' ? 0 : covered / e.expectedHours,
+      kind: status,
+    });
   }
 
   // Worst (lowest ratio) first — most urgent gap on top.

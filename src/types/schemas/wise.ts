@@ -20,6 +20,10 @@ export type WiseDraftInput = z.infer<typeof WiseDraftSchema>;
  * One row of a Wise batch draft. `recipientId` / `amountPhp` are optional
  * per-row OVERRIDES — when omitted the draft uses the worker's saved default
  * recipient and the locked net. Drafts only: no money ever moves here.
+ *
+ * Shape only. `recipientId` must also BELONG to that payment's worker — Zod
+ * can't see the DB, so wiseBatch enforces ownership (RP-54, foreignRecipientRows)
+ * and logs the resolved per-row amount, which net_php never records.
  */
 export const WiseBatchItemSchema = z.object({
   paymentId: uuid('paymentId must be a UUID'),
@@ -62,6 +66,25 @@ export const WiseMatchSchema = z.object({
 });
 export type WiseMatchInput = z.infer<typeof WiseMatchSchema>;
 
+export const WiseLinkTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  // Wise transfer ids are numeric; reject anything else before it reaches the
+  // API path so a link can't be pointed at an arbitrary URL segment.
+  transferId: z.string().regex(/^\d+$/, 'transferId must be a Wise transfer id'),
+  /** Why this transfer, in the operator's words. Required for a link the
+   *  matcher would never propose (outside the period's window). */
+  reason: z.string().trim().max(500).optional(),
+});
+export type WiseLinkTransferInput = z.infer<typeof WiseLinkTransferSchema>;
+
+export const WiseUnlinkTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  // Always required: an unlink erases the only record of which transfer paid
+  // this row, so the reason IS the record after it.
+  reason: z.string().trim().min(3, 'say why — this is the only record of it').max(500),
+});
+export type WiseUnlinkTransferInput = z.infer<typeof WiseUnlinkTransferSchema>;
+
 export const WiseStatusSchema = z.object({
   paymentIds: PaymentIdsSchema,
 });
@@ -80,3 +103,28 @@ export const WiseFindTransfersSchema = z.object({
   toIso: z.string().optional(),
 });
 export type WiseFindTransfersInput = z.infer<typeof WiseFindTransfersSchema>;
+
+export const WiseAttributeSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  /** Where the difference belongs. NOTE: no amount — the server reads it from
+   *  the linked transfer, so this control can only close the gap it opened. */
+  target: z.enum(['misc', 'health_allowance', 'thirteenth_month']),
+  /** Free-text label for the misc line ("123 BT Bookkeeping"). */
+  label: z.string().trim().max(120).optional(),
+  /** Client the line is billed to (companies.id). Misc only — HA and 13th month
+   *  are single columns with nowhere to hang it. */
+  companyId: uuid().optional(),
+});
+export type WiseAttributeInput = z.infer<typeof WiseAttributeSchema>;
+
+export const WiseUndoAttributionSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+});
+export type WiseUndoAttributionInput = z.infer<typeof WiseUndoAttributionSchema>;
+
+export const WiseCancelTransferSchema = z.object({
+  paymentId: z.string().uuid('paymentId must be a UUID'),
+  /** Optional — cancelling is the safe direction, so it is not gated on prose. */
+  reason: z.string().trim().max(500).optional(),
+});
+export type WiseCancelTransferInput = z.infer<typeof WiseCancelTransferSchema>;

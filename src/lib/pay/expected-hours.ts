@@ -58,6 +58,27 @@ export const payModelFor = (contract: Contract, payBasis?: string | null): PayMo
 };
 
 /**
+ * Working days in [start, end]: Mon–Fri days minus the observed holidays that
+ * land on them. The single source of truth for "how many days is this period
+ * worth" — expected hours AND the /time period header both read it, so the
+ * header can't drift from what payroll pays.
+ * `holidays` defaults to the offices' standard list for the years in range.
+ */
+export const workingDayCount = (
+  start: string,
+  end: string,
+  holidays?: readonly Holiday[],
+): number => {
+  const observed = holidaysInRange(
+    holidays ?? defaultHolidaysForRange(start, end),
+    start,
+    end,
+    true,
+  ).length;
+  return Math.max(0, weekdayCount(start, end) - observed);
+};
+
+/**
  * Expected working hours in [start, end] for the contract type.
  * `holidays` defaults to the offices' standard list for the years in range.
  */
@@ -66,14 +87,4 @@ export const expectedHours = (
   start: string,
   end: string,
   holidays?: readonly Holiday[],
-): number => {
-  const dayH = dayHoursFor(contract);
-  const weekdays = weekdayCount(start, end);
-  const observed = holidaysInRange(
-    holidays ?? defaultHolidaysForRange(start, end),
-    start,
-    end,
-    true,
-  ).length;
-  return Math.max(0, weekdays * dayH - observed * dayH);
-};
+): number => workingDayCount(start, end, holidays) * dayHoursFor(contract);

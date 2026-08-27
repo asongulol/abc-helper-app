@@ -1,5 +1,6 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { cookies } from 'next/headers';
 import { cache } from 'react';
 import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
@@ -7,6 +8,9 @@ import { env } from '@/server/env';
 
 /** Cookie holding the admin's selected company (legacy: company switcher). */
 export const COMPANY_COOKIE = 'abc_company';
+
+/** Cookie holding the header CLIENT filter: comma-joined client company ids; absent/empty = all. */
+export const CLIENTS_COOKIE = 'abc_clients';
 
 /**
  * The single EMPLOYER company id (companies.kind='employer'). Contractors are
@@ -32,6 +36,7 @@ export const getEmployerCompanyId = async (
 export interface CompanyOption {
   id: string;
   name: string;
+  kind: string;
 }
 
 /**
@@ -43,8 +48,22 @@ export interface CompanyOption {
  */
 export const listCompanies = cache(async (): Promise<CompanyOption[]> => {
   const supabase = await createServerSupabase();
-  const { data } = await supabase.from('companies').select('id, name').order('name');
+  const { data } = await supabase.from('companies').select('id, name, kind').order('name');
   return data ?? [];
+});
+
+/**
+ * The header CLIENT filter — client company ids the admin picked, validated
+ * against the visible client companies (stale/foreign ids are dropped).
+ * Empty array = no filter (all clients + internal staff). Memoized per request.
+ */
+export const getSelectedClientIds = cache(async (): Promise<string[]> => {
+  const raw = (await cookies()).get(CLIENTS_COOKIE)?.value ?? '';
+  if (!raw) return [];
+  const clients = new Set(
+    (await listCompanies()).filter((c) => c.kind === 'client').map((c) => c.id),
+  );
+  return raw.split(',').filter((id) => clients.has(id));
 });
 
 /**

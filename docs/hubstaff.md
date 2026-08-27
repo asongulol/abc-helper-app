@@ -74,6 +74,21 @@ the id is persisted after the run so the next sync matches by id directly.
 All three share the pure transform. `listHubstaffOrgs()` populates the org picker on the import
 dialog.
 
+:::warning The edge function is deployed by hand — and not from this repo
+
+`supabase/functions/hubstaff-sync/index.ts` in this repo is **not** what the nightly cron runs.
+CI is checks-only, so nothing deploys edge functions; the live slot is version 45 (~2026-06-23),
+deployed from the **legacy** repo, and that copy has no last-day guard. Editing the file here has
+no production effect until someone deploys it.
+
+Both repos link to the same prod project, so a deploy from either overwrites the one live slot,
+and this repo's copy implements only `cron_ingest` — the legacy browser app's `sync_ingest` /
+`list_orgs` / `list_projects` / `get_user` / `activity_backfill` calls would start failing.
+Read [Deploy → Supabase edge functions](./DEPLOY.md#supabase-edge-functions--deployed-by-hand)
+before running `supabase functions deploy`.
+
+:::
+
 ## Time approval
 
 Imported rows are `pending` until an admin decides them:

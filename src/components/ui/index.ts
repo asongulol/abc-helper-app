@@ -12,6 +12,7 @@ export { EmptyState } from './EmptyState';
 export { Modal, type ModalProps } from './Modal';
 export { Pagination, type PaginationProps } from './Pagination';
 export { PhoneInput, type PhoneInputProps } from './PhoneInput';
+export { RouteError } from './RouteError';
 export {
   type SortableColumn,
   SortableTable,

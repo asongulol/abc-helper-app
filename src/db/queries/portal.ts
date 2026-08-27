@@ -7,6 +7,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { flattenMisc, type ReceiptInput } from '@/lib/pay/receipt';
 
 type Db = SupabaseClient<Database>;
 
@@ -27,6 +28,8 @@ export type PortalPaymentRow = {
   payoutMethod: string | null;
   status: Database['public']['Enums']['payment_status'];
   paidAt: string | null;
+  /** Stored statement inputs for the "How this pay was computed" receipt. */
+  receipt: ReceiptInput;
 };
 
 export type PortalDocumentRow = {
@@ -55,12 +58,12 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, paid_at, pay_periods(period_start, period_end, pay_date)',
+      'id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, misc_items, net_php, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, payout_method, payout_currency, payout_amount, status, paid_at, pay_periods(period_start, period_end, pay_date)',
     )
-    .eq('worker_id', workerId)
-    .order('pay_period_id', { ascending: false });
+    .eq('worker_id', workerId);
   if (error) throw new Error(`own payments: ${error.message}`);
-  return (data ?? []).map((p) => ({
+  const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
+  const rows = (data ?? []).map((p) => ({
     paymentId: p.id,
     periodId: p.pay_period_id,
     periodStart: p.pay_periods?.period_start ?? '',
@@ -76,7 +79,34 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     payoutMethod: p.payout_method,
     status: p.status,
     paidAt: p.paid_at,
+    // Owner rule: no exchange-rate data on contractor views — fx_rate is
+    // deliberately never selected here.
+    receipt: {
+      gross: Number(p.gross_php ?? 0),
+      net: Number(p.net_php ?? 0),
+      method: p.payout_method,
+      workedPay: numOrNull(p.worked_hours),
+      worked: null, // ponytail: no time-entry join here, so no worked/PTO split in the basis
+      pto: 0,
+      expected: numOrNull(p.expected_hours),
+      ratio: numOrNull(p.performance_ratio),
+      rate: numOrNull(p.rate_php),
+      computedGross: numOrNull(p.computed_gross_php),
+      ha: Number(p.health_allowance_php ?? 0),
+      t13: Number(p.thirteenth_month_php ?? 0),
+      lunch: Number(p.pdd_lunch_php ?? 0),
+      bonus: Number(p.bonus_php ?? 0),
+      offCycle: Number(p.off_cycle_php ?? 0),
+      misc: flattenMisc(p.misc_items),
+      units: numOrNull(p.units),
+      perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
+      payout: numOrNull(p.payout_amount),
+      payoutCur: p.payout_currency ?? null,
+    },
   }));
+  // Newest-first by period date. pay_period_id is a UUID, so ordering by it in
+  // SQL scrambles the list (and the "last pay" / "since" stats built on it).
+  return rows.sort((a, b) => b.periodStart.localeCompare(a.periodStart));
 };
 
 /** Own documents (RLS scoped). */

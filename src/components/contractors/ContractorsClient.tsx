@@ -20,7 +20,7 @@ import { clientAlias } from '@/lib/clients';
 import { fullName } from '@/lib/names';
 import type { RateRow } from '@/lib/pay/rates';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
-import { setContractorLinkStatus } from '@/server/actions/contractors';
+import { setContractorLinkStatus, terminateContractor } from '@/server/actions/contractors';
 import { deleteContractor } from '@/server/actions/portal-admin';
 
 // Modal/wizard chunks load on first open (rendered only behind state flags),
@@ -34,6 +34,10 @@ const BulkImportModal = dynamic(() => import('./BulkImportModal').then((m) => m.
 });
 const PullWiseRecipientsModal = dynamic(
   () => import('./PullWiseRecipientsModal').then((m) => m.PullWiseRecipientsModal),
+  { ssr: false },
+);
+const EndEngagementModal = dynamic(
+  () => import('./EndEngagementModal').then((m) => m.EndEngagementModal),
   { ssr: false },
 );
 
@@ -53,7 +57,8 @@ type Props = {
 
 type RowShape = RosterWorker & {
   _name: string;
-  _statusLabel: 'active' | 'inactive';
+  /** `inactive` = between assignments, still willing; `ended` = terminated. */
+  _statusLabel: 'active' | 'inactive' | 'ended';
 };
 
 /** Avatar fallback when no photo: initials of the first two words of the name. */
@@ -90,7 +95,7 @@ export function ContractorsClient({
   const [showBulk, setShowBulk] = useState(false);
   const [showPullWise, setShowPullWise] = useState(false);
   const [showAnnounce, setShowAnnounce] = useState(false);
-  const [deactivateTarget, setDeactivateTarget] = useState<RosterWorker | null>(null);
+  const [terminateTarget, setTerminateTarget] = useState<RosterWorker | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<RosterWorker | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<RosterWorker | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -116,29 +121,25 @@ export function ContractorsClient({
         const shaped: RowShape = {
           ...updated,
           _name: fullName(updated),
-          _statusLabel: isActive(updated) ? 'active' : 'inactive',
+          _statusLabel: statusLabel(updated),
         };
         return shaped;
       }),
     );
   }
 
-  function handleDeactivate(worker: RosterWorker) {
-    setDeactivateTarget(worker);
+  function handleTerminate(worker: RosterWorker) {
+    setTerminateTarget(worker);
   }
 
-  function handleReactivate(worker: RosterWorker) {
-    setReactivateTarget(worker);
-  }
-
-  function toggleStatus(worker: RosterWorker, active: boolean) {
+  function runTerminate(worker: RosterWorker, lastDay: string, reason: string) {
     const id = worker.workerId;
     setBusyIds((s) => new Set([...s, id]));
     startTransition(async () => {
-      const result = await setContractorLinkStatus({
+      const result = await terminateContractor({
         workerId: id,
-        companyId,
-        active,
+        lastDay,
+        ...(reason ? { reason } : {}),
       });
       setBusyIds((s) => {
         const next = new Set(s);
@@ -149,16 +150,37 @@ export function ContractorsClient({
         notify(result.error, { type: 'error' });
         return;
       }
-      notify(active ? 'Contractor reactivated.' : 'Contractor deactivated.', {
-        type: 'success',
+      notify('Contractor terminated.', { type: 'success' });
+      refreshRow({ ...worker, workerStatus: 'ended', linkStatus: 'ended' });
+    });
+  }
+
+  function handleReactivate(worker: RosterWorker) {
+    setReactivateTarget(worker);
+  }
+
+  /** The only direction this row action still goes — ending an engagement is
+   *  Terminate / End assignment, which need a last day this has nowhere to put. */
+  function runReactivate(worker: RosterWorker) {
+    const id = worker.workerId;
+    setBusyIds((s) => new Set([...s, id]));
+    startTransition(async () => {
+      const result = await setContractorLinkStatus({
+        workerId: id,
+        companyId,
+        active: true,
       });
-      const newStatus = active ? 'active' : 'ended';
-      const updated: RosterWorker = {
-        ...worker,
-        workerStatus: newStatus as RosterWorker['workerStatus'],
-        linkStatus: newStatus as RosterWorker['linkStatus'],
-      };
-      refreshRow(updated);
+      setBusyIds((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+      if (!result.ok) {
+        notify(result.error, { type: 'error' });
+        return;
+      }
+      notify('Contractor reactivated.', { type: 'success' });
+      refreshRow({ ...worker, workerStatus: 'active', linkStatus: 'active' });
     });
   }
 
@@ -273,7 +295,14 @@ export function ContractorsClient({
           >
             Edit
           </Link>
-          {r._statusLabel === 'active' ? (
+          {/* Terminate keys off the WORKER's status, not the row label: someone
+              between assignments reads 'inactive' (or 'ended' on this company's
+              link) while `workers.status` is still 'inactive', and they used to
+              get Reactivate only — so a contractor who fully quit could never be
+              terminated, never had their tool credentials wiped, and never
+              entered the pay-outstanding portal sunset (#95A). Both buttons show
+              for them; the two states are independent. */}
+          {r.workerStatus !== 'ended' && (
             <button
               type="button"
               className="btn ghost sm"
@@ -283,12 +312,13 @@ export function ContractorsClient({
               // top of the confirm dialog and burying its Cancel (#006).
               onClick={(e) => {
                 e.stopPropagation();
-                handleDeactivate(r);
+                handleTerminate(r);
               }}
             >
-              Deactivate
+              Terminate
             </button>
-          ) : (
+          )}
+          {r._statusLabel !== 'active' && (
             <button
               type="button"
               className="btn sm"
@@ -413,19 +443,16 @@ export function ContractorsClient({
         </Modal>
       )}
 
-      {deactivateTarget && (
-        <ConfirmDangerModal
-          title="Deactivate contractor"
-          message={`Deactivate ${fullName(deactivateTarget)}? They will be excluded from payroll calculations.`}
-          consequence="You can reactivate them at any time."
-          confirmLabel="Deactivate"
-          busy={busyIds.has(deactivateTarget.workerId)}
-          onConfirm={() => {
-            const target = deactivateTarget;
-            setDeactivateTarget(null);
-            toggleStatus(target, false);
+      {terminateTarget && (
+        <EndEngagementModal
+          name={fullName(terminateTarget)}
+          busy={busyIds.has(terminateTarget.workerId)}
+          onConfirm={({ lastDay, reason }) => {
+            const target = terminateTarget;
+            setTerminateTarget(null);
+            runTerminate(target, lastDay, reason);
           }}
-          onCancel={() => setDeactivateTarget(null)}
+          onCancel={() => setTerminateTarget(null)}
         />
       )}
 
@@ -438,7 +465,7 @@ export function ContractorsClient({
           onConfirm={() => {
             const target = reactivateTarget;
             setReactivateTarget(null);
-            toggleStatus(target, true);
+            runReactivate(target);
           }}
           onCancel={() => setReactivateTarget(null)}
         />
@@ -481,10 +508,16 @@ function isActive(w: RosterWorker): boolean {
   return w.workerStatus === 'active' && w.linkStatus === 'active';
 }
 
+/** Terminated beats between-assignments: either status reading 'ended' means gone. */
+function statusLabel(w: RosterWorker): RowShape['_statusLabel'] {
+  if (w.workerStatus === 'ended' || w.linkStatus === 'ended') return 'ended';
+  return isActive(w) ? 'active' : 'inactive';
+}
+
 function buildRows(roster: RosterWorker[]): RowShape[] {
   return roster.map((w) => ({
     ...w,
     _name: fullName(w),
-    _statusLabel: isActive(w) ? ('active' as const) : ('inactive' as const),
+    _statusLabel: statusLabel(w),
   }));
 }

@@ -1,9 +1,9 @@
 'use client';
 
-import Script from 'next/script';
-import { type FormEvent, useEffect, useId, useState } from 'react';
+import { type FormEvent, useId, useState } from 'react';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import { safeNext } from '@/lib/auth/safe-next';
+import { TurnstileWidget, useTurnstileToken } from './Turnstile';
 
 /** Post-login destination from `?next=`, constrained to a portal path (#045). */
 const postLoginDest = (): string => {
@@ -14,35 +14,17 @@ const postLoginDest = (): string => {
 /**
  * Contractor portal sign-in — email/password with a self-serve password reset.
  *
- * Cloudflare Turnstile (§7.6): rendered only when NEXT_PUBLIC_TURNSTILE_SITE_KEY
- * is configured. Its single-use token is attached to signInWithPassword /
- * resetPasswordForEmail via `options.captchaToken`; we never client-block on it
- * (Supabase Auth is the enforcer when the project has Turnstile enabled).
+ * Cloudflare Turnstile lives in ./Turnstile, shared with the admin form.
  */
-const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
-
-type TurnstileWindow = Window & {
-  __abcTurnstileToken?: ((token: string) => void) | undefined;
-};
-
-export const PortalLoginForm = () => {
+export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sent, setSent] = useState('');
-  const [captchaToken, setCaptchaToken] = useState<string | undefined>(undefined);
+  const captchaToken = useTurnstileToken();
   const emailId = useId();
   const passwordId = useId();
-
-  // Turnstile invokes a named global callback with the token; mirror it to state.
-  useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return;
-    (window as TurnstileWindow).__abcTurnstileToken = (token: string) => setCaptchaToken(token);
-    return () => {
-      (window as TurnstileWindow).__abcTurnstileToken = undefined;
-    };
-  }, []);
 
   const signIn = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -80,6 +62,34 @@ export const PortalLoginForm = () => {
     else setSent('Password-reset email sent — check your inbox.');
   };
 
+  // Signed in, but their engagement is over and the last payment has landed.
+  // Showing the form again would read as a rejected password, so say what
+  // actually happened — and still leave a way back to it, since a contractor
+  // and a partner sometimes share one device.
+  if (accessEnded) {
+    return (
+      <div className="card">
+        <h3 style={{ margin: '0 0 6px' }}>Your portal access has ended</h3>
+        <p className="sub" style={{ margin: 0 }}>
+          Your engagement is closed and your final payment has been sent. For a copy of a payslip,
+          statement, or document, contact your payroll admin — they can still send you everything on
+          file.
+        </p>
+        <button
+          type="button"
+          className="btn link"
+          style={{ marginTop: 12 }}
+          onClick={async () => {
+            await createBrowserSupabase().auth.signOut({ scope: 'local' });
+            window.location.href = '/portal/login';
+          }}
+        >
+          Sign in as someone else
+        </button>
+      </div>
+    );
+  }
+
   return (
     <form className="card" onSubmit={signIn}>
       <label className="sub" htmlFor={emailId}>
@@ -110,17 +120,7 @@ export const PortalLoginForm = () => {
         aria-invalid={err ? 'true' : undefined}
         aria-describedby={err ? 'portal-login-err' : undefined}
       />
-      {TURNSTILE_SITE_KEY && (
-        <>
-          <Script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer />
-          <div
-            className="cf-turnstile"
-            data-sitekey={TURNSTILE_SITE_KEY}
-            data-callback="__abcTurnstileToken"
-            style={{ marginTop: 8 }}
-          />
-        </>
-      )}
+      <TurnstileWidget />
       {err && (
         <div id="portal-login-err" className="err" role="alert">
           {err}

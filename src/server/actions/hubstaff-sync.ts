@@ -16,6 +16,7 @@
 
 import { z } from 'zod';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchHubstaffOrgId } from '@/db/queries/hubstaff';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -66,6 +67,30 @@ export async function listHubstaffOrgs(): Promise<ActionResult<ListHubstaffOrgsR
   }
 }
 
+/**
+ * The org the sync will ACTUALLY use for this company (companies.hubstaff_org_id
+ * — Aaron Anderson E.H.S. LLC on this deployment). Used to pre-select the
+ * Organization picker so the admin doesn't have to list + pick an org whose
+ * value the sync ignores anyway.
+ *
+ * ponytail: returns the bare id (null on any failure) — it's a prefill, an
+ * error banner for it would be noise.
+ */
+export async function getDefaultHubstaffOrgId(companyId: unknown): Promise<number | null> {
+  const parsed = uuid('companyId must be a UUID').safeParse(companyId);
+  if (!parsed.success) return null;
+
+  const admin = await getCurrentAdmin();
+  if (!admin) return null;
+  if (!admin.isOwner && !admin.companyIds.includes(parsed.data)) return null;
+
+  try {
+    return await fetchHubstaffOrgId(createServiceClient(), parsed.data);
+  } catch {
+    return null;
+  }
+}
+
 // ─── import time ────────────────────────────────────────────────────────────────
 
 const ImportHubstaffTimeSchema = z.object({
@@ -81,6 +106,14 @@ export interface ImportHubstaffTimeResult {
   rowsWritten: number;
   membersSeen: number;
   unmatched: string[];
+  /** Approved days whose Hubstaff number changed — protected, and the admin is
+   *  told. Dropping these here is what made the sync report "0 entries" while
+   *  silently sitting on a 4h → 8h divergence (RP-36). */
+  divergences: number;
+  /** Decided day-rows the sync refused to overwrite. */
+  skippedDecided: number;
+  /** Days dropped for falling after a contractor's last day. */
+  droppedAfterEnd: number;
   window: { start: string; stop: string };
 }
 
@@ -126,6 +159,7 @@ export async function importHubstaffTime(
         window: `${summary.window.start} → ${summary.window.stop}`,
         rows_written: summary.rowsWritten,
         members_seen: summary.membersSeen,
+        dropped_after_end: summary.droppedAfterEnd,
         unmatched: summary.unmatched,
         batch: summary.importBatchId,
       },
@@ -137,6 +171,9 @@ export async function importHubstaffTime(
         rowsWritten: summary.rowsWritten,
         membersSeen: summary.membersSeen,
         unmatched: summary.unmatched,
+        divergences: summary.divergences.length,
+        skippedDecided: summary.skippedDecided,
+        droppedAfterEnd: summary.droppedAfterEnd,
         window: summary.window,
       },
     };

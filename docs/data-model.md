@@ -73,7 +73,7 @@ Only **approved** time/sessions count toward pay and billing.
 | Table | Key columns | Purpose |
 |---|---|---|
 | `pay_periods` | `company_id`, `period_start`, `period_end`, `pay_date`, `state` (`open`/`locked`/`paid`), `expected_hours_ft`/`_pt`, `locked_at` | Semi-monthly period. State machine: `open` → `locked` → `paid` (see [Pay pipeline](./pay-pipeline.md)). |
-| `payments` | `pay_period_id`, `worker_id`, `gross_php`, `health_allowance_php`, `thirteenth_month_php`, `pdd_lunch_php`, `bonus_php`, `misc_items` (jsonb), `deduction_php`, `net_php`, `units`, `pay_basis`, `contract`, `fx_rate`, `wise_transfer_id`, `wise_dates` (jsonb), `wise_locked_at`, `status` (`payment_status`), `payout_method` | One computed payment per `(pay_period_id, worker_id)`. Once `wise_locked_at` is set, a trigger blocks edits to the money columns. |
+| `payments` | `pay_period_id`, `worker_id`, `gross_php`, `computed_gross_php`, `health_allowance_php`, `thirteenth_month_php`, `pdd_lunch_php`, `bonus_php`, `misc_items` (jsonb), `deduction_php`, `net_php`, `units`, `pay_basis`, `contract`, `fx_rate`, `wise_transfer_id`, `wise_dates` (jsonb), `wise_locked_at`, `status` (`payment_status`), `payout_method` | One computed payment per `(pay_period_id, worker_id)`. Once `wise_locked_at` is set, a trigger blocks edits to the money columns. |
 
 `payments.deduction_php` is the **shared-prod column name for the informational performance
 shortfall** (rate − gross) — it is **never** subtracted from `net_php`. Real deductions live in

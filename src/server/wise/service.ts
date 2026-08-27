@@ -1,16 +1,22 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { updatePaymentRow } from '@/db/queries/payroll';
 import {
+  appendPaymentNote,
   applyMatchPatch,
+  clearPaymentLink,
+  fetchClaimedTransferIds,
   fetchDraftPayments,
   fetchMatchPayments,
   fetchPollPayments,
+  findPaymentByTransferId,
   markPaymentSent,
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
+import { fullName } from '@/lib/names';
 import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
 import { classifyDraftError } from '@/lib/wise/draft-error';
-import { resolveDraftRow } from '@/lib/wise/draft-row';
+import { type DraftOverride, resolveDraftRow } from '@/lib/wise/draft-row';
 import {
   annotateOrphans,
   buildRecipientIndex,
@@ -20,14 +26,61 @@ import {
   filterLive,
 } from '@/lib/wise/matcher';
 import { missingRecipientReason } from '@/lib/wise/recipient-miss';
-import type { MatchDecision, MatchResult, WiseDates, WiseTransfer } from '@/lib/wise/types';
-import { WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
+import { type PeriodWindow, referenceMatchesPeriod } from '@/lib/wise/reference';
+import type {
+  MatchDecision,
+  MatchResult,
+  OrphanCandidate,
+  UnlinkedPayment,
+  WiseDates,
+  WiseTransfer,
+} from '@/lib/wise/types';
+import { isCancellable, WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
+import {
+  type AttributableRow,
+  type AttributionRecord,
+  type AttributionTarget,
+  planAttribution,
+  planUndo,
+} from './attribution';
 import { wiseRequest, wiseRequestNullable } from './client';
 
 type Db = SupabaseClient<Database>;
 
 const DAY_MS = 86_400_000;
+
+/** Detail calls spent breaking one ambiguous row. Enough for a same-amount
+ *  cluster (the biggest seen is 5), small enough to stay cheap. */
+const MAX_REFERENCE_PROBES = 6;
+
+/** The period bounds a reference is judged against. */
+const periodWindow = (p: {
+  pay_periods?: {
+    period_start?: string | null;
+    period_end?: string | null;
+    pay_date?: string | null;
+  } | null;
+}): PeriodWindow => ({
+  periodStart: p.pay_periods?.period_start ?? null,
+  periodEnd: p.pay_periods?.period_end ?? null,
+  payDate: p.pay_periods?.pay_date ?? null,
+});
+
+/** The recipient index narrowed to ONE transfer, so decideMatch re-runs its own
+ *  window and amount rules against the candidate the reference named rather than
+ *  the caller hand-linking it. */
+const singleTransferIndex = (
+  index: Map<string, WiseTransfer[]>,
+  transferId: string,
+): Map<string, WiseTransfer[]> => {
+  const out = new Map<string, WiseTransfer[]>();
+  for (const [k, list] of index) {
+    const keep = list.filter((t) => String(t.id) === transferId);
+    if (keep.length > 0) out.set(k, keep);
+  }
+  return out;
+};
 
 // ─── profile id cache ─────────────────────────────────────────────────────────
 
@@ -76,17 +129,33 @@ async function mapLimit<T, R>(
  * loop already has the detail and should use wiseDatesFromRow() directly.
  */
 async function fetchWiseDates(listRow: WiseTransfer): Promise<WiseDates> {
+  return (await fetchWiseDetail(listRow)).dates;
+}
+
+/**
+ * Dates AND `details.reference` in one call. The reference is only returned by
+ * the detail endpoint, and this path already pays for that call — so the
+ * strongest signal available about which period a transfer paid costs nothing
+ * extra to read. See lib/wise/reference.ts.
+ */
+async function fetchWiseDetail(
+  listRow: WiseTransfer,
+): Promise<{ dates: WiseDates; reference: string | null }> {
   const dates = wiseDatesFromListRow(listRow);
+  let reference: string | null = null;
   try {
     const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${listRow.id}`);
     const d = wiseDatesFromRow(detail);
     dates.dateFunded = d.dateFunded;
     dates.dateSent = d.dateSent;
     if (!dates.created) dates.created = d.created;
+    const details = detail.details as { reference?: unknown } | null | undefined;
+    const raw = details?.reference ?? detail.reference;
+    reference = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
   } catch {
     // best-effort — keep created at minimum
   }
-  return dates;
+  return { dates, reference };
 }
 
 // ─── draft ────────────────────────────────────────────────────────────────────
@@ -158,6 +227,42 @@ export interface ServiceDraftResult {
   results: DraftOneResult[];
 }
 
+export interface DraftableRow {
+  wise_transfer_id?: string | null;
+  net_php: number | null;
+  status?: string | null;
+  paid_at?: string | null;
+  workers?: { wise_recipient_id?: number | null } | null;
+}
+
+/**
+ * Triage one row before drafting: either the reason to skip it, or the
+ * recipient + amount to draft. Shared by BOTH draft paths so the guards can't
+ * drift apart — the UI filters are advisory only (two admins, or two tabs, both
+ * see the same row as undrafted).
+ *
+ * A row that already carries a `wise_transfer_id` is NEVER re-drafted: the
+ * write-back overwrites the stored id, orphaning the first (still live)
+ * transfer, and funding the batch then pays the contractor twice (RP-09).
+ *
+ * Nor is a row that is already paid. The id was the only thing standing between
+ * a paid row and a second draft, so unlinking one (to correct a wrong link) used
+ * to hand it straight back to the draft path.
+ */
+export const triageDraftRow = (
+  row: DraftableRow,
+  override?: DraftOverride,
+): { skip: string } | { recipientId: number; amountPhp: number } => {
+  if (row.wise_transfer_id) return { skip: 'already drafted' };
+  if (row.paid_at || row.status === 'sent' || row.status === 'reconciled') {
+    return { skip: 'already paid' };
+  }
+  const { recipientId, amountPhp } = resolveDraftRow(row, override);
+  if (!recipientId) return { skip: 'no Wise recipient' };
+  if (amountPhp <= 0) return { skip: 'no amount' };
+  return { recipientId, amountPhp };
+};
+
 /** Draft a Wise transfer for each of the given payment IDs. OWNER-only. */
 export async function serviceDraft(db: Db, paymentIds: string[]): Promise<ServiceDraftResult> {
   const profileId = await getBusinessProfileId();
@@ -165,27 +270,13 @@ export async function serviceDraft(db: Db, paymentIds: string[]): Promise<Servic
   const results: DraftOneResult[] = [];
 
   for (const row of rows) {
-    const recipientId = row.workers?.wise_recipient_id ?? null;
-    const amountPhp = Number(row.net_php ?? 0);
-
-    if (!recipientId) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: 'no Wise recipient',
-      });
-      continue;
-    }
-    if (amountPhp <= 0) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: 'no amount',
-      });
+    const triage = triageDraftRow(row);
+    if ('skip' in triage) {
+      results.push({ paymentId: row.id, status: 'skipped', error: triage.skip });
       continue;
     }
 
-    const res = await draftOne(profileId, row.id, recipientId, amountPhp);
+    const res = await draftOne(profileId, row.id, triage.recipientId, triage.amountPhp);
     if (res.status === 'drafted' && res.transferId !== undefined) {
       await setWiseTransferIdSafe(db, row.id, String(res.transferId), res.fxRate);
     }
@@ -228,12 +319,10 @@ export async function serviceBatch(
     db,
     items.map((i) => i.paymentId),
   );
-  const eligible = rows.filter((r) => {
-    const { recipientId, amountPhp } = resolveDraftRow(r, overrides.get(r.id));
-    return recipientId !== null && amountPhp > 0;
-  });
+  const eligible = rows.filter((r) => !('skip' in triageDraftRow(r, overrides.get(r.id))));
 
-  if (eligible.length === 0) throw new Error('No eligible payments (missing recipient or amount)');
+  if (eligible.length === 0)
+    throw new Error('No eligible payments (already drafted, or missing recipient or amount)');
 
   // 1. Create the batch group.
   const group = await wiseRequest<{ id: string }>(`/v3/profiles/${profileId}/batch-groups`, {
@@ -247,16 +336,13 @@ export async function serviceBatch(
   const results: DraftOneResult[] = [];
 
   for (const row of rows) {
-    const { recipientId, amountPhp } = resolveDraftRow(row, overrides.get(row.id));
+    const triage = triageDraftRow(row, overrides.get(row.id));
 
-    if (!recipientId || amountPhp <= 0) {
-      results.push({
-        paymentId: row.id,
-        status: 'skipped',
-        error: !recipientId ? 'no Wise recipient' : 'no amount',
-      });
+    if ('skip' in triage) {
+      results.push({ paymentId: row.id, status: 'skipped', error: triage.skip });
       continue;
     }
+    const { recipientId, amountPhp } = triage;
 
     try {
       // Quote.
@@ -445,6 +531,8 @@ export interface MatchStats {
   window: { from: string; to: string; days: number };
   mode: 'match' | 'refresh';
   results: MatchResult[];
+  /** Rows the matcher declined, each with the transfers that could be it. */
+  unlinked: UnlinkedPayment[];
 }
 
 /**
@@ -457,6 +545,9 @@ export interface MatchStats {
  * @param windowDays   ±days around pay_date (default 7; legacy default).
  * @param refresh      Re-fetch already-matched rows (to backfill wise_dates etc.).
  * @param payPeriodId  Scope to one period (omit = all unmatched wise payments).
+ * @param dryRun       Decide everything, write nothing. Opening a period runs
+ *                     this to show its suggestions; only the explicit Match
+ *                     button may link a transfer or restate an amount.
  */
 export async function serviceMatch(
   db: Db,
@@ -464,10 +555,12 @@ export async function serviceMatch(
     windowDays?: number | undefined;
     refresh?: boolean | undefined;
     payPeriodId?: string | undefined;
+    dryRun?: boolean | undefined;
   } = {},
 ): Promise<MatchStats> {
   const windowDays = Number(opts.windowDays ?? 7);
   const refresh = opts.refresh === true;
+  const dryRun = opts.dryRun === true;
 
   const payments = await fetchMatchPayments(db, {
     refresh,
@@ -491,6 +584,7 @@ export async function serviceMatch(
       },
       mode: refresh ? 'refresh' : 'match',
       results: [],
+      unlinked: [],
     };
   }
 
@@ -542,13 +636,27 @@ export async function serviceMatch(
   // 4. Filter out cancelled "ghost" transfers.
   const liveTransfers = filterLive(wiseTransfers);
 
-  // 5. Build indexes.
-  const recipIndex = buildRecipientIndex(liveTransfers);
-  const idIndex = buildTransferIdIndex(liveTransfers);
+  // 5. Build indexes. One transfer pays one row, so anything a payment already
+  //    holds is off the table before the matcher ever sees it — the discovery
+  //    path is what put 36 transfers on two rows each. The by-id index keeps the
+  //    full list: the refresh path has to find the transfer a row already claims.
+  const claimed = await fetchClaimedTransferIds(db);
+  const unclaimed = liveTransfers.filter((t) => !claimed.has(String(t.id)));
+  const recipIndex = buildRecipientIndex(unclaimed);
+  // Cancelled ghosts included on purpose: a row linked to one has to be able to
+  // find it, or its dead link reports as "not in the history window" and looks
+  // like a paging problem instead of the ghost it is.
+  const idIndex = buildTransferIdIndex(wiseTransfers);
 
   // 6. Match each payment.
   const nowIso = new Date().toISOString();
   const allResults: MatchResult[] = [];
+  /** Payments this run leaves carrying a transfer id. */
+  const linkedPaymentIds = new Set<string>();
+  /** dry-run only: payment id → the transfer a real run would have linked. */
+  const proposed = new Map<string, string>();
+  /** Transfers this run has already handed out — one transfer pays one row. */
+  const taken = new Set<string>();
   let matched = 0;
   let variances = 0;
   let ambiguous = 0;
@@ -563,6 +671,10 @@ export async function serviceMatch(
       original_net_php: p.original_net_php,
       status: p.status,
       wise_transfer_id: p.wise_transfer_id,
+      // RP-04: the matcher anchors its date window on paid_at when we have it —
+      // a real send date beats a derived one. It was selected but never passed,
+      // so every row fell through to the date-derived window.
+      paid_at: p.paid_at,
       workers: p.workers
         ? {
             wise_recipient_id: p.workers.wise_recipient_id,
@@ -573,9 +685,84 @@ export async function serviceMatch(
       pay_periods: p.pay_periods
         ? {
             pay_date: p.pay_periods.pay_date,
+            period_start: p.pay_periods.period_start,
             period_end: p.pay_periods.period_end,
           }
         : null,
+    };
+
+    // DISCOVERY PATH: fetch dates lazily only for the winning transfer.
+    const discover = async (m: typeof mp): Promise<MatchDecision> => {
+      const getDates = (t: WiseTransfer): WiseDates => {
+        // For the sync pure matcher call, return list-row dates (no network).
+        // The service layer re-fetches the detail asynchronously below.
+        return wiseDatesFromListRow(t);
+      };
+      let d = decideMatch(m, recipIndex, getDates, windowDays, nowIso, taken);
+
+      // AMBIGUITY BREAKER: the matcher refuses to guess between same-amount
+      // candidates, but their references usually say outright which period each
+      // one paid. A handful of extra detail calls, only on rows that are stuck.
+      if (d.result.outcome === 'ambiguous_exact') {
+        const named: string[] = [];
+        for (const id of d.result.candidate_transfer_ids.slice(0, MAX_REFERENCE_PROBES)) {
+          const t = idIndex.get(id);
+          if (!t) continue;
+          const { reference } = await fetchWiseDetail(t);
+          if (referenceMatchesPeriod(reference, periodWindow(m)) === true) named.push(id);
+        }
+        // Exactly one claiming this period resolves it; two still means guess.
+        if (named.length === 1) {
+          d = decideMatch(
+            m,
+            singleTransferIndex(recipIndex, named[0] as string),
+            getDates,
+            windowDays,
+            nowIso,
+            taken,
+          );
+        }
+      }
+
+      // If the decision involves a transfer, fetch the real detail dates now.
+      if (d.patch?.wise_transfer_id) {
+        const t = idIndex.get(d.patch.wise_transfer_id);
+        if (t) {
+          const { dates: realDates, reference } = await fetchWiseDetail(t);
+
+          // DUPLICATE GUARD: a transfer whose reference names a DIFFERENT period
+          // is the previous batch's, sitting in this period's window because the
+          // window is deliberately generous. Auto-linking it marks a period paid
+          // that nobody paid. Refuse and hand the operator the evidence.
+          if (referenceMatchesPeriod(reference, periodWindow(m)) === false) {
+            return {
+              result: {
+                payment_id: m.id,
+                worker_id: m.worker_id,
+                outcome: 'reference_names_other_period',
+                transfer_id: String(t.id),
+                reference: reference ?? '',
+                reason: `Wise transfer ${t.id} says "${reference}" — that is not this period. Link it by hand if it really paid this row.`,
+              },
+            };
+          }
+
+          d.patch.wise_dates = realDates;
+          // Re-evaluate paid_at / status from the real dates.
+          const sentIso = bestSentDate(realDates);
+          if (sentIso && WISE_PAID_STATES.has(t.status)) {
+            d.patch.paid_at = sentIso;
+            d.patch.status = 'sent';
+            d.patch.wise_locked_at = nowIso;
+          }
+          // Propagate updated dates to result for the response body.
+          const r = d.result;
+          if ('wise_dates' in r) {
+            (r as unknown as { wise_dates: WiseDates }).wise_dates = realDates;
+          }
+        }
+      }
+      return d;
     };
 
     let decision: MatchDecision;
@@ -586,42 +773,39 @@ export async function serviceMatch(
         ? await fetchWiseDates(storedT)
         : { created: null, dateFunded: null, dateSent: null };
       decision = decideRefresh(mp, idIndex, dates, nowIso);
-    } else {
-      // DISCOVERY PATH: fetch dates lazily only for the winning transfer.
-      const getDates = (t: WiseTransfer): WiseDates => {
-        // For the sync pure matcher call, return list-row dates (no network).
-        // The service layer re-fetches the detail asynchronously below.
-        return wiseDatesFromListRow(t);
-      };
-      decision = decideMatch(mp, recipIndex, getDates, windowDays, nowIso);
 
-      // If the decision involves a transfer, fetch the real detail dates now.
-      if (decision.patch?.wise_transfer_id) {
-        const tid = decision.patch.wise_transfer_id;
-        const t = idIndex.get(tid);
-        if (t) {
-          const realDates = await fetchWiseDates(t);
-          decision.patch.wise_dates = realDates;
-          // Re-evaluate paid_at / status from the real dates.
-          const sentIso = bestSentDate(realDates);
-          if (sentIso && WISE_PAID_STATES.has(t.status)) {
-            decision.patch.paid_at = sentIso;
-            decision.patch.status = 'sent';
-            decision.patch.wise_locked_at = nowIso;
-          }
-          // Propagate updated dates to result for the response body.
-          const r = decision.result;
-          if ('wise_dates' in r) {
-            (r as unknown as { wise_dates: WiseDates }).wise_dates = realDates;
-          }
-        }
+      // The stored transfer is cancelled/refunded — it paid nobody, so the row is
+      // effectively unlinked and the transfer that DID pay it is still sitting
+      // unclaimed. Re-run discovery here rather than making the operator unlink by
+      // hand first. An unfunded draft is left alone deliberately: it is still live
+      // in Wise, and orphaning it is the RP-09 double-pay route.
+      if (decision.result.outcome === 'refresh_transfer_dead') {
+        const relinked = await discover({ ...mp, wise_transfer_id: null });
+        if (relinked.patch?.wise_transfer_id) decision = relinked;
       }
+    } else {
+      decision = await discover(mp);
     }
 
     const { patch, result } = decision;
 
+    // A row is "unlinked" when the run leaves it without a transfer — not when
+    // its outcome happens to be one of a named few. Listing by outcome dropped
+    // ambiguous_exact rows out of the UI entirely: the period counted them as
+    // unmatched and then showed nothing to act on.
+    // A link to a transfer that never paid is not a link. Counting it as one is
+    // what hid 29 ghost-linked rows: they were "linked", so the period looked
+    // fully reconciled and they never appeared in the list of rows to act on.
+    const deadLink =
+      result.outcome === 'refresh_transfer_dead' || result.outcome === 'refresh_transfer_unfunded';
+    if (patch?.wise_transfer_id || (p.wise_transfer_id && !deadLink)) linkedPaymentIds.add(p.id);
+    if (dryRun && patch?.wise_transfer_id) proposed.set(p.id, patch.wise_transfer_id);
+    // Claim it for the rest of the run — in a dry run too, or the read-only view
+    // would offer one transfer to two rows and both would look linkable.
+    if (patch?.wise_transfer_id) taken.add(patch.wise_transfer_id);
+
     // Apply DB write if the matcher proposed one.
-    if (patch) {
+    if (patch && !dryRun) {
       try {
         await applyMatchPatch(db, p.id, {
           ...(patch.wise_transfer_id !== undefined
@@ -667,6 +851,9 @@ export async function serviceMatch(
       case 'no_wise_transfer':
       case 'no_wise_transfer_in_window':
       case 'refresh_transfer_not_in_history':
+      case 'refresh_transfer_dead':
+      case 'refresh_transfer_unfunded':
+      case 'reference_names_other_period':
         unmatched++;
         break;
       default:
@@ -684,17 +871,93 @@ export async function serviceMatch(
     original_net_php: p.original_net_php,
     status: p.status,
     wise_transfer_id: p.wise_transfer_id,
+    paid_at: p.paid_at, // same anchor as above, for orphan suggestions
+    worker_name: p.workers
+      ? fullName({
+          firstName: p.workers.first_name,
+          middleName: p.workers.middle_name,
+          lastName: p.workers.last_name,
+        })
+      : null,
     workers: p.workers,
     pay_periods: p.pay_periods
       ? {
           pay_date: p.pay_periods.pay_date,
+          period_start: p.pay_periods.period_start,
           period_end: p.pay_periods.period_end,
         }
       : null,
   }));
-  annotateOrphans(allResults, matcherPayments, liveTransfers, windowDays);
+
+  // Recipient names give the sweep its second axis (amount alone can't tell two
+  // contractors on a round ₱10,000 apart). One extra API call, and only when a
+  // row actually needs the fallback.
+  const needsFallback = allResults.some(
+    (r) =>
+      r.outcome === 'no_wise_transfer' ||
+      r.outcome === 'no_wise_transfer_in_window' ||
+      r.outcome === 'no_recipient',
+  );
+  let recipientNames: Map<string, string> | undefined;
+  if (needsFallback) {
+    try {
+      const { recipients } = await serviceRecipients(profileId);
+      const names = new Map(recipients.map((r) => [String(r.id), r.name] as [string, string]));
+      // ponytail: one GET per since-deleted recipient (9 across all of 2024–2026),
+      // so no caching or paging. Batch it if the recipient list ever churns hard.
+      const extra = await mapLimit(unknownTargetAccounts(unclaimed, names), 8, (id) =>
+        serviceGetRecipient(Number(id)).catch(() => null),
+      );
+      for (const r of extra) if (r?.name) names.set(String(r.id), r.name);
+      recipientNames = names;
+    } catch {
+      // Names are an enhancement — fall back to the amount-only sweep.
+      recipientNames = undefined;
+    }
+  }
+  // Suggestions come from the same unclaimed pool: a transfer that already paid
+  // another row is not an orphan, and offering it invites a second link to it.
+  annotateOrphans(allResults, matcherPayments, unclaimed, windowDays, recipientNames);
+
+  const netByPayment = new Map(payments.map((p) => [p.id, Number(p.net_php ?? 0)]));
+  const nameByPayment = new Map(matcherPayments.map((p) => [p.id, p.worker_name ?? '']));
+
+  /** The transfer a dry run would have linked, as a pickable candidate. */
+  const proposedCandidate = (paymentId: string): OrphanCandidate[] => {
+    const t = idIndex.get(proposed.get(paymentId) ?? '');
+    if (!t) return [];
+    return [
+      {
+        transfer_id: String(t.id),
+        target_account: String(t.targetAccount ?? ''),
+        target_value: Number(t.targetValue ?? t.targetAmount ?? 0),
+        created: t.created ?? t.createdAt ?? null,
+        wise_status: t.status ?? null,
+        shared_with_n_payments: 1,
+        ambiguous: false,
+        recipient_name: recipientNames?.get(String(t.targetAccount ?? '')) ?? null,
+        name_matches: false,
+      },
+    ];
+  };
+
+  const unlinked: UnlinkedPayment[] = allResults
+    .filter((r) => !linkedPaymentIds.has(r.payment_id))
+    .map((r) => ({
+      paymentId: r.payment_id,
+      workerName: nameByPayment.get(r.payment_id) ?? '',
+      netPhp: netByPayment.get(r.payment_id) ?? 0,
+      outcome: r.outcome,
+      reason: 'reason' in r ? r.reason : 'error' in r ? r.error : 'Not linked to a Wise transfer',
+      candidates:
+        ('candidate_orphan_transfers' in r ? r.candidate_orphan_transfers : undefined) ??
+        proposedCandidate(r.payment_id),
+    }))
+    // Rows we can actually offer a candidate for come first.
+    .sort((a, b) => b.candidates.length - a.candidates.length);
 
   return {
+    unlinked,
     scanned: payments.length,
     matched,
     variances,
@@ -707,6 +970,186 @@ export async function serviceMatch(
     mode: refresh ? 'refresh' : 'match',
     results: allResults,
   };
+}
+
+/**
+ * Target accounts in the pulled transfers that the recipient list can't name.
+ *
+ * GET /v1/accounts?profile= returns ACTIVE recipients only, so a transfer sent to a
+ * since-deleted recipient comes back nameless — and that is exactly the case the
+ * orphan sweep exists for (recipient re-created, second account, paid via Wisetag).
+ * Nameless, it has only the date window to go on, so a transfer sent later in the
+ * legal pay window stays invisible while the row reports "no Wise transfer".
+ * GET /v1/accounts/{id} still resolves a deleted recipient, so fetch those by id.
+ */
+export const unknownTargetAccounts = (
+  transfers: WiseTransfer[],
+  known: Map<string, string>,
+): string[] => [
+  ...new Set(transfers.map((t) => String(t.targetAccount ?? '')).filter((a) => a && !known.has(a))),
+];
+
+// ─── manual link ──────────────────────────────────────────────────────────────
+
+export interface LinkTransferResult {
+  transferId: string;
+  wiseStatus: string | null;
+  wiseAmount: number;
+  dbAmount: number;
+  /** wiseAmount − dbAmount, in pesos. Non-zero means the operator accepted a
+   *  variance; the stored net is left alone either way. */
+  delta: number;
+  /** The transfer left outside the window the matcher searches — the operator
+   *  asserted the link and gave a reason. */
+  outOfWindow?: boolean;
+}
+
+/**
+ * Attach a specific Wise transfer to a payment, by operator decision.
+ *
+ * The escape hatch for what the automatic matcher can't key on — a transfer
+ * sent to a recipient the profile never knew about. Bookkeeping only: no money
+ * moves and no new transfer is created.
+ *
+ * Unlike the auto-matcher's variance path, this NEVER rewrites net_php. The
+ * operator is asserting "this transfer paid this row", not "the amount I
+ * calculated was wrong" — silently restating the payroll amount from a
+ * hand-picked transfer is how a typo becomes the record.
+ */
+export async function serviceLinkTransfer(
+  db: Db,
+  paymentId: string,
+  transferId: string,
+  dbAmount: number,
+  opts: {
+    /** Operator's reason — required when the transfer sits outside the period's
+     *  window, where the automatic matcher would never have offered it. */
+    reason?: string | undefined;
+    note?: string | null | undefined;
+    window?: { periodStart: string | null; payDate: string | null } | undefined;
+  } = {},
+): Promise<LinkTransferResult> {
+  // One transfer pays one row. The matcher drops claimed transfers before it
+  // indexes; the manual path had no such check, and unlink is what made a
+  // second claim reachable by hand.
+  const holder = await findPaymentByTransferId(db, String(transferId), paymentId);
+  if (holder) {
+    throw new Error(
+      `Transfer ${transferId} is already linked to ${holder.workerName || 'another payment'}. Unlink it there first.`,
+    );
+  }
+
+  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const status = (detail.status as string | null | undefined) ?? null;
+  if (status === 'cancelled') {
+    throw new Error(`Wise transfer ${transferId} is cancelled — it never paid anyone.`);
+  }
+  if (status && !WISE_PAID_STATES.has(status)) {
+    throw new Error(
+      `Wise transfer ${transferId} is ${status} — it hasn't paid anyone yet, so it can't be the transfer that paid this row.`,
+    );
+  }
+
+  const dates = wiseDatesFromRow(detail);
+  const sentIso = bestSentDate(dates);
+  const wiseAmount = Number(detail.targetValue ?? 0);
+
+  // Outside the window the matcher searches, the link is a claim only the
+  // operator can make — Zagado's 2024-08-16→31 was paid three days before the
+  // period opened. Allowed, but it has to say why, or the reason dies with the
+  // session it was decided in.
+  const outOfWindow = isOutsideWindow(sentIso ?? dates.created, opts.window);
+  const reason = opts.reason?.trim();
+  if (outOfWindow && !reason) {
+    throw new Error(
+      `Transfer ${transferId} was sent outside this period's payment window — add a reason to link it anyway.`,
+    );
+  }
+
+  await applyMatchPatch(db, paymentId, {
+    wise_transfer_id: String(transferId),
+    wise_dates: dates,
+    // Only claim it was paid when Wise says the money actually left.
+    ...(sentIso && status && WISE_PAID_STATES.has(status)
+      ? { paid_at: sentIso, status: 'sent', wise_locked_at: new Date().toISOString() }
+      : {}),
+  });
+
+  if (reason) {
+    await appendPaymentNote(db, paymentId, `Linked #${transferId}: ${reason}`, opts.note ?? null);
+  }
+
+  return {
+    transferId: String(transferId),
+    wiseStatus: status,
+    wiseAmount,
+    dbAmount,
+    delta: wiseAmount - dbAmount,
+    outOfWindow,
+  };
+}
+
+/**
+ * Sent before the period opened, or later than a fortnight past its deadline.
+ *
+ * The boundary between "the matcher could have found this itself" and "only the
+ * operator can assert this" — outside it, a link needs a written reason. Unknown
+ * dates are treated as inside: a missing pay_date is not evidence of anything,
+ * and demanding a reason for it would just train people to type "n/a".
+ */
+export const isOutsideWindow = (
+  sentIso: string | null,
+  window?: { periodStart: string | null; payDate: string | null } | undefined,
+): boolean => {
+  if (!sentIso || !window?.periodStart || !window.payDate) return false;
+  const sent = new Date(sentIso).getTime();
+  if (Number.isNaN(sent)) return false;
+  const lo = new Date(`${window.periodStart}T00:00:00.000Z`).getTime();
+  const hi = new Date(`${window.payDate}T23:59:59.999Z`).getTime() + 14 * DAY_MS;
+  return sent < lo || sent > hi;
+};
+
+export interface UnlinkTransferResult {
+  paymentId: string;
+  transferId: string;
+  wiseStatus: string | null;
+}
+
+/**
+ * Detach the transfer a payment holds, with a reason.
+ *
+ * The counterpart `wiseLinkTransfer` has told operators to use since it shipped
+ * ("Already linked to transfer X. Unlink it first.") — a button nobody had built.
+ *
+ * Refuses while the linked transfer is an unfunded draft: that transfer is still
+ * live in Wise, and a row with no transfer id is draftable again, so unlinking it
+ * is the RP-09 double-pay route with extra steps. Cancel it in Wise first.
+ */
+export async function serviceUnlinkTransfer(
+  db: Db,
+  payment: { id: string; wise_transfer_id: string | null; status: string; note: string | null },
+  reason: string,
+): Promise<UnlinkTransferResult> {
+  const transferId = payment.wise_transfer_id;
+  if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
+
+  // A transfer we can't read is one we can't call live, so it can't block the
+  // unlink — but an in-flight draft we CAN read must.
+  const detail = await wiseRequestNullable<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const status = (detail?.status as string | null | undefined) ?? null;
+  if (status && WISE_IN_FLIGHT_STATES.has(status)) {
+    throw new Error(
+      `Transfer ${transferId} is ${status} — an unfunded draft that is still live in Wise. Cancel it first ("Cancel draft in Wise"), or funding it later pays this row twice.`,
+    );
+  }
+
+  await clearPaymentLink(db, payment.id, {
+    note: `Unlinked #${transferId}: ${reason}`,
+    status: payment.status,
+    existingNote: payment.note,
+  });
+
+  return { paymentId: payment.id, transferId, wiseStatus: status };
 }
 
 // ─── read-only lookups ────────────────────────────────────────────────────────
@@ -962,4 +1405,140 @@ export async function serviceFindTransfersByRecipient(
       reference: null,
     })),
   };
+}
+
+// ─── variance attribution ─────────────────────────────────────────────────────
+
+/** The payment columns an attribution reads and writes. */
+export interface AttributionPayment extends AttributableRow {
+  id: string;
+  net_php: number | null;
+  wise_transfer_id: string | null;
+}
+
+export interface AttributionResult {
+  delta: number;
+  netPhp: number;
+  wiseAmount: number;
+  prevValue: number | null;
+  label: string | null;
+}
+
+/**
+ * Explain the gap between what payroll says and what Wise sent, by putting it
+ * somewhere on the row.
+ *
+ * The delta is read from the transfer, never from the caller — the control can
+ * only ever close the gap it was opened for, which is what makes it safe to run
+ * on a locked or paid period where the ordinary editor refuses.
+ */
+export async function serviceAttributeVariance(
+  db: Db,
+  payment: AttributionPayment,
+  opts: { target: AttributionTarget; label?: string | undefined; companyId?: string | undefined },
+): Promise<AttributionResult> {
+  if (!payment.wise_transfer_id) {
+    throw new Error('Link the Wise transfer first — there is no variance until there is a link.');
+  }
+
+  const detail = await wiseRequest<Record<string, unknown>>(
+    `/v1/transfers/${payment.wise_transfer_id}`,
+  );
+  const wiseAmount = Number(detail.targetValue ?? 0);
+  const delta = wiseAmount - Number(payment.net_php ?? 0);
+
+  const plan = planAttribution(payment, {
+    delta,
+    target: opts.target,
+    ...(opts.label !== undefined ? { label: opts.label } : {}),
+    ...(opts.companyId !== undefined ? { companyId: opts.companyId } : {}),
+  });
+
+  await updatePaymentRow(db, payment.id, {
+    ...(plan.haPhp !== undefined ? { haPhp: plan.haPhp } : {}),
+    ...(plan.t13Php !== undefined ? { t13Php: plan.t13Php } : {}),
+    ...(plan.miscItems !== undefined ? { miscItems: plan.miscItems } : {}),
+    netPhp: plan.netPhp,
+  });
+
+  return {
+    delta,
+    netPhp: plan.netPhp,
+    wiseAmount,
+    prevValue: plan.prevValue,
+    label: plan.item?.label ?? null,
+  };
+}
+
+/** Reverse the last attribution on a payment — see `planUndo`. */
+export async function serviceUndoAttribution(
+  db: Db,
+  payment: AttributionPayment,
+  record: AttributionRecord,
+): Promise<{ netPhp: number }> {
+  const plan = planUndo(payment, record);
+  await updatePaymentRow(db, payment.id, {
+    ...(plan.haPhp !== undefined ? { haPhp: plan.haPhp } : {}),
+    ...(plan.t13Php !== undefined ? { t13Php: plan.t13Php } : {}),
+    ...(plan.miscItems !== undefined ? { miscItems: plan.miscItems } : {}),
+    netPhp: plan.netPhp,
+  });
+  return { netPhp: plan.netPhp };
+}
+
+// ─── cancel a draft ───────────────────────────────────────────────────────────
+
+export interface CancelTransferResult {
+  transferId: string;
+  previousStatus: string;
+  status: string;
+}
+
+/**
+ * Cancel an unfunded Wise transfer the app is holding.
+ *
+ * The counterpart to drafting, and the step that unblocks everything else: while
+ * a draft is live the app refuses to unlink or re-match its row (orphaning a
+ * fundable transfer is the RP-09 double-pay route), so without a cancel button
+ * the only exit was the Wise UI.
+ *
+ * This is NOT a funding call and does not contradict ADR-0007 — it is the one
+ * direction that can only ever reduce money movement. Refuses anything that has
+ * already paid: `PUT /transfers/{id}/cancel` on a sent transfer is a no-op in
+ * Wise, and the operator needs to be told they are looking at real money, not
+ * handed a raw API error.
+ */
+export async function serviceCancelTransfer(
+  db: Db,
+  payment: { id: string; wise_transfer_id: string | null; note: string | null },
+  reason?: string,
+): Promise<CancelTransferResult> {
+  const transferId = payment.wise_transfer_id;
+  if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
+
+  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
+  const previousStatus = String(detail.status ?? '');
+  if (WISE_PAID_STATES.has(previousStatus)) {
+    throw new Error(
+      `Transfer ${transferId} is ${previousStatus} — that money has already gone out. Nothing to cancel.`,
+    );
+  }
+  if (!isCancellable(previousStatus)) {
+    throw new Error(`Transfer ${transferId} is ${previousStatus} — it cannot be cancelled.`);
+  }
+
+  const cancelled = await wiseRequest<Record<string, unknown>>(
+    `/v1/transfers/${transferId}/cancel`,
+    { method: 'PUT' },
+  );
+  const status = String(cancelled.status ?? 'cancelled');
+
+  await appendPaymentNote(
+    db,
+    payment.id,
+    `Cancelled draft #${transferId}${reason ? `: ${reason}` : ''}`,
+    payment.note,
+  );
+
+  return { transferId, previousStatus, status };
 }

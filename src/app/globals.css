@@ -70,9 +70,11 @@
 }
 body {
   margin: 0;
-  /* Legacy stack: Inter preferred when installed, otherwise the system stack
-     (no webfont was loaded in legacy — keep it that way: zero font flash). */
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Inter is now actually loaded (self-hosted via next/font in layout.tsx),
+     where legacy only *named* it and silently fell through to system-ui — which
+     meant the app rendered in SF on macOS and Segoe on Windows. --font-sans is
+     next/font's size-adjusted fallback chain, so there is still no layout shift. */
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -80,7 +82,17 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-td {
+/* Money and figures ride a fixed-width digit. Table cells already did, but the
+   headline amounts did not — so a net-pay total re-rendering from ₱98,411 to
+   ₱103,244 changed width mid-column and nudged everything beside it. Every
+   number a person reads as currency belongs here, not just the ones in a <td>. */
+td,
+.ov-tile-num,
+.ov-delta,
+.steps-time,
+.portal .net,
+.portal .bigpay,
+.portal .summary .scell .v {
   font-variant-numeric: tabular-nums;
 }
 a {
@@ -557,6 +569,31 @@ tr.clickable:hover {
   overflow-y: auto;
 }
 
+/* Row actions pinned to the right edge of a side-scrolling table. On a wide
+   table (the pay statements run to 15 columns) the last cell sits past the
+   fold, so a destructive action was reachable only if you thought to scroll —
+   while a harmless Print button held the visible edge. Desktop only: under
+   768px the table is already stacked into cards, where there is no fold. */
+@media (min-width: 768px) {
+  .table-scroll th.col-actions,
+  .table-scroll td.col-actions {
+    position: sticky;
+    right: 0;
+    background: var(--card);
+    box-shadow: -8px 0 8px -8px rgb(0 0 0 / 18%);
+    z-index: 1;
+  }
+  /* Must outrank the sticky header's own z-index where they cross. */
+  .table-scroll thead th.col-actions {
+    z-index: 2;
+  }
+  /* The pinned cell paints over the row, so it has to carry the hover tint
+     itself or it reads as a gap moving down the table. */
+  .table-scroll tbody tr:hover td.col-actions {
+    background: var(--accent-soft);
+  }
+}
+
 /* Tables -> stacked cards on phones (<768px). Each <tr> becomes a card, each
    <td> a [label][value] row driven by data-label attributes. Opt out with
    .keep-table (stays tabular + side-scrolls). */
@@ -836,7 +873,6 @@ a.btn:hover {
 }
 .steps-time {
   color: var(--muted);
-  font-variant-numeric: tabular-nums;
   font-weight: 600;
   font-size: 12px;
 }
@@ -877,6 +913,7 @@ a.btn:hover {
   gap: 12px;
 }
 .ov-tile {
+  position: relative;
   display: block;
   width: 100%;
   text-align: left;
@@ -884,15 +921,69 @@ a.btn:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px 18px;
-  cursor: pointer;
+  /* A tile with nowhere to go must not look clickable — affordance is reserved
+     for `.is-link` (a real href or an onClick), not painted on every figure. */
+  cursor: default;
   font: inherit;
+  color: inherit;
+  overflow: hidden;
   transition:
     box-shadow var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
     transform var(--dur) var(--ease);
 }
-.ov-tile:hover {
+.ov-tile.is-link {
+  cursor: pointer;
+}
+a.ov-tile.is-link:hover {
+  text-decoration: none;
+}
+.ov-tile.is-link:hover {
   box-shadow: var(--shadow);
-  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+/* Tone bleeds in from the top edge on hover — colour as a hint, never the only
+   signal (the figure itself is already toned + labelled). */
+.ov-tile.is-link::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--navy);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--dur) var(--ease);
+}
+.ov-tile.t-good.is-link::before {
+  background: var(--good);
+}
+.ov-tile.t-warn.is-link::before {
+  background: var(--warn);
+}
+.ov-tile.t-bad.is-link::before {
+  background: var(--bad);
+}
+.ov-tile.is-link:hover::before,
+.ov-tile.is-link:focus-visible::before {
+  transform: scaleX(1);
+}
+.ov-tile-go {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  font-size: 14px;
+  color: var(--muted);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition:
+    opacity var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.ov-tile.is-link:hover .ov-tile-go,
+.ov-tile.is-link:focus-visible .ov-tile-go {
+  opacity: 1;
+  transform: translateX(0);
 }
 .ov-tile:disabled {
   cursor: default;
@@ -1699,28 +1790,6 @@ dialog.modal::backdrop {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
 }
-/* Dashboard stat cards & summary grids: mobile-only refinements. */
-@media (max-width: 640px) {
-  .dash-stats {
-    display: grid !important;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 12px;
-    margin-bottom: 8px;
-  }
-  .dash-stats > .dash-stat {
-    min-width: 0 !important;
-    margin-bottom: 0;
-  }
-  .dash-stats .dash-stat-num {
-    font-size: 18px !important;
-  }
-}
-@media (max-width: 400px) {
-  .dash-stats {
-    grid-template-columns: 1fr;
-  }
-}
-
 /* Custom hover tooltip — native title= is unreliable on Chrome/macOS for
    multi-line text; this fires instantly and respects line breaks. */
 .tip-wrap {
@@ -1993,10 +2062,12 @@ dialog.modal::backdrop {
      were identical literals — re-skinning --navy now flows through to portal). */
   --accent-soft: #eaf0fb;
   --radius: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Was its own -apple-system stack, so the portal and the admin app rendered
+     in different typefaces on the same account. Both now resolve to --font-sans. */
+  font-family: var(--font-sans), system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 100dvh;
   -webkit-text-size-adjust: 100%;
 }
 .portal .wrap {
@@ -2968,4 +3039,546 @@ dialog.modal::backdrop {
 .brand-logo {
   display: block;
   height: auto;
+}
+
+/* ===== Overview v3: exception queue, duty list, activity tail =============
+ * docs/design/dashboard-redesign.md. Same tokens and same card language as the
+ * rest of the app — no new design system. Motion is transform/opacity only, so
+ * a block streaming in never reflows what is already painted, and everything is
+ * switched off under prefers-reduced-motion at the bottom of this section.
+ * ========================================================================== */
+
+.ov-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- B1 header ----------------------------------------------------------- */
+.ov-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 18px 22px;
+  background: linear-gradient(120deg, var(--card) 62%, var(--navy-50) 100%);
+}
+.ov-title {
+  margin: 0 0 2px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+.ov-header-side {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.ov-header-refresh {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  /* The clock text changes width as minutes tick; reserving the column keeps
+     the Refresh button from nudging sideways between renders (CLS). */
+  min-width: 132px;
+}
+/* Cycle chip — the single most-asked question in a payroll app, one click from
+   the run it names. */
+.ov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 99px;
+  background: var(--navy-50);
+  border: 1px solid transparent;
+  color: var(--navy);
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.ov-chip:hover {
+  text-decoration: none;
+  border-color: var(--navy);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.ov-chip-go {
+  transform: translateX(-2px);
+  opacity: 0.55;
+  transition:
+    transform var(--dur) var(--ease),
+    opacity var(--dur) var(--ease);
+}
+.ov-chip:hover .ov-chip-go {
+  transform: translateX(1px);
+  opacity: 1;
+}
+
+/* --- B2 critical band ---------------------------------------------------- */
+.ov-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.ov-banner {
+  margin-bottom: 0;
+  justify-content: space-between;
+  transition:
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+/* The sentence takes the slack so it reads flush-left behind the severity icon
+   — `space-between` alone leaves it floating in the middle of the banner. */
+.ov-banner > span:not(.ov-banner-go) {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.ov-banner:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow);
+  transform: translateX(2px);
+}
+.ov-banner-go {
+  flex: 0 0 auto;
+  font-weight: 800;
+  transform: translateX(-2px);
+  transition: transform var(--dur) var(--ease);
+}
+.ov-banner:hover .ov-banner-go {
+  transform: translateX(2px);
+}
+
+/* --- Two-column band (queue + my work, trend + activity) ----------------- */
+.ov-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.ov-cols.narrow {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+}
+/* The grid owns the spacing; the card's own bottom margin would double it. */
+.ov-cols > .card {
+  margin-bottom: 0;
+}
+@media (max-width: 1024px) {
+  .ov-cols,
+  .ov-cols.narrow {
+    grid-template-columns: 1fr;
+  }
+  .ov-cols > .card {
+    margin-bottom: 0;
+  }
+}
+/* Five exception KPIs sit on one line at desktop width, and pair up on a phone
+   rather than becoming five full-width slabs to scroll past. */
+.ov-page .ov-grid {
+  grid-template-columns: repeat(auto-fit, minmax(212px, 1fr));
+}
+/* A peso total is a wide figure; 26px wrapped "PHP 673,000.00" onto two lines
+   in a five-across row. */
+.ov-page .ov-tile-num {
+  font-size: 22px;
+}
+@media (max-width: 480px) {
+  .ov-page .ov-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ov-page .ov-tile-num {
+    font-size: 21px;
+  }
+}
+.ov-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.ov-block-head h2 {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ov-count-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 99px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- B3 needs-attention queue -------------------------------------------- */
+.ov-q-list,
+.ov-duty-list,
+.ov-act-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ov-q-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Severity is carried by the icon, the figure's colour and (for critical) the
+   row tint — not by a coloured tab down the side. */
+.ov-q-row {
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.ov-q-row.s-critical {
+  background: var(--bad-soft);
+  border-color: rgba(185, 28, 28, 0.3);
+}
+.ov-q-row.s-critical .ov-q-count {
+  color: var(--bad);
+}
+.ov-q-row.s-warn .ov-q-count {
+  color: var(--warn);
+}
+.ov-q-row:hover {
+  transform: translateX(2px);
+  border-color: var(--border-strong);
+}
+.ov-q-link {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 44px auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  color: var(--text);
+  min-height: 44px;
+}
+.ov-q-link:hover {
+  text-decoration: none;
+}
+.ov-q-icon {
+  font-size: 14px;
+  text-align: center;
+}
+.ov-q-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ov-q-label {
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.25;
+}
+.ov-q-detail {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-q-count {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-weight: 800;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.ov-q-amount {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.ov-q-age {
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ov-q-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--navy);
+  white-space: nowrap;
+}
+.ov-q-action > span {
+  transform: translateX(-2px);
+  transition: transform var(--dur) var(--ease);
+}
+.ov-q-row:hover .ov-q-action > span {
+  transform: translateX(2px);
+}
+@media (max-width: 640px) {
+  /* Two rows on a phone: identity above, figures below — no horizontal scroll,
+     and the whole card stays one tap target. */
+  .ov-q-link {
+    grid-template-columns: 20px minmax(0, 1fr) auto;
+    row-gap: 4px;
+  }
+  .ov-q-age {
+    grid-column: 2;
+    text-align: left;
+  }
+  .ov-q-action {
+    grid-column: 3;
+  }
+}
+
+/* --- B4 my work ---------------------------------------------------------- */
+.ov-duty-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ov-duty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--text);
+  transition:
+    box-shadow var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+.ov-duty:hover {
+  text-decoration: none;
+  border-color: var(--navy);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+.ov-duty-label {
+  font-weight: 700;
+  font-size: 13px;
+}
+.ov-duty-detail {
+  grid-column: 1;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ov-duty-go {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: var(--navy);
+  font-weight: 800;
+  transform: translateX(-2px);
+  transition: transform var(--dur) var(--ease);
+}
+.ov-duty:hover .ov-duty-go {
+  transform: translateX(2px);
+}
+
+/* --- B6 trend / B7 activity tail ----------------------------------------- */
+.ov-trend {
+  display: block;
+  color: inherit;
+}
+.ov-trend:hover {
+  text-decoration: none;
+  box-shadow: var(--shadow);
+}
+.ov-act-list {
+  display: flex;
+  flex-direction: column;
+}
+.ov-act-list > li {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px dashed var(--border);
+  font-size: 12.5px;
+}
+.ov-act-list > li:first-child {
+  border-top: 0;
+}
+.ov-act-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ov-act-what {
+  font-weight: 600;
+}
+.ov-act-entity {
+  color: var(--subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-act-who {
+  color: var(--muted);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+@media (max-width: 640px) {
+  .ov-act-list > li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .ov-act-when {
+    grid-column: 1 / -1;
+  }
+}
+
+/* --- B5 cycle card ------------------------------------------------------- */
+.ov-cycle-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.ov-cycle-dot::before {
+  content: "·";
+  margin-right: 8px;
+}
+.ov-cycle-net {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  color: inherit;
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  transition: background var(--dur) var(--ease);
+}
+.ov-cycle-net:hover {
+  text-decoration: none;
+  background: var(--navy-50);
+}
+.ov-pipe-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  color: inherit;
+  border-radius: var(--radius-sm);
+  min-width: 60px;
+}
+.ov-pipe-link:hover {
+  text-decoration: none;
+}
+.ov-pipe-step:hover .ov-pipe-pip {
+  border-color: var(--navy);
+}
+/* The stage you are on breathes — a compositor-only ring (transform + opacity),
+   so it costs nothing to keep running. */
+.ov-pipe-step.active .ov-pipe-pip::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid var(--navy);
+  opacity: 0;
+  animation: ovPipPulse 2.4s var(--ease) infinite;
+}
+@keyframes ovPipPulse {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+  }
+}
+/* Connector fills left-to-right as the cycle advances. */
+.ov-pipe-step.done::before,
+.ov-pipe-step.active::before {
+  transform-origin: left;
+  animation: ovRail 0.45s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 70ms);
+}
+@keyframes ovRail {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* --- Entrance: blocks and rows rise as they stream in --------------------- */
+@keyframes ovRise {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ov-page .card,
+.ov-page .ov-banner,
+.ov-page .ov-q-row,
+.ov-page .ov-duty-list > li,
+.ov-page .ov-act-list > li {
+  animation: ovRise 0.3s var(--ease) both;
+  animation-delay: calc(var(--i, 0) * 40ms);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ov-page .card,
+  .ov-page .ov-banner,
+  .ov-page .ov-q-row,
+  .ov-page .ov-duty-list > li,
+  .ov-page .ov-act-list > li,
+  .ov-pipe-step.done::before,
+  .ov-pipe-step.active::before,
+  .ov-pipe-step.active .ov-pipe-pip::after {
+    animation: none;
+  }
+  .ov-q-row:hover,
+  .ov-banner:hover,
+  .ov-duty:hover,
+  .ov-chip:hover,
+  .ov-tile.is-link:hover {
+    transform: none;
+  }
 }

@@ -3,7 +3,9 @@
  * No I/O; takes already-fetched DB rows as input.
  */
 
-import { periodDates, weekdayCount } from '@/lib/dates/periods';
+import { periodDates, periodFor } from '@/lib/dates/periods';
+import { workingDayCount } from '@/lib/pay/expected-hours';
+import type { Holiday } from '@/lib/pay/holidays';
 
 export interface TimeEntryRaw {
   id: string;
@@ -68,14 +70,47 @@ export const groupByContractor = (entries: readonly TimeEntryRaw[]): ContractorP
   return rows.sort((a, b) => a.sourceName.localeCompare(b.sourceName));
 };
 
-/** Derive period stats used in the header. */
+export interface PeriodWorkers {
+  start: string;
+  end: string;
+  workerIds: string[];
+}
+
+/**
+ * Bucket entries into the pay period each day falls in, with the workers touched
+ * in each. Drives the approve → Calculate transfer: one batch per period, and a
+ * cross-period "all unpaid" approval legitimately spans several.
+ *
+ * Entries with no worker_id are dropped — an unmatched import name has nobody to
+ * pay until it's linked on the review table.
+ */
+export const groupWorkersByPeriod = (
+  entries: readonly { workerId: string | null; workDate: string }[],
+): PeriodWorkers[] => {
+  const byPeriod = new Map<string, { start: string; end: string; workerIds: Set<string> }>();
+  for (const e of entries) {
+    if (!e.workerId) continue;
+    const { start, end } = periodFor(e.workDate);
+    const key = `${start}|${end}`;
+    const bucket = byPeriod.get(key) ?? { start, end, workerIds: new Set<string>() };
+    bucket.workerIds.add(e.workerId);
+    byPeriod.set(key, bucket);
+  }
+  return [...byPeriod.values()]
+    .map((b) => ({ start: b.start, end: b.end, workerIds: [...b.workerIds] }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+};
+
+/**
+ * Derive period stats used in the header. `workingDays` excludes observed
+ * holidays, so it matches the expected hours payroll actually pays; pass the
+ * company's resolved holidays or the code defaults apply.
+ */
 export const periodStats = (
   start: string,
   end: string,
-): { periodDays: number; workingDays: number } => {
-  const dates = periodDates(start, end);
-  return {
-    periodDays: dates.length,
-    workingDays: weekdayCount(start, end),
-  };
-};
+  holidays?: readonly Holiday[],
+): { periodDays: number; workingDays: number } => ({
+  periodDays: periodDates(start, end).length,
+  workingDays: workingDayCount(start, end, holidays),
+});

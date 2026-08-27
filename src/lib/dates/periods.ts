@@ -78,6 +78,50 @@ export const periodFor = (dateStr: string): PayPeriod => {
 export const previousPeriod = (dateStr: string): PayPeriod =>
   periodFor(utcMsToIso(isoToUtcMs(periodFor(dateStr).start) - DAY_MS));
 
+/** The semi-monthly period immediately AFTER the one containing `dateStr`. */
+export const nextPeriod = (dateStr: string): PayPeriod =>
+  periodFor(utcMsToIso(isoToUtcMs(periodFor(dateStr).end) + DAY_MS));
+
+/**
+ * The period the admin should land on for importing: the one holding the first
+ * day with no time imported yet. Last import ran through 7/15 → 7/16–7/31; it
+ * ran through 7/20 → still 7/16–7/31 (that period is only half imported).
+ *
+ * Never runs past the period containing `today` — future-dated PTO lands in
+ * time_entries and would otherwise fling the default into September. With
+ * nothing imported at all, falls back to the arrears default.
+ */
+export const nextUnimportedPeriod = (lastImportedDate: string | null, today: string): PayPeriod => {
+  if (!lastImportedDate) return previousPeriod(today);
+  const next = periodFor(utcMsToIso(isoToUtcMs(lastImportedDate) + DAY_MS));
+  const current = periodFor(today);
+  return next.start > current.start ? current : next;
+};
+
+/**
+ * Which scheduled runs approved sessions may be paid in: the period that OWNS
+ * their dates, then the following `ahead` periods.
+ *
+ * The owning period is first because it is nearly always the right answer — it
+ * is the run whose deadline the work is already counted against. The later ones
+ * exist because that run may be closed, or the admin may deliberately hold the
+ * pay for a cycle. Earlier periods are never offered: a period that ended before
+ * the work happened cannot pay for it.
+ *
+ * Callers must reject a selection whose dates span more than one period (the
+ * server does) — pass dates from a single period, or this returns the choices
+ * for the earliest one and silently strands the rest.
+ */
+export const payPeriodChoices = (coveringDate: string, ahead = 3): PayPeriod[] => {
+  const out = [periodFor(coveringDate)];
+  for (let i = 0; i < ahead; i++) {
+    const last = out[out.length - 1];
+    if (!last) break;
+    out.push(nextPeriod(last.start));
+  }
+  return out;
+};
+
 /** True if `dateStr` (YYYY-MM-DD) falls inside any of the given period ranges.
  *  Lexicographic string compare is correct for zero-padded ISO dates. */
 export const isDateInAnyPeriod = (

@@ -6,11 +6,12 @@
  *  exact match                    → 'exact amount match — single candidate'
  *  ±1 peso boundary (inside)      → '₱1.00 tolerance — exactly at boundary (inside)'
  *  ±1 peso boundary (outside)     → '₱1.01 over tolerance — treated as variance'
- *  outside-window rejection       → 'transfer outside ±windowDays is rejected'
+ *  outside-window rejection       → 'no period_end: transfer outside ±windowDays is rejected'
+ *  legal arrears window (RP-04)   → describe 'decideMatch — legal payment window'
  *  multi-candidate closest-date   → 'multiple exact-amount candidates — closest pay_date wins'
  *  ghost cancelled excluded       → 'cancelled transfers are excluded before indexing'
  *  recipient-history union        → 'historical recipient id in wise_recipients matched'
- *  variance auto-override         → 'unambiguous variance auto-overrides net_php'
+ *  variance never overrides       → 'a variance links the transfer and leaves net_php alone'
  *  orphan suggestion output       → 'orphan transfer is suggested for unmatched payment'
  *  true tie ambiguous             → 'true tie in exact-amount multi-candidate → ambiguous_exact'
  *  refresh fast-path              → 'refresh path re-applies dates without re-matching'
@@ -67,6 +68,8 @@ function makePayment(
     status?: string;
     wiseTransferId?: string | null;
     payDate?: string;
+    periodStart?: string;
+    periodEnd?: string;
     paidAt?: string;
   } = {},
 ): MatcherPayment {
@@ -85,8 +88,31 @@ function makePayment(
     },
     pay_periods: {
       pay_date: opts.payDate ?? PAY_DATE,
-      period_end: null,
+      period_start: opts.periodStart ?? null,
+      period_end: opts.periodEnd ?? null,
     },
+  };
+}
+
+/** A real semi-monthly row: work Mar 1–15, deadline Mar 31 → legal send Mar 16–31. */
+function makeArrearsPayment(
+  id: string,
+  netPhp: number,
+  recipientId: number,
+  opts: { paidAt?: string; periodStart?: string } = {},
+): MatcherPayment {
+  return makePayment(id, netPhp, recipientId, {
+    periodEnd: '2026-03-15',
+    payDate: '2026-03-31',
+    ...opts,
+  });
+}
+
+/** Transfer created on a given calendar date (mid-morning UTC). */
+function makeTransferOn(id: number, recipientId: number, targetValue: number, date: string) {
+  return {
+    ...makeTransfer(id, recipientId, targetValue, 0),
+    created: `${date}T10:00:00.000Z`,
   };
 }
 
@@ -177,7 +203,9 @@ describe('decideMatch — no transfers for recipient', () => {
     expect(d.result.outcome).toBe('no_wise_transfer');
   });
 
-  it('transfer outside ±windowDays is rejected → no_wise_transfer_in_window', () => {
+  // These two rows carry NO period_end, so there is no legal window to derive and
+  // windowDays is the whole story — the legacy ±windowDays fallback path.
+  it('no period_end: transfer outside ±windowDays is rejected → no_wise_transfer_in_window', () => {
     const t = makeTransfer(1, 999, 10000, 10); // 10 days after pay_date, window=7
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', 10000, 999);
@@ -185,13 +213,130 @@ describe('decideMatch — no transfers for recipient', () => {
     expect(d.result.outcome).toBe('no_wise_transfer_in_window');
   });
 
-  it('transfer exactly at ±windowDays boundary is included', () => {
+  it('no period_end: transfer exactly at ±windowDays boundary is included', () => {
     const t = makeTransfer(1, 999, 10000, 7); // exactly 7 days after — borderline
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', 10000, 999);
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
     // 7 * DAY_MS = exactly windowDays * DAY_MS → included (<=)
     expect(d.result.outcome).toBe('matched_exact');
+  });
+});
+
+// ─── decideMatch — the legal payment window (RP-04) ───────────────────────────
+//
+// THE OLD ASSERTION HERE WAS WRONG. These tests used to say "±7 days of pay_date
+// is the window" and treated a transfer 10 days off pay_date as correctly rejected.
+// That contradicts the pay schedule: semi-monthly, half-month arrears, with
+// pay_date a DEADLINE rather than an appointment — work on Mar 1–15 may legally be
+// sent on ANY day from Mar 16 to Mar 31. A ±7d window around Mar 31 covers
+// Mar 24–Apr 7 and rejects the perfectly legal Mar 17 transfer as
+// no_wise_transfer_in_window.
+//
+// The window is now the row's own [period_start, pay_date + slack], with
+// windowDays as a floor. Please don't "restore" the ±7d boundary: it only ever
+// looked right because these fixtures had no period_end. See matchWindow() in
+// src/lib/wise/matcher.ts.
+
+describe('decideMatch — legal payment window (semi-monthly arrears)', () => {
+  /** Outcome for a ₱10,000 arrears row whose only transfer was created on `created`. */
+  const outcomeFor = (created: string, windowDays = 7): string => {
+    const idx = buildRecipientIndex([makeTransferOn(1, 999, 10000, created)]);
+    return decideMatch(makeArrearsPayment('p1', 10000, 999), idx, noopDates, windowDays, NOW_ISO)
+      .result.outcome;
+  };
+
+  it('transfer on the FIRST legal day (period_end + 1) matches', () => {
+    expect(outcomeFor('2026-03-16')).toBe('matched_exact');
+  });
+
+  it('transfer on the LAST legal day (the pay_date deadline itself) matches', () => {
+    expect(outcomeFor('2026-03-31')).toBe('matched_exact');
+  });
+
+  it('RP-04 scenario: Mar 1–15 period, deadline Mar 31, sent Mar 17, never marked paid', () => {
+    expect(outcomeFor('2026-03-17')).toBe('matched_exact');
+  });
+
+  it('does NOT swallow the NEXT period transfer of the same amount', () => {
+    // Apr 5 is inside the Mar 16–31 period's legal window, not this row's.
+    expect(outcomeFor('2026-04-05')).toBe('no_wise_transfer_in_window');
+  });
+
+  it('does NOT swallow the PREVIOUS period transfer of the same amount', () => {
+    // Mar 5 belongs to the Feb 16–28 period (paid Mar 1–15).
+    expect(outcomeFor('2026-03-05')).toBe('no_wise_transfer_in_window');
+  });
+
+  it('paid_at still wins over the legal window — a late send anchors on the real date', () => {
+    const t = makeTransferOn(1, 999, 10000, '2026-04-20'); // well past the deadline
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      paidAt: '2026-04-20T10:00:00.000Z',
+    });
+    const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_exact');
+  });
+
+  it('paid_at only ever WIDENS — it cannot push a legal-window transfer out', () => {
+    // This assertion used to be the opposite ("paid_at narrows as well as
+    // widens"). It can't be: the app writes paid_at from whichever transfer got
+    // matched, so a wrong link poisons it — that is how 36 transfers ended up on
+    // two payments each. A date the row derived from a guess must not veto the
+    // schedule's own window.
+    const t = makeTransferOn(1, 999, 10000, '2026-03-20'); // inside the legal window…
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      paidAt: '2026-04-20T10:00:00.000Z',
+    }); // …but the row records Apr 20
+    const d = decideMatch(p, buildRecipientIndex([t]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_exact');
+  });
+
+  it('a transfer sent BEFORE period_end still matches (prod: Zagado, paid 2 days early)', () => {
+    // Verified counter-example to "after period_end" as a hard floor: Zagado's
+    // 2024-08-01→15 row was paid on Aug 13. The floor is period_start.
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      periodStart: '2026-03-01',
+    });
+    const early = makeTransferOn(1, 999, 10000, '2026-03-13');
+    expect(decideMatch(p, buildRecipientIndex([early]), noopDates, 7, NOW_ISO).result.outcome).toBe(
+      'matched_exact',
+    );
+  });
+
+  it('the previous period’s transfer is in window but loses the rank to this one', () => {
+    // period_start opens the window wide enough to admit the Feb 16–28 period's
+    // transfer (sent Mar 5). Eligible, but ranked behind the one that landed
+    // inside THIS row's legal send window.
+    const p = makeArrearsPayment('p1', 10000, 999, {
+      periodStart: '2026-03-01',
+    });
+    const previous = makeTransferOn(1, 999, 10000, '2026-03-05');
+    const ours = makeTransferOn(2, 999, 10000, '2026-03-27');
+    const d = decideMatch(p, buildRecipientIndex([previous, ours]), noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_closest_date');
+    expect('transfer_id' in d.result && d.result.transfer_id).toBe('2');
+  });
+
+  it('pre-RP-03 rows (pay_date overwritten with period_end) degrade to the legacy ±windowDays', () => {
+    // lockPeriod used to write period_end into pay_date, so the span is zero and
+    // the real deadline is unrecoverable — behave exactly as before the fix.
+    const p = makePayment('p1', 10000, 999, {
+      periodEnd: '2026-03-15',
+      payDate: '2026-03-15',
+    });
+    const inside = makeTransferOn(1, 999, 10000, '2026-03-20'); // within ±7d of Mar 15
+    const outside = makeTransferOn(2, 999, 10000, '2026-03-30'); // 15d out — still missed
+    expect(
+      decideMatch(p, buildRecipientIndex([inside]), noopDates, 7, NOW_ISO).result.outcome,
+    ).toBe('matched_exact');
+    expect(
+      decideMatch(p, buildRecipientIndex([outside]), noopDates, 7, NOW_ISO).result.outcome,
+    ).toBe('no_wise_transfer_in_window');
+  });
+
+  it('windowDays stays a floor — a caller-widened window still applies', () => {
+    // Apr 5 is outside the legal window but inside ±30d of its midpoint.
+    expect(outcomeFor('2026-04-05', 30)).toBe('matched_exact');
   });
 });
 
@@ -255,8 +400,8 @@ describe('decideMatch — exact match', () => {
     const idx = buildRecipientIndex([t]);
     const p = makePayment('p1', netPhp, 999);
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    // single in-window candidate with amount outside tolerance → unambiguous variance
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
+    // single in-window candidate with amount outside tolerance → variance
+    expect(d.result.outcome).toBe('matched_with_variance');
   });
 });
 
@@ -318,28 +463,34 @@ describe('decideMatch — multiple exact-amount candidates', () => {
 // ─── decideMatch — variance paths ─────────────────────────────────────────────
 
 describe('decideMatch — variance', () => {
-  it('unambiguous variance auto-overrides net_php and sets original_net_php', () => {
-    // Only one transfer in window, amount outside ±₱1 → auto-override.
-    const netPhp = 20000;
-    const wisePhp = 19500; // ₱500 difference
-    const t = makeTransfer(1, 999, wisePhp, 0);
-    const idx = buildRecipientIndex([t]);
-    const p = makePayment('p1', netPhp, 999);
-    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
-    expect(d.patch?.original_net_php).toBe(netPhp);
-    expect(d.patch?.net_php).toBe(wisePhp);
-  });
-
-  it('does NOT re-override when original_net_php already set (idempotent)', () => {
+  it('a variance links the transfer and leaves net_php alone', () => {
+    // One transfer in window, ₱500 short of the payroll net. This used to
+    // restate net_php to the Wise figure and stash the payroll number in
+    // original_net_php — the record rewritten to agree with the bank, with
+    // nothing saying why. The operator attributes the gap instead.
     const netPhp = 20000;
     const wisePhp = 19500;
     const t = makeTransfer(1, 999, wisePhp, 0);
     const idx = buildRecipientIndex([t]);
-    // Payment already has original_net_php set from a prior run.
+    const p = makePayment('p1', netPhp, 999);
+    const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
+    expect(d.result.outcome).toBe('matched_with_variance');
+    expect(d.patch?.wise_transfer_id).toBe('1');
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.net_php).toBeUndefined();
+    expect('amount_overridden' in d.result && d.result.amount_overridden).toBe(false);
+  });
+
+  it('leaves a row that a previous run already restated alone', () => {
+    const netPhp = 20000;
+    const wisePhp = 19500;
+    const t = makeTransfer(1, 999, wisePhp, 0);
+    const idx = buildRecipientIndex([t]);
+    // Payment already has original_net_php set from a run before the override
+    // was removed. Its net now equals the transfer, so it matches exactly.
     const p = makePayment('p1', wisePhp, 999, { originalNetPhp: netPhp });
     const d = decideMatch(p, idx, noopDates, 7, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_exact'); // wisePhp == net_php now
+    expect(d.result.outcome).toBe('matched_exact');
     expect(d.patch?.original_net_php).toBeUndefined();
   });
 
@@ -357,6 +508,45 @@ describe('decideMatch — variance', () => {
     expect(d.patch?.net_php).toBeUndefined();
     // Closest-amount (t2 = ₱19,500) picked as the write target.
     expect(d.patch?.wise_transfer_id).toBe('2');
+  });
+});
+
+// ─── decideMatch — one transfer pays one row ──────────────────────────────────
+
+describe('decideMatch — successful and unclaimed candidates only', () => {
+  it('a non-successful transfer never links a row', () => {
+    // Live (not cancelled) but still in flight — nothing was paid with it yet.
+    const t = makeTransfer(1, 999, 20000, 0, 'processing');
+    const d = decideMatch(
+      makePayment('p1', 20000, 999),
+      buildRecipientIndex([t]),
+      noopDates,
+      7,
+      NOW_ISO,
+    );
+    expect(d.result.outcome).toBe('no_wise_transfer');
+    expect(d.patch).toBeUndefined();
+    expect('reason' in d.result && d.result.reason).toContain('processing');
+  });
+
+  it('a transfer already handed to an earlier row is not offered to this one', () => {
+    // Two periods of the same flat-rate contractor, one transfer. Without the
+    // claim set both rows link to it — 36 transfers in prod sit on two rows each.
+    const t = makeTransfer(1, 999, 10000, 0);
+    const idx = buildRecipientIndex([t]);
+    const first = decideMatch(makePayment('p1', 10000, 999), idx, noopDates, 7, NOW_ISO, new Set());
+    expect(first.patch?.wise_transfer_id).toBe('1');
+
+    const second = decideMatch(
+      makePayment('p2', 10000, 999),
+      idx,
+      noopDates,
+      7,
+      NOW_ISO,
+      new Set(['1']),
+    );
+    expect(second.result.outcome).toBe('no_wise_transfer');
+    expect(second.patch).toBeUndefined();
   });
 });
 
@@ -454,22 +644,21 @@ describe('decideRefresh', () => {
     expect(d.patch).toBeUndefined();
   });
 
-  it('refresh variance auto-override preserves original_net_php (first run)', () => {
+  it('refresh reports the variance and leaves the payroll amount alone', () => {
     const t = makeTransfer(99, 999, 19000, 0); // ₱19,000 — stored is ₱20,000
     const idIndex = buildTransferIdIndex([t]);
-    const p = makePayment('p1', 20000, 999, {
-      wiseTransferId: '99',
-      originalNetPhp: null, // first run — not yet overridden
-    });
+    const p = makePayment('p1', 20000, 999, { wiseTransferId: '99', originalNetPhp: null });
     const dates: WiseDates = {
       created: NOW_ISO,
       dateFunded: null,
       dateSent: null,
     };
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
-    expect(d.result.outcome).toBe('matched_with_variance_overridden');
-    expect(d.patch?.original_net_php).toBe(20000);
-    expect(d.patch?.net_php).toBe(19000);
+    expect(d.result.outcome).toBe('matched_with_variance');
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.net_php).toBeUndefined();
+    // The gap is reported so the operator can attribute it.
+    expect('delta' in d.result && d.result.delta).toBe(-1000);
   });
 
   it('refresh variance does NOT re-override when original_net_php already set', () => {
@@ -491,24 +680,38 @@ describe('decideRefresh', () => {
     expect(d.patch?.original_net_php).toBeUndefined();
   });
 
-  it('refresh locks already-sent row even with non-terminal Wise status (2026-05-29 batch)', () => {
-    // "In progress" in Wise despite money having already gone out (batch quirk).
-    const t = makeTransfer(99, 999, 20000, 0, 'processing'); // not terminal
+  it('unfunded draft is never blessed, even on a row already recorded as sent', () => {
+    // The 2026-07-28 shape: the app's own draft sits `incoming_payment_waiting`
+    // while the money left on a different transfer. Trusting the recorded 'sent'
+    // here is what locked 15 rows onto transfers that never paid.
+    const t = makeTransfer(99, 999, 20000, 0, 'incoming_payment_waiting');
     const idIndex = buildTransferIdIndex([t]);
     const p = makePayment('p1', 20000, 999, {
       wiseTransferId: '99',
-      status: 'sent', // recorded as sent by CSV import / prior poll
+      status: 'sent', // recorded as sent by CSV import / manual mark-paid
     });
-    const dates: WiseDates = {
-      created: NOW_ISO,
-      dateFunded: null,
-      dateSent: null,
-    };
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
     const d = decideRefresh(p, idIndex, dates, NOW_ISO);
-    // Should still lock (trusted recorded 'sent').
-    expect(d.patch?.wise_locked_at).toBe(NOW_ISO);
-    // Should NOT set status or paid_at (not terminal in Wise).
+    expect(d.result.outcome).toBe('refresh_transfer_unfunded');
+    expect(d.patch?.wise_locked_at).toBeUndefined();
     expect(d.patch?.status).toBeUndefined();
+    expect(d.patch?.paid_at).toBeUndefined();
+  });
+
+  it('cancelled ghost link reports dead, and never rewrites net_php from it', () => {
+    // The 2026-05-29 shape: linked to a cancelled draft whose amount also differs.
+    const t = makeTransfer(99, 999, 31290, 0, 'cancelled');
+    const idIndex = buildTransferIdIndex([t]);
+    const p = makePayment('p1', 36290, 999, { wiseTransferId: '99', status: 'sent' });
+    const dates: WiseDates = { created: NOW_ISO, dateFunded: null, dateSent: null };
+
+    const d = decideRefresh(p, idIndex, dates, NOW_ISO);
+    expect(d.result.outcome).toBe('refresh_transfer_dead');
+    // The variance auto-override must not fire — a ghost's amount is not the truth.
+    expect(d.patch?.net_php).toBeUndefined();
+    expect(d.patch?.original_net_php).toBeUndefined();
+    expect(d.patch?.wise_locked_at).toBeUndefined();
   });
 });
 
@@ -577,6 +780,177 @@ describe('annotateOrphans', () => {
         expect(candidate?.shared_with_n_payments).toBe(2);
       }
     }
+  });
+
+  it('resolves the recipient name and marks the contractor hit', () => {
+    // The whole point: recipient 777 is NOT on this contractor's profile, so the
+    // primary matcher can never see this transfer — but Wise says the account
+    // belongs to them, and the amount agrees.
+    const orphan = makeTransfer(400, 777, 10000, 0);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Ma. Luisa Marcelo' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Maria Luisa Marcelo']]));
+
+    const c = unmatched[0]?.candidate_orphan_transfers?.[0];
+    expect(c?.recipient_name).toBe('Maria Luisa Marcelo');
+    expect(c?.name_matches).toBe(true);
+  });
+
+  it('a name hit reaches outside the date window; without one it does not', () => {
+    const farOutside = makeTransfer(401, 777, 10000, 30);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Jessica Aguilar' };
+    const result = () => [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    const withName = result();
+    annotateOrphans(withName, [p], [farOutside], 7, new Map([['777', 'Jessica Aguilar']]));
+    expect(withName[0]?.candidate_orphan_transfers).toHaveLength(1);
+
+    const noName = result();
+    annotateOrphans(noName, [p], [farOutside], 7, new Map([['777', 'Someone Else']]));
+    expect(noName[0]?.candidate_orphan_transfers).toBeUndefined();
+  });
+
+  it('a name hit breaks the tie two identical amounts cannot', () => {
+    // Both payments are a round 10,000 on the same day — amount alone is a coin
+    // flip, and that is exactly when auto-linking pays the wrong person.
+    const orphan = makeTransfer(402, 777, 10000, 0);
+    const p1 = { ...makePayment('p1', 10000, 888), worker_name: 'Kevin Llamoso' };
+    const p2 = { ...makePayment('p2', 10000, 999), worker_name: 'Genel Montero' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+      {
+        payment_id: 'p2',
+        worker_id: 'w2',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['999'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p1, p2], [orphan], 7, new Map([['777', 'Kevin Llamoso']]));
+
+    // Offered to both — but only Kevin's is presented as unambiguous.
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(false);
+    expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.ambiguous).toBe(true);
+  });
+
+  it('annotates an ambiguous row — the operator has to pick, so give it the list', () => {
+    // Two identical transfers to the same recipient: the matcher refuses to
+    // choose, which is exactly when the row needs its candidates surfaced.
+    const a = makeTransfer(407, 777, 10000, 0);
+    const b = makeTransfer(408, 777, 10000, 0);
+    const p = { ...makePayment('p1', 10000, 777), worker_name: 'Loren Zagado' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'ambiguous_exact' as const,
+        reason: 'two equally close',
+        candidate_transfer_ids: ['407', '408'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [a, b], 7, new Map([['777', 'Loren Zagado']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.map((c) => c.transfer_id)).toEqual([
+      '407',
+      '408',
+    ]);
+  });
+
+  it('offers each period the transfer sent inside ITS legal window', () => {
+    // A flat-rate contractor paid through a since-deleted recipient: every period
+    // is the same amount to the same account, so the name hit fits them all and
+    // amount can't order them. December's row must not lead with November's
+    // transfer just because Wise listed it first.
+    const oct = makeTransferOn(405, 777, 10000, '2024-10-30');
+    const nov = makeTransferOn(406, 777, 10000, '2024-11-15');
+    const mk = (id: string, periodEnd: string, payDate: string): MatcherPayment => ({
+      ...makePayment(id, 10000, 888, { periodEnd, payDate, paidAt: `${periodEnd}T00:00:00Z` }),
+      worker_name: 'Cecilia Pasaoa Velante',
+    });
+    const first = mk('p-oct1', '2024-10-15', '2024-10-31');
+    const second = mk('p-oct16', '2024-10-31', '2024-11-15');
+    const unmatched = [first, second].map((p) => ({
+      payment_id: p.id,
+      worker_id: `w-${p.id}`,
+      outcome: 'no_wise_transfer' as const,
+      reason: 'x',
+      recipient_keys_tried: ['888'],
+    }));
+
+    annotateOrphans(
+      unmatched,
+      [first, second],
+      [oct, nov],
+      7,
+      new Map([['777', 'Cecilia Velante']]),
+    );
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('405');
+    expect(unmatched[1]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('406');
+  });
+
+  it('sweeps for a contractor with no recipient id at all', () => {
+    const orphan = makeTransfer(403, 777, 10000, 0);
+    const p: MatcherPayment = {
+      ...makePayment('p1', 10000, 888),
+      worker_name: 'Joyce Ann Millo',
+      workers: null,
+    };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_recipient' as const,
+        reason: 'no recipient stored',
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Joyce Ann Millo']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers?.[0]?.transfer_id).toBe('403');
+  });
+
+  it('never suggests a transfer whose amount disagrees', () => {
+    const orphan = makeTransfer(404, 777, 12000, 0);
+    const p = { ...makePayment('p1', 10000, 888), worker_name: 'Hazzan Buat' };
+    const unmatched = [
+      {
+        payment_id: 'p1',
+        worker_id: 'w1',
+        outcome: 'no_wise_transfer' as const,
+        reason: 'x',
+        recipient_keys_tried: ['888'],
+      },
+    ];
+
+    annotateOrphans(unmatched, [p], [orphan], 7, new Map([['777', 'Hazzan Buat']]));
+
+    expect(unmatched[0]?.candidate_orphan_transfers).toBeUndefined();
   });
 
   it('no orphans when all transfers are claimed', () => {

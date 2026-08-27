@@ -1,6 +1,8 @@
 import 'server-only';
 import { cache } from 'react';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
+import { hasPayOutstanding } from '@/db/queries/workers';
 
 export interface CurrentWorker {
   workerId: string;
@@ -16,6 +18,15 @@ export interface CurrentWorker {
 }
 
 /**
+ * `accessEnded` separates "this user is not a contractor" from "this contractor
+ * has left and been paid" — both deny, but only the second is worth explaining
+ * on the login page. Deliberately one shape rather than a union: every caller
+ * still gates on `worker` alone, so a new denial reason can never be read as
+ * a pass.
+ */
+type Resolution = { worker: CurrentWorker | null; accessEnded: boolean };
+
+/**
  * Resolve the authenticated contractor via contractor_logins → workers
  * (legacy `my_worker_id()` semantics). RLS-scoped: a contractor only ever
  * reads their own rows.
@@ -26,45 +37,86 @@ export interface CurrentWorker {
  * all four round-trips 2-3× per portal navigation. Per-request scope re-verifies
  * on every new request, so no auth state leaks across requests.
  */
-export const getCurrentWorker = cache(async (): Promise<CurrentWorker | null> => {
+const resolve = cache(async (): Promise<Resolution> => {
+  const denied = { worker: null, accessEnded: false };
   const supabase = await createServerSupabase();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!user) return denied;
 
-  // `status='active'` mirrors the RLS helper my_worker_id() exactly: a revoked/
-  // deactivated login must resolve to no worker, so every portal path (including
-  // service-role writes that bypass RLS) denies it.
+  // Anything but `status='active'` denies, mirroring the RLS helper
+  // my_worker_id() exactly — but the status is READ rather than filtered on, so
+  // a revoked login can still be told apart from "not a contractor at all".
+  // Since #85 that revocation is what ends access (nightly sunset sweep), and
+  // without the distinction the login page reads as a rejected password.
   const { data: login } = await supabase
     .from('contractor_logins')
-    .select('worker_id')
+    .select('worker_id, status')
     .eq('auth_user_id', user.id)
-    .eq('status', 'active')
     .maybeSingle();
-  if (!login) return null;
+  if (!login) return denied;
+
+  if (login.status !== 'active') {
+    // Their own workers row is no longer readable — `workers_contractor_read` is
+    // keyed on my_worker_id(), which a revoked login does not resolve — so the
+    // service client answers the only question left: was this a departure (say
+    // so) or an admin pulling access for cause (stay generic)?
+    const { data: gone } = await createServiceClient()
+      .from('workers')
+      .select('status')
+      .eq('id', login.worker_id)
+      .maybeSingle();
+    return { worker: null, accessEnded: gone?.status === 'ended' };
+  }
 
   const { data: w } = await supabase
     .from('workers')
     .select('id, first_name, last_name, email, status')
     .eq('id', login.worker_id)
     .maybeSingle();
-  if (!w) return null;
+  if (!w) return denied;
+
+  // Departure does not revoke the login — terminateContractor leaves it alone on
+  // purpose — so access ends only once the money has actually landed. Someone who
+  // left last week still needs their payslips. Only 'ended' workers pay for the
+  // check; for everyone else this is a status comparison and no extra round-trip.
+  //
+  // The revocation that RLS honours is the nightly sweep's (sunsetPortalLogins,
+  // #85): this app's resolver cannot be the enforcement point, because the client
+  // that keeps the access is the legacy portal, which never runs any of this.
+  // Keeping the check here anyway closes the ≤24h window before the next tick,
+  // for the one client that does run it.
+  if (w.status === 'ended' && !(await hasPayOutstanding(createServiceClient(), w.id))) {
+    return { worker: null, accessEnded: true };
+  }
 
   // Legacy RLS helper: true once the contractor finished onboarding.
   const { data: onboarded } = await supabase.rpc('is_onboarded');
 
   return {
-    workerId: w.id,
-    userId: user.id,
-    firstName: w.first_name,
-    lastName: w.last_name,
-    email: w.email,
-    authEmail: user.email ?? null,
-    status: w.status,
-    onboarded: onboarded === true,
+    worker: {
+      workerId: w.id,
+      userId: user.id,
+      firstName: w.first_name,
+      lastName: w.last_name,
+      email: w.email,
+      authEmail: user.email ?? null,
+      status: w.status,
+      onboarded: onboarded === true,
+    },
+    accessEnded: false,
   };
 });
+
+export const getCurrentWorker = async (): Promise<CurrentWorker | null> => (await resolve()).worker;
+
+/**
+ * True when the signed-in user IS a contractor whose portal access has ended.
+ * Only the login page needs this: without it a denied sign-in bounces
+ * /portal → /portal/login and reads as a wrong password.
+ */
+export const portalAccessEnded = async (): Promise<boolean> => (await resolve()).accessEnded;
 
 /** Throwing variant for portal server actions. */
 export const requireWorker = async (): Promise<CurrentWorker> => {

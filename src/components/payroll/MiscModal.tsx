@@ -3,14 +3,7 @@
 import { useId, useState } from 'react';
 import { Modal } from '@/components/ui/Modal';
 import type { MiscItem } from '@/lib/pay/calc';
-
-export type MiscModalPayload = {
-  haPhp: number;
-  t13Php: number | null; // null = revert to computed
-  pddPhp: number;
-  bonusPhp: number;
-  miscItems: MiscItem[];
-};
+import type { MiscEdit } from '@/lib/payroll/row-edit';
 
 interface MiscModalProps {
   name: string;
@@ -21,7 +14,7 @@ interface MiscModalProps {
   pddPhp: number;
   bonusPhp: number;
   miscItems: readonly MiscItem[];
-  onSave: (payload: MiscModalPayload) => void;
+  onSave: (payload: MiscEdit) => void;
   onClose: () => void;
 }
 

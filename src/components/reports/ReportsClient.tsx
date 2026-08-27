@@ -19,7 +19,9 @@ import { Fragment, useEffect, useState, useTransition } from 'react';
 import { StatTile } from '@/components/overview/StatTile';
 import { ContractorPicker } from '@/components/ui';
 import { money } from '@/lib/format';
+import { receiptModel } from '@/lib/pay/receipt';
 import { payoutMethodLabel } from '@/lib/payroll/status-pills';
+import { csvEscape } from '@/lib/reports/csv';
 import {
   getContractorHistory,
   getUtilization,
@@ -53,10 +55,8 @@ const PAID = (st: string | null): boolean => st === 'sent' || st === 'reconciled
 const num = (n: number): string => n.toFixed(2);
 
 // --- CSV helpers (browser download; legacy downloadCSV) ---------------------
-const csvEscape = (v: string | number | null | undefined): string => {
-  const s = v == null ? '' : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
+// ponytail: rows-of-cells shape differs from lib/reports/csv's builders, so only
+// the escape is shared (RP-62) — not worth a second download helper.
 const downloadCSV = (filename: string, rows: Array<Array<string | number | null | undefined>>) => {
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -844,6 +844,70 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
 // 4. Contractor pay & hours history
 // ---------------------------------------------------------------------------
 
+// "How this pay was computed" model lives in @/lib/pay/receipt (shared with
+// the contractor portal pay slips).
+const PayReceipt = ({ r }: { r: HistoryRow }) => {
+  const { basis, gross, extras, paid } = receiptModel(r);
+  const amt = { textAlign: 'right' as const, whiteSpace: 'nowrap' as const };
+  const signed = (v: number) => (v < 0 ? `− ${money(-v, 'PHP')}` : `+ ${money(v, 'PHP')}`);
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <table
+        className="keep-table"
+        aria-label="How this pay was computed"
+        style={{ maxWidth: 560 }}
+      >
+        <thead>
+          <tr>
+            <th scope="col" colSpan={2}>
+              How this pay was computed
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              Gross
+              {basis && (
+                <div className="muted" style={{ fontSize: 11 }}>
+                  {basis}
+                </div>
+              )}
+            </td>
+            <td style={amt}>{money(gross, 'PHP')}</td>
+          </tr>
+          {extras.map(([label, v], i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: derived static list, never reordered
+            <tr key={`${label}-${i}`}>
+              <td>{label}</td>
+              <td style={amt}>{signed(v)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td>
+              <b>Net</b>
+            </td>
+            <td style={amt}>
+              <b>{money(r.net, 'PHP')}</b>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      {paid && (
+        <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+          {paid}
+        </div>
+      )}
+      {r.note && (
+        <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+          Note: {r.note}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ContractorHistory = ({
   companyId,
   workers,
@@ -971,34 +1035,37 @@ const ContractorHistory = ({
               {rows.map((r, i) => {
                 const open = openKey === i;
                 const hasDays = r.days && r.days.length > 0;
+                const canOpen = hasDays || r.hasPay;
                 return (
                   <Fragment key={`${r.start}-${r.end || ''}`}>
                     <tr
-                      className={hasDays ? 'clickable' : undefined}
-                      tabIndex={hasDays ? 0 : undefined}
-                      aria-expanded={hasDays ? open : undefined}
-                      onClick={() => hasDays && setOpenKey(open ? null : i)}
+                      className={canOpen ? 'clickable' : undefined}
+                      tabIndex={canOpen ? 0 : undefined}
+                      aria-expanded={canOpen ? open : undefined}
+                      onClick={() => canOpen && setOpenKey(open ? null : i)}
                       onKeyDown={(e) => {
-                        if (hasDays && (e.key === 'Enter' || e.key === ' ')) {
+                        if (canOpen && (e.key === 'Enter' || e.key === ' ')) {
                           e.preventDefault();
                           setOpenKey(open ? null : i);
                         }
                       }}
                       style={{
-                        cursor: hasDays ? 'pointer' : 'default',
+                        cursor: canOpen ? 'pointer' : 'default',
                         background: open ? '#f1f5f9' : undefined,
                       }}
                     >
                       <td className="card-title">
                         <span style={{ color: 'var(--muted)', marginRight: 6 }}>
-                          {hasDays ? (open ? '▾' : '▸') : ' '}
+                          {canOpen ? (open ? '▾' : '▸') : ' '}
                         </span>
                         {r.start} → {r.end || '?'}
                       </td>
                       <td data-label="Worked h">{r.worked != null ? r.worked.toFixed(2) : '—'}</td>
                       <td data-label="PTO h">{r.pto > 0 ? r.pto.toFixed(2) : '—'}</td>
-                      <td data-label="Health ₱">{r.hasPay ? money(r.ha, 'PHP') : '—'}</td>
-                      <td data-label="Lunch ₱">{r.hasPay ? money(r.lunch, 'PHP') : '—'}</td>
+                      <td data-label="Health ₱">{r.hasPay && r.ha ? money(r.ha, 'PHP') : '—'}</td>
+                      <td data-label="Lunch ₱">
+                        {r.hasPay && r.lunch ? money(r.lunch, 'PHP') : '—'}
+                      </td>
                       <td data-label="13th ₱">{r.hasPay && r.t13 ? money(r.t13, 'PHP') : '—'}</td>
                       <td data-label="Gross ₱">{r.hasPay ? money(r.gross, 'PHP') : '—'}</td>
                       <td data-label="Net ₱">
@@ -1029,40 +1096,43 @@ const ContractorHistory = ({
                         )}
                       </td>
                     </tr>
-                    {open && hasDays && (
+                    {open && (
                       <tr>
                         <td
                           colSpan={10}
                           style={{ background: 'var(--surface-2)', padding: '8px 10px' }}
                         >
-                          <div>
-                            <table
-                              className="keep-table"
-                              aria-label="Per-day worked and PTO hours for this pay period"
-                            >
-                              <thead>
-                                <tr>
-                                  <th scope="col">Day</th>
-                                  <th scope="col">Worked h</th>
-                                  <th scope="col">PTO h</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {r.days.map((d) => (
-                                  <tr key={d.date}>
-                                    <td>
-                                      {fmtD(d.date)}{' '}
-                                      <span className="muted" style={{ fontSize: 11 }}>
-                                        ({d.date})
-                                      </span>
-                                    </td>
-                                    <td>{(d.tracked / 3600).toFixed(2)}</td>
-                                    <td>{d.pto > 0 ? (d.pto / 3600).toFixed(2) : '—'}</td>
+                          {r.hasPay && <PayReceipt r={r} />}
+                          {hasDays && (
+                            <div>
+                              <table
+                                className="keep-table"
+                                aria-label="Per-day worked and PTO hours for this pay period"
+                              >
+                                <thead>
+                                  <tr>
+                                    <th scope="col">Day</th>
+                                    <th scope="col">Worked h</th>
+                                    <th scope="col">PTO h</th>
                                   </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
+                                </thead>
+                                <tbody>
+                                  {r.days.map((d) => (
+                                    <tr key={d.date}>
+                                      <td>
+                                        {fmtD(d.date)}{' '}
+                                        <span className="muted" style={{ fontSize: 11 }}>
+                                          ({d.date})
+                                        </span>
+                                      </td>
+                                      <td>{(d.tracked / 3600).toFixed(2)}</td>
+                                      <td>{d.pto > 0 ? (d.pto / 3600).toFixed(2) : '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     )}

@@ -12,6 +12,7 @@ type Props = {
   companyName?: string | undefined;
   /** All companies (employer + clients) for the engagements assign-to select. */
   companies?: { id: string; name: string }[] | undefined;
+  isOwner: boolean;
   onSaved: (updated: RosterWorker) => void;
 };
 
@@ -20,7 +21,14 @@ type Props = {
  * (`@modal/(.)[workerId]`) on soft navigation. Hard navigation renders
  * `ContractorProfilePage` instead. Both share `useContractorProfile`.
  */
-export function ProfilePanel({ worker, companyId, companyName, companies = [], onSaved }: Props) {
+export function ProfilePanel({
+  worker,
+  companyId,
+  companyName,
+  companies = [],
+  isOwner,
+  onSaved,
+}: Props) {
   const p = useContractorProfile(worker, companyId, { onSaved });
   const [pendingClose, setPendingClose] = useState(false);
 
@@ -78,6 +86,7 @@ export function ProfilePanel({ worker, companyId, companyName, companies = [], o
         companyId={companyId}
         companyName={companyName}
         companies={companies}
+        isOwner={isOwner}
       />
 
       {pendingClose && (

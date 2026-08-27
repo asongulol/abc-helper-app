@@ -9,7 +9,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
-import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
+import { AGREEMENT_KINDS, fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
 import { type DocSlotStatus, deriveDocChecklist } from '@/lib/onboarding/documents';
@@ -32,6 +32,8 @@ export interface OnbSignatureLite {
   signedAt: string;
   ipAddress: string;
   docVersion: string;
+  /** 'signed' is the only status countersign accepts (see countersignAgreement). */
+  status: Database['public']['Enums']['signature_status'];
 }
 
 export interface OnbDocLite {
@@ -152,6 +154,7 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
           signedAt: s.signedAt,
           ipAddress: s.ipAddress != null ? String(s.ipAddress) : '',
           docVersion: s.docVersion,
+          status: s.status,
         })),
         agreements: agrs.map((a) => ({
           agreementKind: a.agreementKind,
@@ -322,15 +325,6 @@ export async function resetOnboarding(args: { workerId: string }): Promise<Simpl
     return fail(e);
   }
 }
-
-// Local copy — portal.ts's AGREEMENT_ORDER can't be imported (no non-async
-// exports from a 'use server' module).
-const AGREEMENT_KINDS: readonly AgreementKind[] = [
-  'ic_agreement',
-  'non_compete',
-  'confidentiality_nda',
-  'baa',
-];
 
 /**
  * Permanently delete a mistakenly-signed agreement: the signature ledger rows

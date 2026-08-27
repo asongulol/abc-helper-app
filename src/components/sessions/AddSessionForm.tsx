@@ -12,13 +12,14 @@
  * `workerId` to hide the picker).
  */
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
 import type { PortalSessionRow, RecentSessionRow, WorkerClient } from '@/db/queries/sessions';
 import { clientAlias } from '@/lib/clients';
+import { payPeriodChoices, periodFor } from '@/lib/dates/periods';
 import { fmtDate } from '@/lib/format';
 import {
   getOffCycleEligibleWorkers,
@@ -108,14 +109,46 @@ export const AddSessionForm = ({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Just-approved session ids with no open draft to add them to (decision modal).
   const [noDraftSessions, setNoDraftSessions] = useState<string[] | null>(null);
+  /** Which run the no-draft modal will pay into: 'now' or a period start. */
+  const [routeChoice, setRouteChoice] = useState<string>('');
+
+  // The runs these sessions may be paid in, NAMED. "Next scheduled payroll" is
+  // an abstraction the admin cannot check: when it silently meant the wrong
+  // cycle, the label was identical, so nothing on screen contradicted it.
+  // `span` is the one case with no single answer — the server refuses to split
+  // a selection across periods, so say that here instead of after the click.
+  const routeDates = (noDraftSessions ?? [])
+    .map((id) => recentAll?.find((r) => r.id === id)?.sessionDate)
+    .filter((d): d is string => Boolean(d));
+  const routeStarts = [...new Set(routeDates.map((d) => periodFor(d).start))].sort();
+  const routeSpan = routeStarts.length > 1 ? routeStarts : null;
+  const routeFirst = routeDates[0];
+  const routeChoices = routeSpan || !routeFirst ? [] : payPeriodChoices(routeFirst);
+  /** '' before the admin picks → the owning period, which leads the list. */
+  const selectedRun = routeChoice || routeChoices[0]?.start || '';
+
+  /**
+   * RP-48: every list on this screen used `res.ok ? res.data : []`, so a failed
+   * fetch rendered as a healthy empty state — "no clients assigned", "No
+   * sessions waiting" — and an admin would reasonably conclude there was
+   * nothing there. Say what failed and leave whatever is on screen alone.
+   */
+  const loaded = useCallback(
+    <T,>(res: { ok: true; data: T } | { ok: false; error: string }, what: string) => {
+      if (res.ok) return res.data;
+      notify(`Couldn't load ${what}: ${res.error}`, { type: 'error', persistent: true });
+      return null;
+    },
+    [notify],
+  );
 
   const reloadRecent = async (wid: string) => {
     if (!wid) {
       setRecent([]);
       return;
     }
-    const res = await getWorkerSessions({ companyId, workerId: wid });
-    setRecent(res.ok ? res.data.sessions : []);
+    const data = loaded(await getWorkerSessions({ companyId, workerId: wid }), 'recent sessions');
+    if (data) setRecent(data.sessions);
   };
 
   // Worker picker options (per-session only) — only when not controlled.
@@ -124,12 +157,13 @@ export const AddSessionForm = ({
     let live = true;
     getOffCycleEligibleWorkers({ companyId }).then((res) => {
       if (!live) return;
-      setWorkers(res.ok ? res.data.workers.filter((w) => w.basis === 'per_session') : []);
+      const data = loaded(res, 'the contractor list');
+      if (data) setWorkers(data.workers.filter((w) => w.basis === 'per_session'));
     });
     return () => {
       live = false;
     };
-  }, [companyId, controlled]);
+  }, [companyId, controlled, loaded]);
 
   // #1: remember the last-picked contractor across navigation so the entered
   // (pending) sessions stay visible on return — until they're approved/deleted.
@@ -163,7 +197,12 @@ export const AddSessionForm = ({
     setLoadingClients(true);
     getWorkerClients({ companyId, workerId }).then((res) => {
       if (!live) return;
-      const list = res.ok ? res.data.clients : [];
+      const data = loaded(res, "this contractor's clients");
+      if (!data) {
+        setLoadingClients(false);
+        return;
+      }
+      const list = data.clients;
       setClients(list);
       if (pendingClientId.current && list.some((c) => c.id === pendingClientId.current)) {
         setClientId(pendingClientId.current);
@@ -176,7 +215,7 @@ export const AddSessionForm = ({
     return () => {
       live = false;
     };
-  }, [companyId, workerId]);
+  }, [companyId, workerId, loaded]);
 
   // The selected worker's recent sessions (so a just-added one is visible).
   useEffect(() => {
@@ -187,12 +226,13 @@ export const AddSessionForm = ({
     let live = true;
     getWorkerSessions({ companyId, workerId }).then((res) => {
       if (!live) return;
-      setRecent(res.ok ? res.data.sessions : []);
+      const data = loaded(res, 'recent sessions');
+      if (data) setRecent(data.sessions);
     });
     return () => {
       live = false;
     };
-  }, [companyId, workerId]);
+  }, [companyId, workerId, loaded]);
 
   // Employer-wide "Recently added" list — fetched on mount, then after each
   // add/edit/delete so it always reflects what was just entered (uncontrolled).
@@ -201,8 +241,11 @@ export const AddSessionForm = ({
     !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
   const reloadAll = async () => {
     if (controlled) return;
-    const res = await getRecentSessions({ companyId, ...sessionRange });
-    setRecentAll(res.ok ? res.data.sessions : []);
+    const data = loaded(
+      await getRecentSessions({ companyId, ...sessionRange }),
+      'the recently-added list',
+    );
+    if (data) setRecentAll(data.sessions);
   };
   useEffect(() => {
     if (controlled) return;
@@ -210,12 +253,14 @@ export const AddSessionForm = ({
     const range =
       !unpaidMode && periodStart && periodEnd ? { start: periodStart, end: periodEnd } : {};
     getRecentSessions({ companyId, ...range }).then((res) => {
-      if (live) setRecentAll(res.ok ? res.data.sessions : []);
+      if (!live) return;
+      const data = loaded(res, 'the recently-added list');
+      if (data) setRecentAll(data.sessions);
     });
     return () => {
       live = false;
     };
-  }, [companyId, controlled, periodStart, periodEnd, unpaidMode]);
+  }, [companyId, controlled, periodStart, periodEnd, unpaidMode, loaded]);
 
   const canSubmit =
     !!workerId && !!clientId && childInitials.trim() !== '' && eiid.trim() !== '' && !busy;
@@ -368,6 +413,7 @@ export const AddSessionForm = ({
         { type: 'success' },
       );
       setNoDraftSessions(null);
+      setRouteChoice('');
       await reloadAll();
       onCreated();
     } finally {
@@ -375,18 +421,27 @@ export const AddSessionForm = ({
     }
   };
 
-  // No-draft decision: pay the approved sessions in the next scheduled period.
+  // No-draft decision: pay the approved sessions in the chosen scheduled run.
   const payNextPeriod = async () => {
     if (!noDraftSessions) return;
     setBusy(true);
     try {
-      const res = await payApprovedSessionsToNextPeriod({ companyId, sessionIds: noDraftSessions });
+      const res = await payApprovedSessionsToNextPeriod({
+        companyId,
+        sessionIds: noDraftSessions,
+        ...(selectedRun && selectedRun !== 'now' ? { periodStart: selectedRun } : {}),
+      });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(`${res.data.count} session(s) added to the next period's draft.`, { type: 'success' });
+      // Name the period — routing silently to the wrong cycle is exactly the
+      // bug this replaced, and the toast is where it would surface first.
+      notify(`${res.data.count} session(s) added to the ${res.data.periodStart} period's draft.`, {
+        type: 'success',
+      });
       setNoDraftSessions(null);
+      setRouteChoice('');
       await reloadAll();
       onCreated();
     } finally {
@@ -814,20 +869,70 @@ export const AddSessionForm = ({
 
       {noDraftSessions && (
         <Modal
-          title="No open draft payroll"
-          onClose={() => setNoDraftSessions(null)}
+          title="Which run pays these sessions?"
+          onClose={() => {
+            setNoDraftSessions(null);
+            setRouteChoice('');
+          }}
           maxWidth={520}
         >
           <p className="sub" style={{ marginTop: 0 }}>
-            {noDraftSessions.length} session(s) are approved, but there&apos;s no open draft to add
-            them to. Pay them in:
+            {noDraftSessions.length} session(s) are approved, but no open pay batch covers their
+            dates.
           </p>
+
+          {routeSpan ? (
+            <p className="sub">
+              They span {routeSpan.length} pay periods ({routeSpan.map(fmtDate).join(', ')}). Select
+              one period&apos;s sessions at a time — a single run can&apos;t pay across periods.
+            </p>
+          ) : (
+            <fieldset style={{ border: 0, margin: 0, padding: 0 }}>
+              <legend className="sub" style={{ padding: 0 }}>
+                Pay them in:
+              </legend>
+              {routeChoices.map((p, i) => (
+                <label
+                  key={p.start}
+                  style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 6 }}
+                >
+                  <input
+                    type="radio"
+                    name="run"
+                    value={p.start}
+                    checked={selectedRun === p.start}
+                    onChange={() => setRouteChoice(p.start)}
+                  />
+                  <span>
+                    <b>
+                      {fmtDate(p.start)} – {fmtDate(p.end)}
+                    </b>{' '}
+                    — pay by {fmtDate(p.payDate)}
+                    {i === 0 && <span className="sub"> · covers these sessions</span>}
+                  </span>
+                </label>
+              ))}
+              <label style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginTop: 6 }}>
+                <input
+                  type="radio"
+                  name="run"
+                  value="now"
+                  checked={selectedRun === 'now'}
+                  onChange={() => setRouteChoice('now')}
+                />
+                <span>
+                  <b>Now</b> — off-period batch, paid outside the schedule
+                </span>
+              </label>
+            </fieldset>
+          )}
+
           <div
             style={{
               display: 'flex',
               justifyContent: 'flex-end',
               gap: 8,
-              marginTop: 12,
+              marginTop: 16,
               flexWrap: 'wrap',
             }}
           >
@@ -835,16 +940,23 @@ export const AddSessionForm = ({
               type="button"
               className="btn ghost sm"
               disabled={busy}
-              onClick={() => setNoDraftSessions(null)}
+              onClick={() => {
+                setNoDraftSessions(null);
+                setRouteChoice('');
+              }}
             >
               Not now
             </button>
-            <button type="button" className="btn sm" disabled={busy} onClick={payNextPeriod}>
-              Next scheduled payroll
-            </button>
-            <button type="button" className="btn sm" disabled={busy} onClick={routeToOffCycle}>
-              Off-period (pay now)
-            </button>
+            {!routeSpan && (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={busy || !selectedRun}
+                onClick={selectedRun === 'now' ? routeToOffCycle : payNextPeriod}
+              >
+                {selectedRun === 'now' ? 'Add to off-period batch' : 'Add to this run'}
+              </button>
+            )}
           </div>
         </Modal>
       )}

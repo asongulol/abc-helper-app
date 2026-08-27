@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import type { RosterWorker } from '@/db/queries/workers';
+import { fullName } from '@/lib/names';
 import type { WorkerEngagement } from '@/server/actions/contractors';
 import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
+import { EndEngagementModal } from '../EndEngagementModal';
 import { RateCard } from '../RateCard';
 import { Field } from './Field';
 import { SaveBar } from './SaveBar';
@@ -12,10 +15,12 @@ interface Props extends ProfileTabProps {
   companyId: string;
   companyName?: string | undefined;
   companies: { id: string; name: string }[];
+  isOwner: boolean;
   engagements: WorkerEngagement[];
   updateEng: (i: number, patch: Partial<WorkerEngagement>) => void;
   saveEng: (e: WorkerEngagement) => void;
   removeEng: (e: WorkerEngagement) => void;
+  endEng: (e: WorkerEngagement, lastDay: string, reason: string) => void;
   assignTo: string;
   setAssignTo: (v: string) => void;
   handleAssign: () => void;
@@ -27,10 +32,12 @@ export function PayTab({
   companyId,
   companyName,
   companies,
+  isOwner,
   engagements,
   updateEng,
   saveEng,
   removeEng,
+  endEng,
   assignTo,
   setAssignTo,
   handleAssign,
@@ -42,6 +49,7 @@ export function PayTab({
   onSubmit,
   panelProps,
 }: Props) {
+  const [endTarget, setEndTarget] = useState<WorkerEngagement | null>(null);
   return (
     <div {...panelProps}>
       {/* Only the per-company engagement saves via the profile form; the rate
@@ -85,18 +93,31 @@ export function PayTab({
               />
             </Field>
             <Field id="pp-link-status" label="Assignment status">
-              <select
-                id="pp-link-status"
-                value={form.linkStatus}
-                onChange={(e) =>
-                  set('linkStatus', e.target.value as 'active' | 'inactive' | 'ended')
-                }
-                disabled={isPending}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="ended">Ended</option>
-              </select>
+              {/* Ending is a workflow — it closes rates and coverage targets as
+                  of a last day this form can't name — so an ended link reads as
+                  text here rather than as an option nobody may pick.
+                  <output>, not <p>: Field's <label htmlFor> needs a labelable
+                  element, and <output> is the one that renders as plain text
+                  (#95C). A <p> silently dropped the association. */}
+              {form.linkStatus === 'ended' ? (
+                <output
+                  id="pp-link-status"
+                  className="sub"
+                  style={{ margin: '6px 0 0', display: 'block' }}
+                >
+                  Ended — reactivate from the Contractors roster.
+                </output>
+              ) : (
+                <select
+                  id="pp-link-status"
+                  value={form.linkStatus}
+                  onChange={(e) => set('linkStatus', e.target.value as 'active' | 'inactive')}
+                  disabled={isPending}
+                >
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              )}
             </Field>
           </div>
         </section>
@@ -106,7 +127,7 @@ export function PayTab({
         <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
         <RateCard workerId={worker.workerId} companyId={companyId} />
       </section>
-      <WisePayoutPanel workerId={worker.workerId} />
+      <WisePayoutPanel workerId={worker.workerId} isOwner={isOwner} />
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Client engagements</h4>
         {engagements.length === 0 ? (
@@ -193,16 +214,26 @@ export function PayTab({
                 </Field>
               )}
               <Field id={`eng-status-${e.companyId}`} label="Status">
-                <select
-                  id={`eng-status-${e.companyId}`}
-                  value={e.status}
-                  onChange={(ev) => updateEng(i, { status: ev.target.value })}
-                  disabled={isPending}
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="ended">Ended</option>
-                </select>
+                {e.status === 'ended' ? (
+                  // <output> for the same reason as the field above (#95C).
+                  <output
+                    id={`eng-status-${e.companyId}`}
+                    className="sub"
+                    style={{ margin: '6px 0 0', display: 'block' }}
+                  >
+                    Ended
+                  </output>
+                ) : (
+                  <select
+                    id={`eng-status-${e.companyId}`}
+                    value={e.status}
+                    onChange={(ev) => updateEng(i, { status: ev.target.value })}
+                    disabled={isPending}
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                )}
               </Field>
               <button
                 type="button"
@@ -212,6 +243,17 @@ export function PayTab({
               >
                 Save
               </button>
+              {e.status !== 'ended' && (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  disabled={isPending}
+                  title="End this assignment as of a last day"
+                  onClick={() => setEndTarget(e)}
+                >
+                  End…
+                </button>
+              )}
               {e.kind !== 'employer' && (
                 <button
                   type="button"
@@ -256,6 +298,20 @@ export function PayTab({
           </div>
         )}
       </section>
+
+      {endTarget && (
+        <EndEngagementModal
+          name={fullName(worker)}
+          companyName={endTarget.companyName}
+          busy={isPending}
+          onConfirm={({ lastDay, reason }) => {
+            const target = endTarget;
+            setEndTarget(null);
+            endEng(target, lastDay, reason);
+          }}
+          onCancel={() => setEndTarget(null)}
+        />
+      )}
     </div>
   );
 }

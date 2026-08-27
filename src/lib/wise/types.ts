@@ -43,9 +43,13 @@ export interface MatcherPayment {
    *  window when the batch was actually sent on a different day than the
    *  period's scheduled pay_date. */
   paid_at?: string | null;
+  /** Contractor's full name, for the name axis of the orphan sweep. */
+  worker_name?: string | null;
   workers?: WorkerRecipientInfo | null;
   pay_periods?: {
     pay_date?: string | null;
+    /** Floor of the match window — a run sometimes leaves before the period closes. */
+    period_start?: string | null;
     period_end?: string | null;
   } | null;
 }
@@ -61,6 +65,27 @@ export const WISE_IN_FLIGHT_STATES = new Set([
   'waiting_recipient_input_to_proceed',
 ]);
 
+/**
+ * A transfer that can never pay anybody: cancelled, refunded, bounced back —
+ * anything neither terminal-success nor still moving. Derived rather than
+ * listed so an unknown Wise status lands on the safe side (dead, re-matchable)
+ * instead of silently counting as payment evidence.
+ */
+export const isDeadTransfer = (status: string): boolean =>
+  !WISE_PAID_STATES.has(status) && !WISE_IN_FLIGHT_STATES.has(status);
+
+/**
+ * Can this transfer still be cancelled?
+ *
+ * Only one that has not moved money. Wise refuses anything else, but the check
+ * belongs here too: the error the operator should read is "this one already
+ * paid — cancelling it is not what you want", not a raw 422 from an API they
+ * cannot see. `waiting_recipient_input_to_proceed` is included deliberately —
+ * it is stalled, not sent.
+ */
+export const isCancellable = (status: string | null | undefined): boolean =>
+  !!status && WISE_IN_FLIGHT_STATES.has(status);
+
 // ---- match outcome strings ----------------------------------------
 
 export type MatchOutcome =
@@ -74,7 +99,10 @@ export type MatchOutcome =
   | 'matched_with_variance'
   | 'db_write_failed'
   | 'refreshed_clean'
-  | 'refresh_transfer_not_in_history';
+  | 'refresh_transfer_not_in_history'
+  | 'refresh_transfer_dead'
+  | 'refresh_transfer_unfunded'
+  | 'reference_names_other_period';
 
 export interface MatchResultBase {
   payment_id: string;
@@ -85,6 +113,9 @@ export interface MatchResultBase {
 export interface MatchResultNoRecipient extends MatchResultBase {
   outcome: 'no_recipient';
   reason: string;
+  /** No recipient id on file is exactly when a name+amount sweep earns its
+   *  keep — the transfer is in the history, we just have no key for it. */
+  candidate_orphan_transfers?: OrphanCandidate[];
 }
 
 export interface MatchResultNoTransfer extends MatchResultBase {
@@ -98,6 +129,9 @@ export interface MatchResultAmbiguous extends MatchResultBase {
   outcome: 'ambiguous_exact';
   reason: string;
   candidate_transfer_ids: string[];
+  /** The same standoff, as pickable rows — an ambiguous row is one an operator
+   *  has to resolve by hand, so it needs the suggestion list most of all. */
+  candidate_orphan_transfers?: OrphanCandidate[];
 }
 
 export interface MatchResultSuccess extends MatchResultBase {
@@ -132,6 +166,31 @@ export interface MatchResultRefreshNotFound extends MatchResultBase {
   reason: string;
 }
 
+/**
+ * The row holds a transfer that never paid: a cancelled ghost
+ * (`refresh_transfer_dead`) or a draft still waiting for funds
+ * (`refresh_transfer_unfunded`). The link is not payment evidence.
+ */
+export interface MatchResultRefreshNotPaid extends MatchResultBase {
+  outcome: 'refresh_transfer_dead' | 'refresh_transfer_unfunded';
+  transfer_id: string;
+  wise_status: string;
+  reason: string;
+  candidate_orphan_transfers?: OrphanCandidate[];
+}
+
+/**
+ * The transfer that fit by amount and date says, in its own reference, that it
+ * paid a different period. Not linked — see lib/wise/reference.ts.
+ */
+export interface MatchResultReferenceMismatch extends MatchResultBase {
+  outcome: 'reference_names_other_period';
+  transfer_id: string;
+  reference: string;
+  reason: string;
+  candidate_orphan_transfers?: OrphanCandidate[];
+}
+
 export type MatchResult =
   | MatchResultNoRecipient
   | MatchResultNoTransfer
@@ -139,7 +198,9 @@ export type MatchResult =
   | MatchResultSuccess
   | MatchResultVariance
   | MatchResultDbFailed
-  | MatchResultRefreshNotFound;
+  | MatchResultRefreshNotFound
+  | MatchResultRefreshNotPaid
+  | MatchResultReferenceMismatch;
 
 export interface OrphanCandidate {
   transfer_id: string;
@@ -149,6 +210,26 @@ export interface OrphanCandidate {
   wise_status: string | null;
   shared_with_n_payments: number;
   ambiguous: boolean;
+  /** Recipient's account-holder name, resolved from targetAccount. Null when
+   *  the recipient list didn't cover it (deleted recipient, other profile). */
+  recipient_name: string | null;
+  /** That name is the contractor's, by the same keys the roster matches on. */
+  name_matches: boolean;
+}
+
+/**
+ * One payment the matcher could not link, with the transfers that could be it.
+ * This is what the operator acts on — the counts alone say "18 unmatched" and
+ * leave them with nowhere to go.
+ */
+export interface UnlinkedPayment {
+  paymentId: string;
+  workerName: string;
+  netPhp: number;
+  outcome: MatchOutcome;
+  /** Why the automatic match declined — shown verbatim. */
+  reason: string;
+  candidates: OrphanCandidate[];
 }
 
 /** What the pure matcher returns for a single payment (no DB side-effects). */

@@ -1,8 +1,9 @@
 import { redirect } from 'next/navigation';
 import { PayrollShell } from '@/components/payroll/PayrollShell';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchPeriodSummaries } from '@/db/queries/payroll';
-import { periodFor } from '@/lib/dates/periods';
+import { fetchPeriodSummaries, fetchSavedPayments, preferredOpenDraft } from '@/db/queries/payroll';
+import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { batchForWindow } from '@/lib/payroll/batch-window';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
 
@@ -38,19 +39,36 @@ export default async function PayrollPage({
 
   // Which period the editor opens on:
   //  1. an explicit ?period=<YYYY-MM-DD> deep-link (Process & Pay, ⌘K), else
-  //  2. the most recent OPEN draft that already has statements — so the unlocked
-  //     draft opens fully instead of an empty "current period" card that just
-  //     confuses (its hours aren't approved yet), else
-  //  3. any open draft, else the period containing today (to start a fresh calc).
+  //  2. the open draft for the period awaiting payroll — the PRECEDING one,
+  //     since payroll runs a half-month in arrears (matches /time's review
+  //     default), else the most recent open draft that already has statements —
+  //     so the unlocked draft opens fully instead of an empty "current period"
+  //     card that just confuses (its hours aren't approved yet), else any open
+  //     draft, else the arrears period itself.
+  //  RP-25: (2) used to start at "newest open draft with statements", which the
+  //  legacy sibling app's cloned rows made true for the IN-PROGRESS period with
+  //  no admin action — hiding the period the admin actually came to calculate.
   // periodFor() throws on malformed input, so the deep-link is validated first.
-  const openDraft =
-    periods.find((p) => p.state === 'open' && p.contractorCount > 0) ??
-    periods.find((p) => p.state === 'open');
+  const arrears = previousPeriod(today);
+  const openDraft = preferredOpenDraft(periods, arrears.start);
   const defaultPeriod = isIsoDate(sp.period)
     ? periodFor(sp.period)
     : openDraft
       ? periodFor(openDraft.periodStart)
-      : periodFor(today);
+      : arrears;
+
+  // The draft table used to arrive one server action AFTER hydration: the page
+  // shipped an empty shell, the browser hydrated, then asked for the rows. That
+  // round trip is the whole gap between "the tab opened" and "I can see the
+  // batch". Fetch it here so the rows ride along with the HTML — and, since the
+  // sidebar fully prefetches this route, they are usually in the client cache
+  // before the tab is even clicked.
+  //
+  // Only the batch the shell actually opens on. A `?batch=` deep-link that
+  // points somewhere else simply misses this seed and loads the old way; the
+  // shell matches on id before trusting it.
+  const initialBatch = batchForWindow(periods, defaultPeriod.start, defaultPeriod.end);
+  const initialPayments = initialBatch ? await fetchSavedPayments(db, initialBatch.id) : [];
 
   return (
     <PayrollShell
@@ -58,6 +76,8 @@ export default async function PayrollPage({
       isOwner={admin.isOwner}
       defaultPeriod={defaultPeriod}
       initialPeriods={periods}
+      initialBatchId={initialBatch?.id ?? null}
+      initialPayments={initialPayments}
       autoUnlock={autoUnlock}
     />
   );

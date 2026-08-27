@@ -47,6 +47,8 @@ export type RosterRow = {
     status: string | null;
     payoutMethod: string | null;
     healthAllowanceEligible: boolean;
+    /** Annual HA pay date override (month/day only); null = hire anniversary. */
+    healthAllowanceDate?: string | null;
     thirteenthMonthEligible: boolean;
   };
 };
@@ -82,7 +84,16 @@ export const attributeTimeEntries = (
   entries: readonly TimeEntryRow[],
   roster: readonly RosterRow[],
   /** (worker → work_dates) already paid via a per_hour off-cycle item — those
-   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum. */
+   *  days' hours are dropped here so they aren't ALSO paid by the windowed sum.
+   *  ponytail: whole-DAY granularity. A date Set carries no units, so a 2-hour
+   *  off-cycle item drops all 8 tracked hours of that day (RP-27) — it underpays,
+   *  it never double-pays. Unreachable today: the off-cycle modal is per_session
+   *  only, though the action and schema both accept per_hour. To pay the
+   *  remainder instead, `fetchOffCycleItemsForPeriod` (src/db/queries/payroll.ts)
+   *  must bucket the items' `units` as hours-per-date rather than a date Set, and
+   *  this param widen to ReadonlyMap<string, ReadonlyMap<string, number>>. Note
+   *  an amount-only item stores `units: null`, so that case must keep the
+   *  whole-day drop regardless. */
   excludeDatesByWorker?: ReadonlyMap<string, ReadonlySet<string>>,
 ): AttributionResult => {
   const idx = buildMatchIndex(
@@ -117,6 +128,8 @@ export const attributeTimeEntries = (
       continue;
     }
     // Drop a day already paid via a per_hour off-cycle item (no double-pay).
+    // RP-27: this drops the day's FULL tracked hours, not the hours the item
+    // actually paid — see excludeDatesByWorker above for why and what it takes.
     if (excludeDatesByWorker?.get(wid)?.has(t.workDate)) continue;
     const secs = (Number(t.trackedSeconds) || 0) + (Number(t.ptoSeconds) || 0);
     secondsByWorker.set(wid, (secondsByWorker.get(wid) ?? 0) + secs);
@@ -179,6 +192,18 @@ export type StatementRow = {
   result: ContractorRowResult;
 };
 
+/**
+ * Is this row a "no longer active" warning? Either side going non-active counts
+ * — a worker archived globally, or their link to THIS company ended. A null
+ * status is unknown, not inactive (legacy rows), so it never warns.
+ *
+ * Shared with fetchSavedPayments (RP-18): the saved snapshot renders the flag
+ * long after buildStatements computed it, and both must agree on the rule.
+ */
+export const isInactiveWorker = (workerStatus: string | null, linkStatus: string | null): boolean =>
+  (linkStatus !== null && linkStatus !== 'active') ||
+  (workerStatus !== null && workerStatus !== 'active');
+
 export type BuildStatementsArgs = {
   periodStart: string;
   periodEnd: string;
@@ -199,6 +224,9 @@ export type BuildStatementsArgs = {
   /** Off-cycle per-session/per-hour earnings per worker (centavos), re-applied
    *  from the durable off_cycle_pay_items ledger so the line survives recalc. */
   offCycleByWorker?: ReadonlyMap<string, Centavos>;
+  /** Σ per_session ledger units per worker — display-only count of the sessions
+   *  `offCycleByWorker` already pays (see calcContractorRow.offCycleSessionUnits). */
+  offCycleSessionUnitsByWorker?: ReadonlyMap<string, number>;
 };
 
 /** One engine pass per attributed worker — the heart of legacy `calculate()`. */
@@ -230,9 +258,31 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       );
     }
     const offCycleEarnings = args.offCycleByWorker?.get(workerId);
+    // Allowances are for people currently engaged: an inactive contractor is
+    // between assignments and an ended one has left, and neither earns the
+    // anniversary HA or accrues 13th month. Gross still pays — work done is
+    // owed — and so do the hand-typed pdd/bonus/misc lines, which an admin put
+    // on the row deliberately.
+    // ponytail: present-tense status, so recalculating an OPEN period for
+    // someone active then but inactive now zeroes their allowance. Only open
+    // periods can move (migration 18 freezes the money columns at lock), but
+    // the blast radius is NOT one batch: `healthAllowance` pays in exactly one
+    // anniversary period per year with no carry-forward, so zeroing it in that
+    // one batch loses the worker's whole ₱20,000 for the year, permanently —
+    // a fortnight on the bench around their anniversary is enough (#84). The
+    // 13th accrues every period, so there the cost really is one batch.
+    // `mergeManualColumns` now keeps a non-zero stored HA/13th across
+    // single-row rebuilds, so the loss needs a deliberate Recalculate and the
+    // hand-typed repair sticks. Real upgrade path: judge this as-of the period
+    // instead of now. The 'ended' half is already datable —
+    // worker_companies.ended_on now carries the last day — so it needs the
+    // roster query to select it, not status history; only 'inactive', which
+    // nothing dates, actually needs the history.
+    const inactive = isInactiveWorker(w.status, link.linkStatus);
     const result = calcContractorRow({
       workedSeconds,
       sessionUnits: args.sessionsByWorker?.get(workerId) ?? 0,
+      offCycleSessionUnits: args.offCycleSessionUnitsByWorker?.get(workerId) ?? 0,
       contract: link.contract,
       payBasis: link.payBasis,
       periodStart: args.periodStart,
@@ -241,15 +291,13 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       ...(perUnitGrossOverride !== undefined ? { perUnitGrossOverride } : {}),
       hireDate: w.hireDate,
       healthAllowanceEligible: w.healthAllowanceEligible,
+      healthAllowanceDate: w.healthAllowanceDate ?? null,
       thirteenthMonthEligible: w.thirteenthMonthEligible,
-      includeHealthAllowance: args.includeHealthAllowance ?? true,
-      includeThirteenth: args.includeThirteenth ?? true,
+      includeHealthAllowance: (args.includeHealthAllowance ?? true) && !inactive,
+      includeThirteenth: (args.includeThirteenth ?? true) && !inactive,
       ...(args.holidays !== undefined ? { holidays: args.holidays } : {}),
       ...(offCycleEarnings !== undefined ? { offCycleEarnings } : {}),
     });
-    const inactive =
-      (link.linkStatus !== null && link.linkStatus !== 'active') ||
-      (w.status !== null && w.status !== 'active');
     out.push({
       workerId,
       name: fullName(w) || workerId,
@@ -296,7 +344,27 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
     for (const r of args.roster) {
       if (processed.has(r.workerId)) continue;
       if (!r.worker.healthAllowanceEligible) continue;
-      if (healthAllowance(r.worker.hireDate, args.periodStart, args.periodEnd) <= 0) continue;
+      // Every loop above is ACTIVITY-driven, so an ended contractor can never
+      // reach them — no time, no sessions, no ledger row. This one is driven by
+      // a calendar date and roster membership alone, and `rates` are not
+      // end-dated when someone leaves, so without this guard a recalc conjures a
+      // ₱20k allowance for a contractor who left before the anniversary came
+      // round. Inactive rows with real work still surface above and still pay
+      // their gross (RP-18) — they just carry no allowance, same rule as here.
+      // ponytail: judged at recalc time from present-tense status, the same
+      // shortcut `build` takes. `worker_companies.ended_on` now records the last
+      // day, but reading it here would only matter with status history to go
+      // with it — see the note on the flags in `build`.
+      if (isInactiveWorker(r.worker.status, r.linkStatus)) continue;
+      if (
+        healthAllowance(
+          r.worker.hireDate,
+          args.periodStart,
+          args.periodEnd,
+          r.worker.healthAllowanceDate,
+        ) <= 0
+      )
+        continue;
       build(r.workerId, 0);
     }
   }
@@ -336,6 +404,15 @@ export type PaymentDraft = {
   off_cycle_php: number;
   net_php: number;
   misc_items: MiscItem[];
+  /**
+   * The engine gross kept behind a manual override, and the marker `overridden`
+   * is read from (`computed_gross_php != null`). A rebuild writes the engine's
+   * own gross into `gross_php`, so there is nothing left to revert to — it must
+   * clear this, or the row keeps claiming an override and ↺ restores a gross the
+   * engine has since replaced. `mergeManualColumns` re-arms it when the rebuild
+   * is a single-row one that must PRESERVE the override.
+   */
+  computed_gross_php: number | null;
   fx_rate: number | null;
   payout_currency: 'PHP';
   payout_amount: number;
@@ -376,6 +453,7 @@ export const toPaymentDraft = (
     off_cycle_php: centavosToPhp(r.offCycle),
     net_php: centavosToPhp(r.net),
     misc_items: [],
+    computed_gross_php: null,
     fx_rate: opts.fxRate ?? null,
     payout_currency: 'PHP',
     payout_amount: centavosToPhp(r.net),

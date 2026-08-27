@@ -5,6 +5,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { selectAll } from './paging';
 
 type Db = SupabaseClient<Database>;
 
@@ -76,11 +77,18 @@ export const fetchReportPeriods = async (
   if (!periods?.length) return [];
 
   const periodIds = periods.map((p) => p.id);
-  const { data: pays, error: paye } = await db
-    .from('payments')
-    .select('pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, net_php')
-    .in('pay_period_id', periodIds);
-  if (paye) throw new Error(`payments: ${paye.message}`);
+  // Money totals: unbounded, a wide date range silently truncates at PostgREST's
+  // max_rows and the period totals come out short. See selectAll.
+  const pays = await selectAll(
+    (from, to) =>
+      db
+        .from('payments')
+        .select('pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, net_php')
+        .in('pay_period_id', periodIds)
+        .order('id')
+        .range(from, to),
+    'payments (report periods)',
+  );
 
   type Agg = {
     count: number;
@@ -90,7 +98,7 @@ export const fetchReportPeriods = async (
     net: number;
   };
   const byPeriod = new Map<string, Agg>();
-  for (const p of pays ?? []) {
+  for (const p of pays) {
     const cur = byPeriod.get(p.pay_period_id) ?? {
       count: 0,
       gross: 0,
@@ -148,14 +156,20 @@ export const fetchContractorYtd = async (
   if (!periods?.length) return [];
 
   const periodIds = periods.map((p) => p.id);
-  const { data: pays, error: paye } = await db
-    .from('payments')
-    .select(
-      'worker_id, gross_php, health_allowance_php, thirteenth_month_php, net_php, workers(first_name, middle_name, last_name)',
-    )
-    .in('pay_period_id', periodIds)
-    .eq('company_id', companyId);
-  if (paye) throw new Error(`payments ytd: ${paye.message}`);
+  // Same truncation risk as fetchReportPeriods — these are YTD money totals.
+  const pays = await selectAll(
+    (from, to) =>
+      db
+        .from('payments')
+        .select(
+          'worker_id, gross_php, health_allowance_php, thirteenth_month_php, net_php, workers(first_name, middle_name, last_name)',
+        )
+        .in('pay_period_id', periodIds)
+        .eq('company_id', companyId)
+        .order('id')
+        .range(from, to),
+    'payments (ytd totals)',
+  );
 
   type Agg = {
     name: string;
@@ -166,7 +180,7 @@ export const fetchContractorYtd = async (
     net: number;
   };
   const byWorker = new Map<string, Agg>();
-  for (const p of pays ?? []) {
+  for (const p of pays) {
     const cur = byWorker.get(p.worker_id) ?? {
       name: [p.workers?.first_name, p.workers?.middle_name, p.workers?.last_name]
         .filter(Boolean)
@@ -218,18 +232,24 @@ export const fetchReportPayments = async (
   const periodMap = new Map(periods.map((p) => [p.id, p]));
   const periodIds = periods.map((p) => p.id);
 
-  const { data: pays, error: paye } = await db
-    .from('payments')
-    .select(
-      'id, worker_id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, workers(first_name, middle_name, last_name)',
-    )
-    .in('pay_period_id', periodIds)
-    .eq('company_id', companyId)
-    .order('pay_period_id')
-    .order('worker_id');
-  if (paye) throw new Error(`payments detail: ${paye.message}`);
+  // The CSV export — truncation here drops whole contractors from the file.
+  const pays = await selectAll(
+    (from, to) =>
+      db
+        .from('payments')
+        .select(
+          'id, worker_id, pay_period_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, net_php, payout_method, status, workers(first_name, middle_name, last_name)',
+        )
+        .in('pay_period_id', periodIds)
+        .eq('company_id', companyId)
+        .order('pay_period_id')
+        .order('worker_id')
+        .order('id')
+        .range(from, to),
+    'payments (report detail)',
+  );
 
-  return (pays ?? []).map((p) => {
+  return pays.map((p) => {
     const period = periodMap.get(p.pay_period_id);
     return {
       paymentId: p.id,

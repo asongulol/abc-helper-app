@@ -13,10 +13,14 @@ export interface ConfirmDangerModalProps {
   consequence?: string | undefined;
   /** When set, the user must type this word (case-insensitive) to enable Confirm. */
   confirmWord?: string | undefined;
+  /** When set, the user must write a reason, handed to onConfirm. For actions
+   *  that erase the only record of a decision — the reason becomes that record. */
+  reasonLabel?: string | undefined;
+  reasonPlaceholder?: string | undefined;
   confirmLabel?: string | undefined;
   /** Disables both buttons while the confirmed action runs. */
   busy?: boolean | undefined;
-  onConfirm: () => void;
+  onConfirm: (reason: string) => void;
   onCancel: () => void;
 }
 
@@ -30,16 +34,22 @@ export const ConfirmDangerModal = ({
   message,
   consequence,
   confirmWord,
+  reasonLabel,
+  reasonPlaceholder,
   confirmLabel = 'Confirm',
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDangerModalProps) => {
   const [typed, setTyped] = useState('');
+  const [reason, setReason] = useState('');
   const inputId = useId();
+  const reasonId = useId();
   const needWord = Boolean(confirmWord);
   const ready =
-    !needWord || typed.trim().toLowerCase() === String(confirmWord).trim().toLowerCase();
+    (!needWord || typed.trim().toLowerCase() === String(confirmWord).trim().toLowerCase()) &&
+    (!reasonLabel || reason.trim().length >= 3);
+  const confirm = () => onConfirm(reason.trim());
 
   return (
     <Modal title={title} onClose={onCancel} maxWidth={460}>
@@ -69,9 +79,23 @@ export const ConfirmDangerModal = ({
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && ready && !busy) onConfirm();
+              if (e.key === 'Enter' && ready && !busy) confirm();
             }}
             aria-label={`Type ${confirmWord} to confirm`}
+          />
+        </div>
+      )}
+      {reasonLabel && (
+        <div className="field" style={{ marginBottom: 4 }}>
+          <label htmlFor={reasonId}>{reasonLabel}</label>
+          <input
+            id={reasonId}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder={reasonPlaceholder}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && ready && !busy) confirm();
+            }}
           />
         </div>
       )}
@@ -79,7 +103,7 @@ export const ConfirmDangerModal = ({
         <button type="button" className="btn ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button type="button" className="btn danger" disabled={!ready || busy} onClick={onConfirm}>
+        <button type="button" className="btn danger" disabled={!ready || busy} onClick={confirm}>
           {busy ? 'Working…' : confirmLabel}
         </button>
       </div>

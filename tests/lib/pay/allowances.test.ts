@@ -39,6 +39,15 @@ describe('healthAllowance (legacy ~5864)', () => {
     expect(healthAllowance('2023-01-20', '2026-01-16', '2026-01-31')).toBe(HA_ANNUAL);
     expect(healthAllowance('2023-01-20', '2026-01-01', '2026-01-15')).toBe(0);
   });
+
+  it('an explicit HA pay date overrides the anniversary month/day (year ignored)', () => {
+    // Hired Mar 10 2024, pay date moved to Jun 20 → June pays, March does not.
+    expect(healthAllowance('2024-03-10', '2026-06-16', '2026-06-30', '2025-06-20')).toBe(HA_ANNUAL);
+    expect(healthAllowance('2024-03-10', '2026-03-01', '2026-03-15', '2025-06-20')).toBe(0);
+    // Still gated on 180 days from HIRE, and null falls back to the anniversary.
+    expect(healthAllowance('2026-01-05', '2026-06-16', '2026-06-30', '2026-06-20')).toBe(0);
+    expect(healthAllowance('2024-03-10', '2026-03-01', '2026-03-15', null)).toBe(HA_ANNUAL);
+  });
 });
 
 /** Legacy float reference: +((mw/12)*rate).toFixed(2), rate in PHP major units. */
