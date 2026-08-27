@@ -23,17 +23,21 @@ const DAY_MS = 86_400_000;
  * Health allowance for a period: the full ₱20,000 is paid in the ONE period
  * containing the hire anniversary (month/day clamped to 28), provided the
  * worker has passed the 180-day eligibility mark by the anniversary.
+ *
+ * `haDate` (workers.health_allowance_date) overrides WHICH month/day the
+ * payment lands on — its year is ignored. Eligibility stays keyed to hire.
  */
 export const healthAllowance = (
   hireDate: string | null | undefined,
   periodStart: string,
   periodEnd: string,
+  haDate?: string | null,
 ): Centavos => {
   if (!hireDate) return zeroCentavos();
-  const hire = parseIso(hireDate);
+  const anniv = haDate ? parseIso(haDate) : parseIso(hireDate);
   const eligMs = isoToUtcMs(hireDate) + HA_ELIG_DAYS * DAY_MS;
   if (isoToUtcMs(periodEnd) < eligMs) return zeroCentavos();
-  const annivMs = Date.UTC(parseIso(periodStart).y, hire.m - 1, Math.min(hire.d, 28));
+  const annivMs = Date.UTC(parseIso(periodStart).y, anniv.m - 1, Math.min(anniv.d, 28));
   const inPeriod = isoToUtcMs(periodStart) <= annivMs && annivMs <= isoToUtcMs(periodEnd);
   return inPeriod && annivMs >= eligMs ? HA_ANNUAL : zeroCentavos();
 };

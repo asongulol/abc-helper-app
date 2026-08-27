@@ -70,6 +70,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         workerStatus: 'active',
         payoutMethod: null,
         healthAllowanceEligible: true,
+        healthAllowanceDate: null,
         thirteenthMonthEligible: true,
         workEmail: null,
         workNumber: null,

@@ -91,6 +91,8 @@ export type ContractorRowInput = {
   perUnitGrossOverride?: Centavos | null;
   hireDate?: string | null;
   healthAllowanceEligible?: boolean;
+  /** Annual HA pay date override (month/day only); null/absent = hire anniversary. */
+  healthAllowanceDate?: string | null;
   thirteenthMonthEligible?: boolean;
   /**
    * Batch-level toggles (legacy `includeHA` / `include13`).
@@ -210,7 +212,12 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
 
   const ha =
     (input.includeHealthAllowance ?? true) && input.healthAllowanceEligible
-      ? healthAllowance(input.hireDate, input.periodStart, input.periodEnd)
+      ? healthAllowance(
+          input.hireDate,
+          input.periodStart,
+          input.periodEnd,
+          input.healthAllowanceDate,
+        )
       : zeroCentavos();
   // 13th-month accrues on a salaried period rate only — never for a per-unit
   // (or unset) PHS/PH/PS engagement, whose rate is not a monthly salary.

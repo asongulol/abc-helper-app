@@ -1622,6 +1622,7 @@ export type Database = {
           emergency_relationship: string | null
           first_name: string
           gcash: string | null
+          health_allowance_date: string | null
           health_allowance_eligible: boolean
           hire_date: string | null
           id: string
@@ -1666,6 +1667,7 @@ export type Database = {
           emergency_relationship?: string | null
           first_name: string
           gcash?: string | null
+          health_allowance_date?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
           id?: string
@@ -1710,6 +1712,7 @@ export type Database = {
           emergency_relationship?: string | null
           first_name?: string
           gcash?: string | null
+          health_allowance_date?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
           id?: string

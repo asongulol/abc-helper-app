@@ -168,6 +168,8 @@ export const SaveWorkerProfileSchema = z
     postalCode: z.string().max(20).nullable(),
     payoutMethod: PayoutMethodSchema.nullable(),
     healthAllowanceEligible: z.boolean(),
+    /** Annual HA pay date override (month/day only); null = hire anniversary. */
+    healthAllowanceDate: IsoDateSchema.nullable().optional(),
     thirteenthMonthEligible: z.boolean(),
     // Personal / HR (workers table) — all optional so partial edits are accepted.
     workEmail: z

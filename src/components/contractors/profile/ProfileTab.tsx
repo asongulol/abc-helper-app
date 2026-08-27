@@ -216,6 +216,25 @@ export function ProfileTab({
           />
           Health allowance
         </label>
+        {form.healthAllowanceEligible && (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+            }}
+            title="When the annual ₱20,000 pays. Blank = hire anniversary; only the month/day matter."
+          >
+            paid on
+            <input
+              type="date"
+              value={form.healthAllowanceDate}
+              onChange={(e) => set('healthAllowanceDate', e.target.value)}
+              disabled={isPending}
+            />
+          </label>
+        )}
         <label
           style={{
             display: 'flex',

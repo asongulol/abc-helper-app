@@ -18,6 +18,8 @@ export type FormState = {
   postalCode: string;
   payoutMethod: string;
   healthAllowanceEligible: boolean;
+  /** Annual HA pay date override (yyyy-mm-dd; month/day only, '' = hire anniversary). */
+  healthAllowanceDate: string;
   thirteenthMonthEligible: boolean;
   contract: ContractType;
   payBasis: PayBasis | null;
