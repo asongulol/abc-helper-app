@@ -15,8 +15,14 @@ vi.mock('@/db/clients/service', () => ({
 }));
 vi.mock('@/server/audit', () => ({ logEvent: async () => {} }));
 
-const { calculateDraft, recomputeWorkerDraft, reconcileApprovedTime, salariedCatchUpCandidates } =
-  await import('@/server/payroll');
+const {
+  calculateDraft,
+  lockRun,
+  recomputeWorkerDraft,
+  reconcileApprovedTime,
+  salariedCatchUpCandidates,
+  unlockRun,
+} = await import('@/server/payroll');
 type PayrollDeps = import('@/server/payroll').PayrollDeps;
 
 const COMPANY = 'c-1';
@@ -62,6 +68,43 @@ const entry = (id: number, workerId: string, workDate: string, hours: number) =>
   tracked_seconds: hours * 3600,
   pto_seconds: 0,
   approval: 'approved',
+});
+
+const period = (over: Record<string, unknown> = {}) => ({
+  id: 'pp-1',
+  company_id: COMPANY,
+  period_start: START,
+  period_end: END,
+  pay_date: '2026-07-31',
+  state: 'open',
+  kind: 'regular',
+  ...over,
+});
+const payRow = (id: string, workerId: string, over: Record<string, unknown> = {}) => ({
+  id,
+  company_id: COMPANY,
+  pay_period_id: 'pp-1',
+  worker_id: workerId,
+  net_php: 1000,
+  payout_method: 'wise',
+  units: null,
+  ...over,
+});
+const session = (
+  id: string,
+  workerId: string,
+  date: string,
+  over: Record<string, unknown> = {},
+) => ({
+  id,
+  worker_id: workerId,
+  session_date: date,
+  units: 1,
+  approval: 'approved',
+  paid_at: null,
+  paid_pay_period_id: null,
+  paid_payment_id: null,
+  ...over,
 });
 
 const seedBase = (): Tables => ({
@@ -354,6 +397,203 @@ describe('reconcileApprovedTime', () => {
 
     expect(res).toEqual({ workers: 0 });
     expect(tables.payments).toEqual(before); // two reads, zero writes
+  });
+});
+
+const lockInput = (over: Record<string, unknown> = {}) =>
+  ({ companyId: COMPANY, periodStart: START, periodEnd: END, ...over }) as Parameters<
+    typeof lockRun
+  >[0];
+
+describe('lockRun', () => {
+  it('gate: refuses null-net rows, naming the contractor', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana')];
+    seed.worker_companies = [link('w-ana', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [payRow('pay-ana', 'w-ana', { net_php: null })];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).rejects.toThrow(/no rate.*w-ana Test/);
+    expect(tables.pay_periods[0]?.state).toBe('open');
+  });
+
+  it('gate F2: time still pending approval in the window blocks', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana')];
+    seed.worker_companies = [link('w-ana', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [payRow('pay-ana', 'w-ana')];
+    seed.time_entries = [{ ...entry(1, 'w-ana', '2026-07-06', 5), approval: 'pending' }];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).rejects.toThrow(/pending approval/);
+    expect(tables.pay_periods[0]?.state).toBe('open');
+  });
+
+  it('gate RP-22: approved unpaid sessions beyond the captured units block', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ps')];
+    seed.worker_companies = [link('w-ps', 'PS')];
+    seed.pay_periods = [period()];
+    // The draft captured 1 session, but a 2nd approved one landed after Calculate.
+    seed.payments = [payRow('pay-ps', 'w-ps', { units: 1 })];
+    seed.service_sessions = [
+      session('s-1', 'w-ps', '2026-07-06'),
+      session('s-2', 'w-ps', '2026-07-07'),
+    ];
+    const { deps } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).rejects.toThrow(/does not pay.*w-ps Test/);
+  });
+
+  it('gate New-2: a negative net blocks', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana')];
+    seed.worker_companies = [link('w-ana', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [payRow('pay-ana', 'w-ana', { net_php: -50 })];
+    const { deps } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).rejects.toThrow(/negative net.*w-ana Test/);
+  });
+
+  it('gate RP-18: a no-method row blocks until confirmed, then locks', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana')];
+    seed.worker_companies = [link('w-ana', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [payRow('pay-ana', 'w-ana', { payout_method: null })];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).rejects.toThrow(/Lock again to confirm/);
+    expect(tables.pay_periods[0]?.state).toBe('open');
+
+    await expect(lockRun(lockInput({ confirmed: true }), deps)).resolves.toEqual({
+      lockedCount: 1,
+    });
+    expect(tables.pay_periods[0]?.state).toBe('locked');
+  });
+
+  it('off-cycle batch: exempt from the window gates, stamps nothing', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ps')];
+    seed.worker_companies = [link('w-ps', 'PS')];
+    // Pending time + an uncaptured approved session on the batch "window" day —
+    // both would block a regular period; neither is the batch's work (RP-34).
+    seed.pay_periods = [
+      period({ period_start: '2026-07-20', period_end: '2026-07-20', kind: 'off_cycle' }),
+    ];
+    seed.payments = [payRow('pay-ps', 'w-ps', { units: 1 })];
+    seed.time_entries = [{ ...entry(1, 'w-ps', '2026-07-20', 5), approval: 'pending' }];
+    seed.service_sessions = [session('s-1', 'w-ps', '2026-07-20')];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(
+      lockRun(lockInput({ periodStart: '2026-07-20', periodEnd: '2026-07-20' }), deps),
+    ).resolves.toEqual({ lockedCount: 1 });
+    expect(tables.pay_periods[0]?.state).toBe('locked');
+    expect(tables.service_sessions[0]?.paid_at).toBeNull(); // ledger stamps at add time
+  });
+
+  it('RP-01: stamps exactly the sessions the calc summed — per-session rows, in-window only', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ps'), worker('w-hr')];
+    seed.worker_companies = [link('w-ps', 'PS'), link('w-hr', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [
+      payRow('pay-ps', 'w-ps', { units: 2 }), // per-session row: units non-null
+      payRow('pay-hr', 'w-hr'), // per-hour row: its sessions are not what it pays
+    ];
+    seed.service_sessions = [
+      session('s-in1', 'w-ps', '2026-07-06'),
+      session('s-in2', 'w-ps', '2026-07-10'),
+      session('s-out', 'w-ps', '2026-07-18'), // outside the window
+      session('s-hr', 'w-hr', '2026-07-06'), // per-hour worker
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(lockRun(lockInput(), deps)).resolves.toEqual({ lockedCount: 2 });
+
+    const byId = new Map(tables.service_sessions.map((s) => [s.id, s]));
+    for (const id of ['s-in1', 's-in2']) {
+      expect(byId.get(id)).toMatchObject({
+        paid_pay_period_id: 'pp-1',
+        paid_payment_id: 'pay-ps',
+      });
+      expect(byId.get(id)?.paid_at).toBeTruthy();
+    }
+    expect(byId.get('s-out')?.paid_at).toBeNull();
+    expect(byId.get('s-hr')?.paid_at).toBeNull();
+  });
+});
+
+describe('unlockRun', () => {
+  const unlockInput = { companyId: COMPANY, periodStart: START, periodEnd: END, reason: 'test' };
+
+  it('RP-10/RP-12: refuses while a Wise draft or a salaried catch-up hangs off the run', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana'), worker('w-cara')];
+    seed.worker_companies = [link('w-ana', 'PH'), link('w-cara', 'FT')];
+    seed.pay_periods = [period({ state: 'locked' })];
+    seed.payments = [payRow('pay-ana', 'w-ana', { wise_transfer_id: 'tx-1' })];
+    // A catch-up row pays leftover hours FROM this period (work_date = its end).
+    seed.off_cycle_pay_items = [
+      {
+        id: 'oc-1',
+        company_id: COMPANY,
+        worker_id: 'w-cara',
+        pay_period_id: 'pp-2',
+        basis: 'salaried_hours',
+        session_id: null,
+        work_date: END,
+        units: 20,
+        rate_php: null,
+        amount_php: 2500,
+        description: null,
+        created_at: '2026-08-01T00:00:00Z',
+      },
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await expect(unlockRun(unlockInput, deps)).rejects.toThrow(
+      /Cancel the transfer.*catch-up item/s,
+    );
+    expect(tables.pay_periods[0]?.state).toBe('locked');
+  });
+
+  it('releases the lock-stamped sessions but leaves ledger-held ones', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ps')];
+    seed.worker_companies = [link('w-ps', 'PS')];
+    seed.pay_periods = [period({ state: 'locked' })];
+    seed.payments = [payRow('pay-ps', 'w-ps', { units: 1 })];
+    seed.service_sessions = [
+      // Stamped by the lock: carries the payment id → must be released.
+      session('s-lock', 'w-ps', '2026-07-06', {
+        paid_at: '2026-07-16T00:00:00Z',
+        paid_pay_period_id: 'pp-1',
+        paid_payment_id: 'pay-ps',
+      }),
+      // Held by an off-cycle ledger line (null payment id) → must survive.
+      session('s-ledger', 'w-ps', '2026-07-07', {
+        paid_at: '2026-07-08T00:00:00Z',
+        paid_pay_period_id: 'pp-1',
+        paid_payment_id: null,
+      }),
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await unlockRun(unlockInput, deps);
+
+    expect(tables.pay_periods[0]?.state).toBe('open');
+    const byId = new Map(tables.service_sessions.map((s) => [s.id, s]));
+    expect(byId.get('s-lock')).toMatchObject({
+      paid_at: null,
+      paid_pay_period_id: null,
+      paid_payment_id: null,
+    });
+    expect(byId.get('s-ledger')?.paid_at).toBe('2026-07-08T00:00:00Z');
   });
 });
 
