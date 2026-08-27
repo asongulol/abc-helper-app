@@ -21,10 +21,15 @@ type PeriodHours = {
   days: Array<{ date: string; tracked: number; pto: number }>;
 };
 
-/** Bucket own time entries by semi-monthly period start (hours, not seconds). Exported for tests. */
+/**
+ * Bucket own time entries by semi-monthly period start (hours, not seconds).
+ * Approved entries only — the payroll engine pays approved time, so a payslip
+ * that explains the pay must count exactly the same hours. Exported for tests.
+ */
 export const bucketHours = (entries: PortalTimeEntryRow[]): Map<string, PeriodHours> => {
   const map = new Map<string, PeriodHours>();
   for (const e of entries) {
+    if (e.approval !== 'approved') continue;
     const key = periodFor(e.workDate).start;
     const b = map.get(key) ?? { worked: 0, pto: 0, days: [] };
     const tracked = e.trackedSeconds / 3600;

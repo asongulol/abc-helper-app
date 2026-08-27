@@ -23,6 +23,18 @@ describe('bucketHours — time entries → per-period totals and day rows', () =
     expect(map.get('2026-08-16')?.worked).toBeCloseTo(6, 5);
   });
 
+  it('counts approved entries only — the payslip explains what pay counted', () => {
+    const map = bucketHours([
+      entry('2026-08-03', 8 * 3600),
+      { ...entry('2026-08-04', 8 * 3600), approval: 'pending' as const },
+      { ...entry('2026-08-05', 8 * 3600, 3600), approval: 'rejected' as const },
+    ]);
+    const b = map.get('2026-08-01');
+    expect(b?.worked).toBeCloseTo(8, 5);
+    expect(b?.pto).toBeCloseTo(0, 5);
+    expect(b?.days.map((d) => d.date)).toEqual(['2026-08-03']);
+  });
+
   it('sums PTO separately and merges same-day entries', () => {
     const map = bucketHours([entry('2026-08-05', 2 * 3600, 3600), entry('2026-08-05', 3600, 0)]);
     const b = map.get('2026-08-01');
