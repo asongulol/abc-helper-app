@@ -543,6 +543,7 @@ export type PaymentComponents = {
   computedGrossPhp: number | null;
   /** Audit prose, incl. the override line `applyGrossOverride` writes. */
   note: string | null;
+  status: string;
 };
 
 export const fetchPaymentForWorker = async (
@@ -553,7 +554,7 @@ export const fetchPaymentForWorker = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, note',
+      'id, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, misc_items, note, status',
     )
     .eq('pay_period_id', payPeriodId)
     .eq('worker_id', workerId)
@@ -570,6 +571,7 @@ export const fetchPaymentForWorker = async (
     miscItems: Array.isArray(data.misc_items) ? (data.misc_items as MiscItem[]) : [],
     computedGrossPhp: data.computed_gross_php == null ? null : Number(data.computed_gross_php),
     note: data.note,
+    status: data.status,
   };
 };
 
@@ -1889,10 +1891,44 @@ export const insertOutsidePayment = async (
 };
 
 /** Cleanup of a period the caller just created and could not fill. Deleting
- *  pay_periods CASCADEs to payments, so this must only ever target a period
- *  known to be empty; the state guard keeps it off locked/paid ones. */
-export const deleteEmptyOpenPeriod = async (db: Db, periodId: string): Promise<void> => {
-  await db.from('pay_periods').delete().eq('id', periodId).eq('state', 'open');
+ *  pay_periods CASCADEs to payments, so the caller must guarantee the period
+ *  is empty — only ever a just-created one whose single insert failed. */
+export const deleteEmptyPeriod = async (db: Db, periodId: string): Promise<void> => {
+  await db.from('pay_periods').delete().eq('id', periodId);
+};
+
+/**
+ * Create a period directly in state 'locked' — for records of money that
+ * already moved (outside payments): the period never passes through 'open', so
+ * no recalc can ever prune its rows and, for kind='off_cycle', the
+ * one-open-batch unique (migration 41) never comes into play. `sent`+`paid_at`
+ * INSERTs are admitted into locked periods (migration 42 locally; prod has no
+ * period-open trigger at all).
+ */
+export const insertLockedPeriod = async (
+  db: Db,
+  args: {
+    companyId: string;
+    start: string;
+    end: string;
+    payDate: string;
+    kind: 'regular' | 'off_cycle';
+  },
+): Promise<PeriodRef> => {
+  const { data, error } = await db
+    .from('pay_periods')
+    .insert({
+      company_id: args.companyId,
+      period_start: args.start,
+      period_end: args.end,
+      pay_date: args.payDate,
+      state: 'locked',
+      kind: args.kind,
+    })
+    .select('id, state')
+    .single();
+  if (error) throw new Error(`locked period insert: ${error.message}`);
+  return { id: data.id, state: data.state };
 };
 
 export const markPaymentsUnpaid = async (db: Db, paymentIds: string[]): Promise<void> => {

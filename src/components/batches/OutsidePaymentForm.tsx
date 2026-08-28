@@ -89,8 +89,10 @@ export const OutsidePaymentForm = ({ companyId, roster, onSaved }: OutsidePaymen
       <p className="sub">
         A remittance made <b>without the app</b> (bank transfer by hand, or a Wise transfer sent
         from the Wise site). Recorded as already paid on the period it covers; a <b>Wise</b> payment
-        can then be matched to the real transfer above. If the contractor already has a row on the
-        period, use <b>Mark paid</b> / Wise matching on that row instead.
+        can then be matched to the real transfer above. A period can be paid in several separate
+        remittances — when the contractor already has a paid row on it, the extra one is recorded on
+        its own batch dated the paid day (an <b>unpaid</b> row instead wants <b>Mark paid</b> in
+        Process &amp; Pay — that money is the run’s, not a second payment).
       </p>
 
       <div className="row" style={{ alignItems: 'flex-end', flexWrap: 'wrap' }}>

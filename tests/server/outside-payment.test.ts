@@ -95,8 +95,8 @@ describe('recordOutsidePayment', () => {
       net_php: 12500,
       note: 'Outside payment (recorded manually) — BPI 000123',
     });
-    // Created open → locked → all rows sent → paid. Never left open for a
-    // recalc to prune.
+    // Born 'locked' (never open, so no recalc exposure), then synced to
+    // 'paid' since every row is sent.
     expect(tables.pay_periods?.[0]).toMatchObject({
       id: res.periodId,
       pay_date: '2026-07-31',
@@ -128,13 +128,59 @@ describe('recordOutsidePayment', () => {
     await expect(recordOutsidePayment(input(), deps)).rejects.toThrow(/open draft/);
   });
 
-  it('refuses a worker who already has a row on the period', async () => {
+  it('slot taken by a PAID row → lands on a single-day batch naming the covered period', async () => {
     const seed = seedBase();
     seed.pay_periods = [period()];
     seed.payments = [{ id: 'pay-1', pay_period_id: 'pp-1', worker_id: 'w-ben', status: 'sent' }];
+    const { deps, tables } = mkDeps(seed);
+
+    const res = await recordOutsidePayment(input(), deps);
+
+    expect(tables.pay_periods?.find((pp) => pp.id === res.periodId)).toMatchObject({
+      period_start: '2026-07-20',
+      period_end: '2026-07-20',
+      pay_date: '2026-07-20',
+      kind: 'off_cycle',
+      state: 'paid',
+    });
+    expect(tables.payments?.find((r) => r.id === res.paymentId)).toMatchObject({
+      pay_period_id: res.periodId,
+      status: 'sent',
+      note: 'Outside payment (recorded manually) — covers 2026-07-01 → 2026-07-15 — BPI 000123',
+    });
+    // The covered period's own row is untouched.
+    expect(tables.payments?.find((r) => r.id === 'pay-1')?.pay_period_id).toBe('pp-1');
+  });
+
+  it('slot taken by an UNPAID row → refuses with the Mark-paid pointer', async () => {
+    const seed = seedBase();
+    seed.pay_periods = [period({ state: 'locked' })];
+    seed.payments = [{ id: 'pay-1', pay_period_id: 'pp-1', worker_id: 'w-ben', status: 'draft' }];
     const { deps } = mkDeps(seed);
 
-    await expect(recordOutsidePayment(input(), deps)).rejects.toThrow(/already has a row/);
+    await expect(recordOutsidePayment(input(), deps)).rejects.toThrow(/Mark paid/);
+  });
+
+  it('second outside payment for the same contractor on the same day → refuses', async () => {
+    const seed = seedBase();
+    seed.pay_periods = [
+      period(),
+      period({
+        id: 'pp-day',
+        period_start: '2026-07-20',
+        period_end: '2026-07-20',
+        pay_date: '2026-07-20',
+        kind: 'off_cycle',
+        state: 'paid',
+      }),
+    ];
+    seed.payments = [
+      { id: 'pay-1', pay_period_id: 'pp-1', worker_id: 'w-ben', status: 'sent' },
+      { id: 'pay-2', pay_period_id: 'pp-day', worker_id: 'w-ben', status: 'sent' },
+    ];
+    const { deps } = mkDeps(seed);
+
+    await expect(recordOutsidePayment(input(), deps)).rejects.toThrow(/one per contractor per day/);
   });
 
   it('refuses an off-roster worker, a non-semi-monthly window, and a future paid date', async () => {
