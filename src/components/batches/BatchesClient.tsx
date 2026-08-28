@@ -67,6 +67,10 @@ export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesCl
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** Overview table: collapsed to the last 5 periods unless expanded… */
+  const [showAllPeriods, setShowAllPeriods] = useState(false);
+  /** …or narrowed to an explicit multi-selection of period ids. */
+  const [pickedPeriods, setPickedPeriods] = useState<string[]>([]);
   /** The open period's payments, each with its transfer or the ones it could be. */
   const [rows, setRows] = useState<PeriodMatchRow[]>([]);
   const [rowsBusy, setRowsBusy] = useState(false);
@@ -144,6 +148,13 @@ export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesCl
   };
 
   const ovPeriods = overview?.periods ?? [];
+  /** Overview display: the last 5 by default, expandable, or an explicit pick. */
+  const visiblePeriods =
+    pickedPeriods.length > 0
+      ? ovPeriods.filter((p) => pickedPeriods.includes(p.id))
+      : showAllPeriods
+        ? ovPeriods
+        : ovPeriods.slice(0, 5);
   const selected = ovPeriods.find((p) => p.id === periodId) ?? null;
 
   // Backfill missing wise_transfer_ids for the selected period (recipient +
@@ -719,6 +730,68 @@ export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesCl
             </button>
           </div>
 
+          {!loading && ovPeriods.length > 5 && (
+            <div className="row" style={{ alignItems: 'flex-end', flexWrap: 'wrap', marginTop: 8 }}>
+              <div className="field">
+                <label htmlFor={`${idBatch}-ovpick`}>Pick periods (Ctrl/⌘-click for several)</label>
+                <select
+                  id={`${idBatch}-ovpick`}
+                  multiple
+                  size={4}
+                  value={pickedPeriods}
+                  onChange={(e) =>
+                    setPickedPeriods([...e.target.selectedOptions].map((o) => o.value))
+                  }
+                >
+                  {ovPeriods.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.start} → {p.end} ({p.state})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  paddingBottom: 4,
+                }}
+              >
+                {pickedPeriods.length > 0 ? (
+                  <>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      Showing {pickedPeriods.length} selected period(s).
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      onClick={() => setPickedPeriods([])}
+                    >
+                      Clear selection
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {showAllPeriods
+                        ? `Showing all ${ovPeriods.length} periods.`
+                        : `Showing the last 5 of ${ovPeriods.length} periods.`}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      onClick={() => setShowAllPeriods((v) => !v)}
+                    >
+                      {showAllPeriods ? 'Show last 5' : `Show all (${ovPeriods.length})`}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div style={{ textAlign: 'center', padding: 32 }}>
               <Spinner />
@@ -737,7 +810,7 @@ export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesCl
                   </tr>
                 </thead>
                 <tbody>
-                  {ovPeriods.map((p) => {
+                  {visiblePeriods.map((p) => {
                     // "Paid · Wise OK" must not cover rows whose transfer never
                     // paid — that green tick is precisely what hid 29 of them.
                     const done = p.total > 0 && p.reconciled === p.total && p.unconfirmed === 0;
