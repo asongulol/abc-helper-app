@@ -31,32 +31,11 @@ export function PaySlip({ pay }: { pay: PaymentDetail }) {
   );
 
   // "How this pay was computed" basis sentence from the stored inputs (the
-  // shared receipt model; only the basis is used — the table below already
-  // lists the components verbatim per WORKFLOWS.md §10.1). When the saved
-  // gross was manually adjusted away from the computed one, say so instead of
-  // implying the formula equals the printed Gross.
-  const receipt = receiptModel({
-    gross: pay.grossPhp,
-    net: pay.netPhp,
-    method: pay.payoutMethod,
-    workedPay: pay.workedHours,
-    worked: null,
-    pto: 0,
-    expected: pay.expectedHours,
-    ratio: pay.performanceRatio,
-    rate: pay.ratePhp,
-    computedGross: pay.computedGrossPhp,
-    ha: 0,
-    t13: 0,
-    lunch: 0,
-    bonus: 0,
-    offCycle: 0,
-    misc: [],
-    units: pay.units,
-    perSession: pay.perSession,
-    payout: null,
-    payoutCur: null,
-  });
+  // shared receipt model; only basis + formula gross are used — the table
+  // below already lists the components verbatim per WORKFLOWS.md §10.1). When
+  // the saved gross was manually adjusted away from the computed one, say so
+  // instead of implying the formula equals the printed Gross.
+  const receipt = receiptModel(pay.receipt);
   const grossBasis =
     receipt.basis &&
     Math.abs(receipt.gross - pay.grossPhp) >= 0.01 &&

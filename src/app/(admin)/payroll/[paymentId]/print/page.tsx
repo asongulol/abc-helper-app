@@ -20,7 +20,7 @@ export default async function PaySlipPrintPage({
 
   const { paymentId } = await params;
   const supabase = await createServerSupabase();
-  const pay = await fetchPaymentDetail(supabase, paymentId);
+  const pay = await fetchPaymentDetail(supabase, paymentId, { audience: 'admin' });
   if (!pay) notFound();
 
   return (

@@ -42,6 +42,61 @@ export type ReceiptInput = {
   payoutCur: string | null;
 };
 
+/** The raw `payments` columns the receipt is assembled from (snake_case). */
+export type PaymentRowForReceipt = {
+  gross_php: number | string | null;
+  net_php: number | string | null;
+  payout_method: string | null;
+  worked_hours: number | string | null;
+  expected_hours: number | string | null;
+  performance_ratio: number | string | null;
+  rate_php: number | string | null;
+  computed_gross_php: number | string | null;
+  health_allowance_php: number | string | null;
+  thirteenth_month_php: number | string | null;
+  pdd_lunch_php: number | string | null;
+  bonus_php: number | string | null;
+  off_cycle_php: number | string | null;
+  misc_items: unknown;
+  units: number | string | null;
+  contract: string | null;
+  pay_basis: string | null;
+  payout_amount: number | string | null;
+  payout_currency: string | null;
+};
+
+const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
+
+/**
+ * THE payments-row → ReceiptInput mapping. Every surface that shows a receipt
+ * (portal statements, admin history, printed pay slip) builds its input here,
+ * so the null rules and coercions cannot drift between them. `worked`/`pto`
+ * default to null/0 — callers with time entries spread their own split in at
+ * render time.
+ */
+export const receiptFromPaymentRow = (p: PaymentRowForReceipt): ReceiptInput => ({
+  gross: Number(p.gross_php ?? 0),
+  net: Number(p.net_php ?? 0),
+  method: p.payout_method,
+  workedPay: numOrNull(p.worked_hours),
+  worked: null,
+  pto: 0,
+  expected: numOrNull(p.expected_hours),
+  ratio: numOrNull(p.performance_ratio),
+  rate: numOrNull(p.rate_php),
+  computedGross: numOrNull(p.computed_gross_php),
+  ha: Number(p.health_allowance_php ?? 0),
+  t13: Number(p.thirteenth_month_php ?? 0),
+  lunch: Number(p.pdd_lunch_php ?? 0),
+  bonus: Number(p.bonus_php ?? 0),
+  offCycle: Number(p.off_cycle_php ?? 0),
+  misc: flattenMisc(p.misc_items),
+  units: numOrNull(p.units),
+  perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
+  payout: numOrNull(p.payout_amount),
+  payoutCur: p.payout_currency ?? null,
+});
+
 const num = (n: number): string => n.toFixed(2);
 
 /**

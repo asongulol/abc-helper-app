@@ -20,7 +20,9 @@ export default async function StatementPrintPage({
 
   const { paymentId } = await params;
   const supabase = await createServerSupabase();
-  const pay = await fetchPaymentDetail(supabase, paymentId);
+  // Owner rule: no exchange rates on contractor views — the contractor
+  // audience never even selects fx_rate at the data layer.
+  const pay = await fetchPaymentDetail(supabase, paymentId, { audience: 'contractor' });
   // RLS already scopes the read to the authenticated worker; the explicit
   // ownership assertion is defence-in-depth (404 on a foreign / unknown id).
   if (!pay || pay.workerId !== worker.workerId) notFound();
@@ -28,8 +30,7 @@ export default async function StatementPrintPage({
   return (
     <div style={{ maxWidth: 680, margin: '0 auto' }}>
       <AutoPrint />
-      {/* Owner rule: exchange rates never render on contractor-visible views. */}
-      <PaySlip pay={{ ...pay, fxRate: null }} />
+      <PaySlip pay={pay} />
     </div>
   );
 }

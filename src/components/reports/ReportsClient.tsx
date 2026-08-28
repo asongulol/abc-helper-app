@@ -847,7 +847,13 @@ const PerContractorSummary = ({ data }: { data: ReportsData }) => {
 // "How this pay was computed" model lives in @/lib/pay/receipt (shared with
 // the contractor portal pay slips).
 const PayReceipt = ({ r }: { r: HistoryRow }) => {
-  const { basis, gross, extras, paid } = receiptModel(r);
+  if (!r.receipt) return null;
+  // Time entries feed the worked/PTO split; the rest is the stored statement.
+  const { basis, gross, extras, paid } = receiptModel({
+    ...r.receipt,
+    worked: r.worked,
+    pto: r.pto,
+  });
   const amt = { textAlign: 'right' as const, whiteSpace: 'nowrap' as const };
   const signed = (v: number) => (v < 0 ? `− ${money(-v, 'PHP')}` : `+ ${money(v, 'PHP')}`);
 
@@ -889,7 +895,7 @@ const PayReceipt = ({ r }: { r: HistoryRow }) => {
               <b>Net</b>
             </td>
             <td style={amt}>
-              <b>{money(r.net, 'PHP')}</b>
+              <b>{money(r.receipt.net ?? 0, 'PHP')}</b>
             </td>
           </tr>
         </tbody>
@@ -955,12 +961,12 @@ const ContractorHistory = ({
       r.end || '',
       r.worked != null ? r.worked.toFixed(2) : '',
       r.pto.toFixed(2),
-      r.hasPay ? r.ha : '',
-      r.hasPay ? r.lunch : '',
-      r.hasPay ? r.t13 : '',
-      r.hasPay ? r.gross : '',
-      r.hasPay ? r.net : '',
-      r.method || '',
+      r.receipt?.ha ?? '',
+      r.receipt?.lunch ?? '',
+      r.receipt?.t13 ?? '',
+      r.receipt?.gross ?? '',
+      r.receipt?.net ?? '',
+      r.receipt?.method || '',
       r.status || '',
     ]);
     downloadCSV(`${(sel?.name || 'contractor').replace(/[^a-z0-9]+/gi, '_')}_history.csv`, [
@@ -1035,7 +1041,7 @@ const ContractorHistory = ({
               {rows.map((r, i) => {
                 const open = openKey === i;
                 const hasDays = r.days && r.days.length > 0;
-                const canOpen = hasDays || r.hasPay;
+                const canOpen = hasDays || r.receipt != null;
                 return (
                   <Fragment key={`${r.start}-${r.end || ''}`}>
                     <tr
@@ -1062,20 +1068,26 @@ const ContractorHistory = ({
                       </td>
                       <td data-label="Worked h">{r.worked != null ? r.worked.toFixed(2) : '—'}</td>
                       <td data-label="PTO h">{r.pto > 0 ? r.pto.toFixed(2) : '—'}</td>
-                      <td data-label="Health ₱">{r.hasPay && r.ha ? money(r.ha, 'PHP') : '—'}</td>
-                      <td data-label="Lunch ₱">
-                        {r.hasPay && r.lunch ? money(r.lunch, 'PHP') : '—'}
+                      <td data-label="Health ₱">
+                        {r.receipt?.ha ? money(r.receipt.ha, 'PHP') : '—'}
                       </td>
-                      <td data-label="13th ₱">{r.hasPay && r.t13 ? money(r.t13, 'PHP') : '—'}</td>
-                      <td data-label="Gross ₱">{r.hasPay ? money(r.gross, 'PHP') : '—'}</td>
+                      <td data-label="Lunch ₱">
+                        {r.receipt?.lunch ? money(r.receipt.lunch, 'PHP') : '—'}
+                      </td>
+                      <td data-label="13th ₱">
+                        {r.receipt?.t13 ? money(r.receipt.t13, 'PHP') : '—'}
+                      </td>
+                      <td data-label="Gross ₱">
+                        {r.receipt ? money(r.receipt.gross ?? 0, 'PHP') : '—'}
+                      </td>
                       <td data-label="Net ₱">
-                        <b>{r.hasPay ? money(r.net, 'PHP') : '—'}</b>
+                        <b>{r.receipt ? money(r.receipt.net ?? 0, 'PHP') : '—'}</b>
                       </td>
                       <td data-label="Method">
-                        {r.hasPay ? payoutMethodLabel(r.method) || '—' : '—'}
+                        {r.receipt ? payoutMethodLabel(r.receipt.method) || '—' : '—'}
                       </td>
                       <td data-label="Status">
-                        {r.hasPay ? (
+                        {r.receipt ? (
                           <span
                             className="pill"
                             style={
@@ -1102,7 +1114,7 @@ const ContractorHistory = ({
                           colSpan={10}
                           style={{ background: 'var(--surface-2)', padding: '8px 10px' }}
                         >
-                          {r.hasPay && <PayReceipt r={r} />}
+                          <PayReceipt r={r} />
                           {hasDays && (
                             <div>
                               <table
