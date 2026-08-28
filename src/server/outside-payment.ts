@@ -38,9 +38,46 @@ import {
   syncPeriodPaidState,
 } from '@/db/queries/payroll';
 import { periodFor } from '@/lib/dates/periods';
+import type { MiscItem } from '@/lib/pay/calc';
 import { logEvent } from '@/server/audit';
 import { type PayrollDeps, realDeps } from '@/server/payroll';
-import type { RecordOutsidePaymentInput } from '@/types/schemas/payroll';
+import {
+  OUTSIDE_DESIGNATION_LABELS,
+  type RecordOutsidePaymentInput,
+} from '@/types/schemas/payroll';
+
+/** A designation's display name — the specified label for 'other'. */
+const designationName = (d: RecordOutsidePaymentInput['designations'][number]): string =>
+  d.kind === 'other' ? (d.label?.trim() ?? 'Other') : OUTSIDE_DESIGNATION_LABELS[d.kind];
+
+/**
+ * Split the total across the row's component columns: 13th/HA/Lunch land on
+ * their native columns, Backpay/PTO/Other become labeled misc earnings, and
+ * the undesignated remainder stays as base pay (gross). Sums back to net via
+ * composeNet's invariant, so receipts and reports render the split natively.
+ * Integer centavos throughout (ADR-0006).
+ */
+const splitDesignations = (input: RecordOutsidePaymentInput) => {
+  const toC = (php: number) => Math.round(php * 100);
+  const sumKind = (kind: string) =>
+    input.designations.filter((d) => d.kind === kind).reduce((s, d) => s + toC(d.amountPhp), 0);
+  const t13C = sumKind('thirteenth_month');
+  const haC = sumKind('health_allowance');
+  const pddC = sumKind('lunch');
+  const misc: MiscItem[] = input.designations
+    .filter((d) => d.kind === 'backpay' || d.kind === 'pto' || d.kind === 'other')
+    .map((d) => ({ kind: 'other_earns', label: designationName(d), amount: d.amountPhp }));
+  const miscC = misc.reduce((s, m) => s + toC(Number(m.amount)), 0);
+  const grossC = toC(input.amountPhp) - t13C - haC - pddC - miscC;
+  if (grossC < 0) throw new Error('Designated amounts exceed the payment amount.');
+  return {
+    grossPhp: grossC / 100,
+    haPhp: haC / 100,
+    t13Php: t13C / 100,
+    pddPhp: pddC / 100,
+    miscItems: misc,
+  };
+};
 
 export const recordOutsidePayment = async (
   input: RecordOutsidePaymentInput,
@@ -116,7 +153,22 @@ export const recordOutsidePayment = async (
     created = true;
   }
 
-  const note = `Outside payment (recorded manually)${covers}${input.reference ? ` — ${input.reference}` : ''}`;
+  const split = splitDesignations(input);
+  const breakdown = input.designations
+    .map(
+      (d) =>
+        `${designationName(d)} ₱${d.amountPhp.toLocaleString()}${d.note?.trim() ? ` (${d.note.trim()})` : ''}`,
+    )
+    .join('; ');
+  const note = [
+    'Outside payment (recorded manually)',
+    covers ? covers.replace(/^ — /, '') : '',
+    breakdown,
+    input.transferRef?.trim() ? `Transfer ref ${input.transferRef.trim()}` : '',
+    input.reference?.trim() ?? '',
+  ]
+    .filter(Boolean)
+    .join(' — ');
   let paymentId: string;
   try {
     paymentId = await insertOutsidePayment(db, {
@@ -124,6 +176,7 @@ export const recordOutsidePayment = async (
       workerId: input.workerId,
       payPeriodId: target.id,
       amountPhp: input.amountPhp,
+      ...split,
       paidOn: input.paidOn,
       payoutMethod: input.payoutMethod,
       note,
@@ -150,6 +203,13 @@ export const recordOutsidePayment = async (
       covered_period: `${p.start} → ${p.end}`,
       landed: covers ? 'off_cycle_day_batch' : 'covered_period',
       period_created: created,
+      designations: input.designations.map((d) => ({
+        kind: d.kind,
+        label: designationName(d),
+        amount_php: d.amountPhp,
+        note: d.note ?? null,
+      })),
+      transfer_ref: input.transferRef ?? null,
       reference: input.reference ?? null,
     },
   });

@@ -14,6 +14,7 @@ vi.mock('@/db/clients/service', () => ({
 vi.mock('@/server/audit', () => ({ logEvent: async () => {} }));
 
 const { recordOutsidePayment } = await import('@/server/outside-payment');
+const { RecordOutsidePaymentSchema } = await import('@/types/schemas/payroll');
 type PayrollDeps = import('@/server/payroll').PayrollDeps;
 
 const COMPANY = 'c-1';
@@ -73,9 +74,40 @@ const input = (over: Record<string, unknown> = {}) =>
     amountPhp: 12500,
     paidOn: '2026-07-20',
     payoutMethod: 'wise',
+    designations: [],
     reference: 'BPI 000123',
     ...over,
   }) as Parameters<typeof recordOutsidePayment>[0];
+
+describe('RecordOutsidePaymentSchema', () => {
+  it("rejects over-allocation and an unnamed 'Other'; defaults designations to []", () => {
+    // The action's trust boundary wants real UUIDs — unlike the fake's ids.
+    const base = {
+      companyId: '11111111-1111-4111-8111-111111111111',
+      periodStart: START,
+      periodEnd: END,
+      workerId: '22222222-2222-4222-8222-222222222222',
+      amountPhp: 12500,
+      paidOn: '2026-07-20',
+      payoutMethod: 'wise',
+    };
+    expect(RecordOutsidePaymentSchema.safeParse(base).success).toBe(true);
+    const parsed = RecordOutsidePaymentSchema.parse({ ...base, designations: undefined });
+    expect(parsed.designations).toEqual([]);
+    expect(
+      RecordOutsidePaymentSchema.safeParse({
+        ...base,
+        designations: [{ kind: 'backpay', amountPhp: 13000 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      RecordOutsidePaymentSchema.safeParse({
+        ...base,
+        designations: [{ kind: 'other', amountPhp: 100 }],
+      }).success,
+    ).toBe(false);
+  });
+});
 
 describe('recordOutsidePayment', () => {
   it('creates a missing period, inserts the sent row, and closes the period as paid', async () => {
@@ -181,6 +213,52 @@ describe('recordOutsidePayment', () => {
     const { deps } = mkDeps(seed);
 
     await expect(recordOutsidePayment(input(), deps)).rejects.toThrow(/one per contractor per day/);
+  });
+
+  it('designations split onto the native columns; remainder stays base pay; note carries it all', async () => {
+    const { deps, tables } = mkDeps(seedBase());
+
+    const res = await recordOutsidePayment(
+      input({
+        transferRef: '987654321',
+        designations: [
+          { kind: 'backpay', amountPhp: 4000, note: 'June underpay' },
+          { kind: 'thirteenth_month', amountPhp: 3000 },
+          { kind: 'health_allowance', amountPhp: 2000 },
+          { kind: 'lunch', amountPhp: 500 },
+          { kind: 'pto', amountPhp: 1000 },
+          { kind: 'other', label: 'Gear', amountPhp: 500 },
+        ],
+      }),
+      deps,
+    );
+
+    const row = tables.payments?.find((r) => r.id === res.paymentId);
+    expect(row).toMatchObject({
+      net_php: 12500,
+      gross_php: 1500, // 12,500 − 11,000 designated
+      thirteenth_month_php: 3000,
+      health_allowance_php: 2000,
+      pdd_lunch_php: 500,
+      misc_items: [
+        { kind: 'other_earns', label: 'Backpay', amount: 4000 },
+        { kind: 'other_earns', label: 'PTO', amount: 1000 },
+        { kind: 'other_earns', label: 'Gear', amount: 500 },
+      ],
+    });
+    const note = String(row?.note);
+    expect(note).toContain('Backpay ₱4,000 (June underpay)');
+    expect(note).toContain('13th Month ₱3,000');
+    expect(note).toContain('Transfer ref 987654321');
+    expect(note).toContain('BPI 000123');
+  });
+
+  it('designations exceeding the amount → refuses (service backstop; schema also rejects)', async () => {
+    const { deps } = mkDeps(seedBase());
+
+    await expect(
+      recordOutsidePayment(input({ designations: [{ kind: 'backpay', amountPhp: 13000 }] }), deps),
+    ).rejects.toThrow(/exceed/);
   });
 
   it('refuses an off-roster worker, a non-semi-monthly window, and a future paid date', async () => {

@@ -1857,15 +1857,23 @@ export const markPaymentsPaid = async (
 
 /** An outside-payment record: money that moved without the app. Inserted
  *  already 'sent' with its paid date — the period-open trigger admits exactly
- *  this shape into closed periods (migration 42). */
+ *  this shape into closed periods (migration 42). The component columns are
+ *  the designation split; they must sum (with gross) to net, the total
+ *  remitted — composeNet's invariant, and what Wise matching keys on. */
 export const insertOutsidePayment = async (
   db: Db,
   row: {
     companyId: string;
     workerId: string;
     payPeriodId: string;
-    /** The remittance is the only figure known — stored as gross AND net. */
+    /** TOTAL remitted (net). */
     amountPhp: number;
+    /** Undesignated remainder — base pay. */
+    grossPhp: number;
+    haPhp: number;
+    t13Php: number;
+    pddPhp: number;
+    miscItems: MiscItem[];
     paidOn: string;
     payoutMethod: Database['public']['Enums']['payout_method'];
     note: string;
@@ -1880,7 +1888,11 @@ export const insertOutsidePayment = async (
       status: 'sent',
       paid_at: row.paidOn,
       payout_method: row.payoutMethod,
-      gross_php: row.amountPhp,
+      gross_php: row.grossPhp,
+      health_allowance_php: row.haPhp,
+      thirteenth_month_php: row.t13Php,
+      pdd_lunch_php: row.pddPhp,
+      misc_items: row.miscItems as unknown as Json,
       net_php: row.amountPhp,
       note: row.note,
     })
