@@ -135,8 +135,9 @@ export const markPaymentSent = async (
  * Fetch payments for the backfill matcher.
  *
  * Default (refresh=false): rows with no wise_transfer_id (unmatched).
- * refresh=true: rows that are already matched, to re-fetch wise_dates / any
- * field that didn't exist when the original match ran.
+ * refresh=true: every wise row — matched rows so their links can be re-checked
+ * (dead links, wise_dates backfill) AND unmatched rows, so one refresh run is a
+ * superset of a plain match. The matcher routes per row on wise_transfer_id.
  */
 export const fetchMatchPayments = async (
   db: Db,
@@ -149,11 +150,7 @@ export const fetchMatchPayments = async (
     )
     .eq('payout_method', 'wise');
 
-  if (opts.refresh) {
-    q = q.not('wise_transfer_id', 'is', null);
-  } else {
-    q = q.is('wise_transfer_id', null);
-  }
+  if (!opts.refresh) q = q.is('wise_transfer_id', null);
 
   if (opts.payPeriodId) q = q.eq('pay_period_id', opts.payPeriodId);
 

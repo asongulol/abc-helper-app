@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@/server/env', () => ({ env: { WISE_API_TOKEN: 'test-token' } }));
 
 import type { WiseTransfer } from '@/lib/wise/types';
-import { unknownTargetAccounts } from '@/server/wise/service';
+import { unknownTargetAccounts } from '@/server/wise/plan-match';
 
 // The transfer that paid Cecilia Velante for 2024-10-01→15 went to recipient
 // 887961147, since deleted — so /v1/accounts?profile= never names it and the
