@@ -328,6 +328,12 @@ export function OnboardCurrentWizard({
               ))}
             </select>
           </Field>
+          <p className="sub" style={{ margin: '12px 0 4px' }}>
+            <b>Signing packet</b> — the portal invite asks them to sign, in order: Independent
+            Contractor Agreement, Non-Compete, Confidentiality / NDA, and BAA. Texts are editable in{' '}
+            <b>Config → Agreement templates</b>; required uploads (resume, diploma, NBI, gov&nbsp;ID
+            + any custom documents) in <b>Config → Onboarding</b>.
+          </p>
           <Field label="IC addendum">
             <select
               value={form.icAddendumType}
