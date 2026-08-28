@@ -152,18 +152,75 @@ export const MarkAllUnpaidSchema = z.object({
 });
 export type MarkAllUnpaidInput = z.infer<typeof MarkAllUnpaidSchema>;
 
+/** What a slice of an outside payment was for. */
+export const OutsideDesignationKindSchema = z.enum([
+  'backpay',
+  'thirteenth_month',
+  'health_allowance',
+  'pto',
+  'lunch',
+  'other',
+]);
+export type OutsideDesignationKind = z.infer<typeof OutsideDesignationKindSchema>;
+
+/** Display names — shared by the form and the note the service writes. */
+export const OUTSIDE_DESIGNATION_LABELS: Record<OutsideDesignationKind, string> = {
+  backpay: 'Backpay',
+  thirteenth_month: '13th Month',
+  health_allowance: 'Health Allowance',
+  pto: 'PTO',
+  lunch: 'Lunch',
+  other: 'Other',
+};
+
+export const OutsideDesignationSchema = z.object({
+  kind: OutsideDesignationKindSchema,
+  /** Required for 'other' — the name the line shows (receipt included). */
+  label: z.string().trim().max(120).optional(),
+  amountPhp: z.number().positive().multipleOf(0.01),
+  /** Admin-side note; goes into the payment note, never the receipt. */
+  note: z.string().trim().max(300).optional(),
+});
+export type OutsideDesignation = z.infer<typeof OutsideDesignationSchema>;
+
 /**
  * Record an OUTSIDE payment — a remittance made without the app (BPI/GCash by
  * hand, or a Wise transfer sent from the Wise site). The row is a record of
  * money that already moved: it enters 'sent' with `paidOn`, and a Wise row is
  * then matched/reconciled by the existing /batches machinery.
+ *
+ * `designations` splits the amount by what it paid for (13th/HA/Lunch land on
+ * their native columns, the rest as labeled misc earnings); anything
+ * undesignated stays as base pay. `amountPhp` remains the TOTAL remitted —
+ * it is what Wise matching keys on.
  */
 export const RecordOutsidePaymentSchema = PeriodKeySchema.extend({
   workerId: uuid(),
   amountPhp: z.number().positive().multipleOf(0.01),
   paidOn: IsoDateSchema,
   payoutMethod: PayoutMethodSchema,
+  /** Bank / Wise transfer reference number, recorded on the note. */
+  transferRef: z.string().trim().max(120).optional(),
+  designations: z.array(OutsideDesignationSchema).max(12).default([]),
   reference: z.string().trim().max(500).optional(),
+}).superRefine((val, ctx) => {
+  const sumC = val.designations.reduce((s, d) => s + Math.round(d.amountPhp * 100), 0);
+  if (sumC > Math.round(val.amountPhp * 100)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Designated amounts (₱${(sumC / 100).toLocaleString()}) exceed the payment amount.`,
+      path: ['designations'],
+    });
+  }
+  val.designations.forEach((d, i) => {
+    if (d.kind === 'other' && !d.label?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Name the 'Other' designation.",
+        path: ['designations', i, 'label'],
+      });
+    }
+  });
 });
 export type RecordOutsidePaymentInput = z.infer<typeof RecordOutsidePaymentSchema>;
 
