@@ -21,7 +21,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import type { Database } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
 import { humanizeError } from '@/lib/errors';
-import { flattenMisc, type ReceiptMisc } from '@/lib/pay/receipt';
+import { type ReceiptInput, receiptFromPaymentRow } from '@/lib/pay/receipt';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentAdmin } from '@/server/auth/admin';
 
@@ -408,38 +408,16 @@ export async function getReportsData(companyId: string): Promise<ActionResult<Re
 
 export type HistoryDay = { date: string; tracked: number; pto: number };
 
-/** Misc item flattened for display: deductions arrive already negative. */
-export type HistoryMisc = ReceiptMisc;
-
 export type HistoryRow = {
   start: string;
   end: string;
   worked: number | null;
   pto: number;
-  hasPay: boolean;
   days: HistoryDay[];
-  ha: number | null;
-  lunch: number | null;
-  t13: number | null;
-  gross: number | null;
-  net: number | null;
-  method: string | null;
   status: string | null;
-  // Computation trail (all null/empty when there is no saved statement). These
-  // are the STORED inputs the statement was saved with — never recomputed.
-  workedPay: number | null;
-  expected: number | null;
-  ratio: number | null;
-  rate: number | null;
-  computedGross: number | null;
-  bonus: number | null;
-  offCycle: number;
-  misc: HistoryMisc[];
-  units: number | null;
-  perSession: boolean;
-  payout: number | null;
-  payoutCur: string | null;
   note: string | null;
+  /** Stored statement inputs (never recomputed); null when time-only period. */
+  receipt: ReceiptInput | null;
 };
 
 /**
@@ -507,55 +485,19 @@ export async function getContractorHistory(
 
     type PBucket = {
       end: string;
-      ha: number;
-      lunch: number;
-      t13: number;
-      gross: number;
-      net: number;
-      method: string | null;
       status: string;
-      workedPay: number | null;
-      expected: number | null;
-      ratio: number | null;
-      rate: number | null;
-      computedGross: number | null;
-      bonus: number;
-      offCycle: number;
-      misc: HistoryMisc[];
-      units: number | null;
-      perSession: boolean;
-      payout: number | null;
-      payoutCur: string | null;
       note: string | null;
+      receipt: ReceiptInput;
     };
-    const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
     const pmap = new Map<string, PBucket>();
     for (const p of pays ?? []) {
       const s = p.pay_periods?.period_start;
       if (!s) continue;
-      const misc = flattenMisc(p.misc_items);
       pmap.set(s, {
         end: p.pay_periods?.period_end ?? '',
-        ha: Number(p.health_allowance_php || 0),
-        lunch: Number(p.pdd_lunch_php || 0),
-        t13: Number(p.thirteenth_month_php || 0),
-        gross: Number(p.gross_php || 0),
-        net: Number(p.net_php || 0),
-        method: p.payout_method,
         status: p.status,
-        workedPay: numOrNull(p.worked_hours),
-        expected: numOrNull(p.expected_hours),
-        ratio: numOrNull(p.performance_ratio),
-        rate: numOrNull(p.rate_php),
-        computedGross: numOrNull(p.computed_gross_php),
-        bonus: Number(p.bonus_php || 0),
-        offCycle: Number(p.off_cycle_php || 0),
-        misc,
-        units: numOrNull(p.units),
-        perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
-        payout: numOrNull(p.payout_amount),
-        payoutCur: p.payout_currency ?? null,
         note: p.note ?? null,
+        receipt: receiptFromPaymentRow(p),
       });
     }
 
@@ -568,33 +510,14 @@ export async function getContractorHistory(
       return {
         start: k,
         end: p?.end || t?.end || '',
-        worked:
-          t?.tracked != null ? t.tracked / 3600 : p?.workedPay != null ? Number(p.workedPay) : null,
+        worked: t?.tracked != null ? t.tracked / 3600 : (p?.receipt.workedPay ?? null),
         pto: (t?.pto || 0) / 3600,
-        hasPay: !!p,
         days: Array.from(t?.days.values() ?? [])
           .filter((x) => x.tracked > 0 || x.pto > 0)
           .sort((a, b) => a.date.localeCompare(b.date)),
-        ha: p ? p.ha : null,
-        lunch: p ? p.lunch : null,
-        t13: p ? p.t13 : null,
-        gross: p ? p.gross : null,
-        net: p ? p.net : null,
-        method: p ? p.method : null,
-        status: p ? p.status : null,
-        workedPay: p?.workedPay ?? null,
-        expected: p?.expected ?? null,
-        ratio: p?.ratio ?? null,
-        rate: p?.rate ?? null,
-        computedGross: p?.computedGross ?? null,
-        bonus: p ? p.bonus : null,
-        offCycle: p?.offCycle ?? 0,
-        misc: p?.misc ?? [],
-        units: p?.units ?? null,
-        perSession: p?.perSession ?? false,
-        payout: p?.payout ?? null,
-        payoutCur: p?.payoutCur ?? null,
+        status: p?.status ?? null,
         note: p?.note ?? null,
+        receipt: p?.receipt ?? null,
       };
     });
     return { ok: true, data: { rows } };

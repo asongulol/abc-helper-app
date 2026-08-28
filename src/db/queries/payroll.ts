@@ -14,6 +14,7 @@ import { periodFor } from '@/lib/dates/periods';
 import { type Centavos, centavos, majorToMinor } from '@/lib/money';
 import { composeNet, type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
+import { type ReceiptInput, receiptFromPaymentRow } from '@/lib/pay/receipt';
 import {
   centavosToPhp,
   isInactiveWorker,
@@ -1950,43 +1951,46 @@ export type PaymentDetail = {
   payoutMethod: string | null;
   payoutCurrency: string | null;
   payoutAmount: number | null;
+  /** Always null for the contractor audience — the column is never selected. */
   fxRate: number | null;
   wiseTransferId: string | null;
   status: Database['public']['Enums']['payment_status'];
   paidAt: string | null;
   note: string | null;
-  // Stored computation inputs for the "How this pay was computed" basis line
-  // (never recomputed).
-  workedHours: number | null;
-  expectedHours: number | null;
-  performanceRatio: number | null;
-  ratePhp: number | null;
-  computedGrossPhp: number | null;
-  units: number | null;
-  perSession: boolean;
+  /** Stored statement inputs for the "How this pay was computed" basis line. */
+  receipt: ReceiptInput;
 };
+
+const PAYMENT_DETAIL_SELECT =
+  'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, wise_transfer_id, status, paid_at, note, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)' as const;
 
 /**
  * Full payment row for a pay slip (admin + portal print). Joins pay_periods +
  * workers + companies. `net_php` is the stored snapshot — the slip renders it
  * verbatim and never recomputes. misc_items are mapped exactly like
  * fetchSavedPayments.
+ *
+ * Owner rule: exchange rates never reach contractor-visible views — enforced
+ * HERE, at the data layer: the contractor audience never selects fx_rate, so
+ * no page-level stripping is needed (or possible to forget).
  */
 export const fetchPaymentDetail = async (
   db: Db,
   paymentId: string,
+  opts: { audience: 'admin' | 'contractor' },
 ): Promise<PaymentDetail | null> => {
   // Route params can be anything a user types in the URL; a non-UUID id would
   // otherwise hit Postgres and throw "invalid input syntax for type uuid".
   // Treat that the same as "not found" so callers' existing notFound() runs.
   if (!uuid().safeParse(paymentId).success) return null;
-  const { data, error } = await db
-    .from('payments')
-    .select(
-      'id, worker_id, gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, payout_currency, payout_amount, fx_rate, wise_transfer_id, status, paid_at, note, worked_hours, expected_hours, performance_ratio, rate_php, computed_gross_php, units, contract, pay_basis, pay_periods(period_start, period_end, pay_date, companies(name)), workers(first_name, middle_name, last_name)',
-    )
-    .eq('id', paymentId)
-    .maybeSingle();
+  const { data, error } =
+    opts.audience === 'admin'
+      ? await db
+          .from('payments')
+          .select(`fx_rate, ${PAYMENT_DETAIL_SELECT}`)
+          .eq('id', paymentId)
+          .maybeSingle()
+      : await db.from('payments').select(PAYMENT_DETAIL_SELECT).eq('id', paymentId).maybeSingle();
   if (error) throw new Error(`payment detail: ${error.message}`);
   if (!data) return null;
   return {
@@ -2012,18 +2016,17 @@ export const fetchPaymentDetail = async (
     payoutMethod: data.payout_method,
     payoutCurrency: data.payout_currency,
     payoutAmount: data.payout_amount,
-    fxRate: data.fx_rate,
+    // Contractor never selects fx_rate; the audience check on top makes the
+    // strip hold even against a client that returns unprojected rows.
+    fxRate:
+      opts.audience === 'admin' && 'fx_rate' in data
+        ? ((data.fx_rate as number | null) ?? null)
+        : null,
     wiseTransferId: data.wise_transfer_id,
     status: data.status,
     paidAt: data.paid_at,
     note: data.note,
-    workedHours: data.worked_hours == null ? null : Number(data.worked_hours),
-    expectedHours: data.expected_hours == null ? null : Number(data.expected_hours),
-    performanceRatio: data.performance_ratio == null ? null : Number(data.performance_ratio),
-    ratePhp: data.rate_php == null ? null : Number(data.rate_php),
-    computedGrossPhp: data.computed_gross_php == null ? null : Number(data.computed_gross_php),
-    units: data.units == null ? null : Number(data.units),
-    perSession: data.contract === 'PS' || data.pay_basis === 'per_session',
+    receipt: receiptFromPaymentRow(data),
   };
 };
 

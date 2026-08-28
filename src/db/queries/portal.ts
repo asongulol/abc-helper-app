@@ -7,7 +7,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
-import { flattenMisc, type ReceiptInput } from '@/lib/pay/receipt';
+import { type ReceiptInput, receiptFromPaymentRow } from '@/lib/pay/receipt';
 
 type Db = SupabaseClient<Database>;
 
@@ -62,7 +62,6 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     )
     .eq('worker_id', workerId);
   if (error) throw new Error(`own payments: ${error.message}`);
-  const numOrNull = (v: unknown): number | null => (v == null ? null : Number(v));
   const rows = (data ?? []).map((p) => ({
     paymentId: p.id,
     periodId: p.pay_period_id,
@@ -81,28 +80,7 @@ export const fetchOwnPayments = async (db: Db, workerId: string): Promise<Portal
     paidAt: p.paid_at,
     // Owner rule: no exchange-rate data on contractor views — fx_rate is
     // deliberately never selected here.
-    receipt: {
-      gross: Number(p.gross_php ?? 0),
-      net: Number(p.net_php ?? 0),
-      method: p.payout_method,
-      workedPay: numOrNull(p.worked_hours),
-      worked: null, // ponytail: no time-entry join here, so no worked/PTO split in the basis
-      pto: 0,
-      expected: numOrNull(p.expected_hours),
-      ratio: numOrNull(p.performance_ratio),
-      rate: numOrNull(p.rate_php),
-      computedGross: numOrNull(p.computed_gross_php),
-      ha: Number(p.health_allowance_php ?? 0),
-      t13: Number(p.thirteenth_month_php ?? 0),
-      lunch: Number(p.pdd_lunch_php ?? 0),
-      bonus: Number(p.bonus_php ?? 0),
-      offCycle: Number(p.off_cycle_php ?? 0),
-      misc: flattenMisc(p.misc_items),
-      units: numOrNull(p.units),
-      perSession: p.contract === 'PS' || p.pay_basis === 'per_session',
-      payout: numOrNull(p.payout_amount),
-      payoutCur: p.payout_currency ?? null,
-    },
+    receipt: receiptFromPaymentRow(p),
   }));
   // Newest-first by period date. pay_period_id is a UUID, so ordering by it in
   // SQL scrambles the list (and the "last pay" / "since" stats built on it).
