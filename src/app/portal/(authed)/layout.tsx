@@ -15,16 +15,28 @@ export default async function PortalAuthedLayout({ children }: { children: React
 
   // Docs needing the contractor's attention (HR bounced back), for the nav badge.
   const supabase = await createServerSupabase();
-  const { count } = await supabase
-    .from('documents')
-    .select('id', { count: 'exact', head: true })
-    .eq('worker_id', worker.workerId)
-    .eq('review_status', 'needs_replacement');
+  const [{ count }, { data: progress }] = await Promise.all([
+    supabase
+      .from('documents')
+      .select('id', { count: 'exact', head: true })
+      .eq('worker_id', worker.workerId)
+      .eq('review_status', 'needs_replacement'),
+    // An admin can reopen onboarding for an already-onboarded contractor
+    // (re-sign the packet, refresh info/docs). `onboarded` stays true — it
+    // gates RLS and the work tabs — so the shell needs this second signal to
+    // resurface the Onboarding tab until they finish again.
+    supabase
+      .from('onboarding_progress')
+      .select('current_stage')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle(),
+  ]);
 
   return (
     <PortalShell
       workerName={worker.firstName}
       onboarded={worker.onboarded}
+      onboardingOpen={!!progress && progress.current_stage !== 'complete'}
       {...(worker.email ? { email: worker.email } : {})}
       docsBadge={count ?? 0}
     >
