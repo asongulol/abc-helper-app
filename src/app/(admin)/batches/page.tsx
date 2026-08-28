@@ -2,7 +2,8 @@ import { redirect } from 'next/navigation';
 import { BatchesClient } from '@/components/batches/BatchesClient';
 import { createServerSupabase } from '@/db/clients/server';
 import { listClients } from '@/db/queries/config';
-import { fetchPeriodSummaries } from '@/db/queries/payroll';
+import { fetchPeriodSummaries, fetchRoster } from '@/db/queries/payroll';
+import { fullName } from '@/lib/names';
 import { getCurrentAdmin } from '@/server/auth/admin';
 import { getTrackerCompanyId } from '@/server/company';
 
@@ -40,6 +41,22 @@ export default async function BatchesPage() {
     id: c.id,
     name: c.name,
   }));
+  // Ended links included on purpose: an outside payment being backfilled is
+  // often for a contractor who has since left.
+  const roster = (await fetchRoster(db, companyId))
+    .map((r) => ({
+      workerId: r.workerId,
+      name:
+        fullName({
+          firstName: r.worker.firstName,
+          middleName: r.worker.middleName,
+          lastName: r.worker.lastName,
+        }) || r.workerId,
+      payoutMethod: r.worker.payoutMethod,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  return <BatchesClient companyId={companyId} periods={periods} clients={clients} />;
+  return (
+    <BatchesClient companyId={companyId} periods={periods} clients={clients} roster={roster} />
+  );
 }

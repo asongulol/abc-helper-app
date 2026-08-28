@@ -1853,6 +1853,48 @@ export const markPaymentsPaid = async (
   return (data ?? []).length;
 };
 
+/** An outside-payment record: money that moved without the app. Inserted
+ *  already 'sent' with its paid date — the period-open trigger admits exactly
+ *  this shape into closed periods (migration 42). */
+export const insertOutsidePayment = async (
+  db: Db,
+  row: {
+    companyId: string;
+    workerId: string;
+    payPeriodId: string;
+    /** The remittance is the only figure known — stored as gross AND net. */
+    amountPhp: number;
+    paidOn: string;
+    payoutMethod: Database['public']['Enums']['payout_method'];
+    note: string;
+  },
+): Promise<string> => {
+  const { data, error } = await db
+    .from('payments')
+    .insert({
+      company_id: row.companyId,
+      worker_id: row.workerId,
+      pay_period_id: row.payPeriodId,
+      status: 'sent',
+      paid_at: row.paidOn,
+      payout_method: row.payoutMethod,
+      gross_php: row.amountPhp,
+      net_php: row.amountPhp,
+      note: row.note,
+    })
+    .select('id')
+    .single();
+  if (error) throw new Error(`outside payment insert: ${error.message}`);
+  return data.id;
+};
+
+/** Cleanup of a period the caller just created and could not fill. Deleting
+ *  pay_periods CASCADEs to payments, so this must only ever target a period
+ *  known to be empty; the state guard keeps it off locked/paid ones. */
+export const deleteEmptyOpenPeriod = async (db: Db, periodId: string): Promise<void> => {
+  await db.from('pay_periods').delete().eq('id', periodId).eq('state', 'open');
+};
+
 export const markPaymentsUnpaid = async (db: Db, paymentIds: string[]): Promise<void> => {
   if (paymentIds.length === 0) return;
   const { error } = await db

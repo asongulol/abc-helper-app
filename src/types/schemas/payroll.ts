@@ -152,6 +152,21 @@ export const MarkAllUnpaidSchema = z.object({
 });
 export type MarkAllUnpaidInput = z.infer<typeof MarkAllUnpaidSchema>;
 
+/**
+ * Record an OUTSIDE payment — a remittance made without the app (BPI/GCash by
+ * hand, or a Wise transfer sent from the Wise site). The row is a record of
+ * money that already moved: it enters 'sent' with `paidOn`, and a Wise row is
+ * then matched/reconciled by the existing /batches machinery.
+ */
+export const RecordOutsidePaymentSchema = PeriodKeySchema.extend({
+  workerId: uuid(),
+  amountPhp: z.number().positive().multipleOf(0.01),
+  paidOn: IsoDateSchema,
+  payoutMethod: PayoutMethodSchema,
+  reference: z.string().trim().max(500).optional(),
+});
+export type RecordOutsidePaymentInput = z.infer<typeof RecordOutsidePaymentSchema>;
+
 /* ---------- off-cycle per-session / per-hour pay ---------- */
 
 export const OffCyclePayBasisSchema = z.enum(['per_session', 'per_hour']);

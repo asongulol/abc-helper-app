@@ -12,6 +12,10 @@
  */
 
 import { useCallback, useEffect, useId, useState } from 'react';
+import {
+  OutsidePaymentForm,
+  type OutsideRosterEntry,
+} from '@/components/batches/OutsidePaymentForm';
 import { Badge } from '@/components/ui/Badge';
 import { ConfirmDangerModal } from '@/components/ui/ConfirmDangerModal';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -43,6 +47,8 @@ interface BatchesClientProps {
   periods: PeriodSummaryRow[];
   /** Client companies a variance can be billed to. */
   clients: { id: string; name: string }[];
+  /** Company roster, for recording an outside payment. */
+  roster: OutsideRosterEntry[];
 }
 
 /** Where a reconcile variance can land. Mirrors AttributionTarget server-side. */
@@ -52,7 +58,7 @@ const TARGETS = [
   { value: 'thirteenth_month', label: '13th month' },
 ] as const;
 
-export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProps) => {
+export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesClientProps) => {
   const idBatch = useId();
   const { notify } = useToast();
 
@@ -815,6 +821,18 @@ export const BatchesClient = ({ companyId, periods, clients }: BatchesClientProp
           </p>
         </div>
       </div>
+
+      <OutsidePaymentForm
+        companyId={companyId}
+        roster={roster}
+        onSaved={async (pid) => {
+          await load();
+          await openPeriod(pid);
+          document
+            .getElementById('reconcile-batch-card')
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }}
+      />
 
       {cancelFor && (
         <ConfirmDangerModal
