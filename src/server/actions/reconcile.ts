@@ -23,7 +23,11 @@ import { selectAll } from '@/db/queries/paging';
 import { fetchPeriodIdsForPayments, syncPeriodPaidState } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
-import { isReadyToReconcile, isUnconfirmedWiseLink } from '@/lib/wise/reconcilable';
+import {
+  isReadyToReconcile,
+  isUnconfirmedWiseLink,
+  READY_TO_RECONCILE_OR,
+} from '@/lib/wise/reconcilable';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
@@ -158,19 +162,16 @@ export async function reconcileAllPending(
     const overview = await getReconcileOverview(companyId);
     const pendingPeriods = overview.ok ? overview.data.pendingPeriods : 0;
 
-    // null payout_method counts as non-Wise (paid, nothing to match) — matches
-    // the JS readySent counter. A Wise row needs its transfer CONFIRMED paid
-    // (wise_locked_at), not merely present: a drafted-but-unfunded transfer id
-    // used to be enough to stamp the row reconciled.
+    // SQL restatement of isReadyToReconcile: status/paid_at here, the
+    // payout-method disjunction via READY_TO_RECONCILE_OR (parity-tested
+    // against the predicate in reconcilable-parity.test.ts).
     const { data: upd, error } = await db
       .from('payments')
       .update({ status: 'reconciled' })
       .eq('company_id', companyId)
       .eq('status', 'sent')
       .not('paid_at', 'is', null)
-      .or(
-        'payout_method.is.null,payout_method.neq.wise,and(wise_transfer_id.not.is.null,wise_locked_at.not.is.null)',
-      )
+      .or(READY_TO_RECONCILE_OR)
       .select('id');
     if (error) return { ok: false, error: error.message };
 

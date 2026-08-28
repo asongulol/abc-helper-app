@@ -35,3 +35,15 @@ export const isReadyToReconcile = (row: ReconcilableRow): boolean => {
   if (row.payout_method !== 'wise') return true;
   return !!row.wise_transfer_id && !!row.wise_locked_at;
 };
+
+/**
+ * PostgREST mirror of the payout-method branch of `isReadyToReconcile`, for
+ * the bulk UPDATE in reconcileAllPending (the status/paid_at legs ride as
+ * separate .eq/.not builder filters). NULL is why the first disjunct exists:
+ * SQL `payout_method <> 'wise'` is NULL — not true — for a NULL column, so
+ * "null counts as non-Wise" needs its own `is.null` leg. Parity with the
+ * predicate is enforced by tests/lib/wise/reconcilable-parity.test.ts —
+ * change either side and that test drags the other along.
+ */
+export const READY_TO_RECONCILE_OR =
+  'payout_method.is.null,payout_method.neq.wise,and(wise_transfer_id.not.is.null,wise_locked_at.not.is.null)';
