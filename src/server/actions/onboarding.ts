@@ -297,7 +297,19 @@ export async function markOnboardingComplete(args: { workerId: string }): Promis
   }
 }
 
-/** Reset onboarding to stage 1 (admin override). */
+/**
+ * Reset onboarding to stage 1 (admin override) — also the "send an existing
+ * contractor back through the flow" path: re-sign the agreement packet,
+ * re-confirm their profile info, top up documents.
+ *
+ * `completed_at` is deliberately PRESERVED: `is_onboarded()` (which RLS on the
+ * contractor's own time/session rows and the portal's work tabs key on) is
+ * `completed_at IS NOT NULL`, so nulling it would cut an ACTIVE contractor off
+ * from logging time mid-cycle. With it kept, the portal stays fully usable and
+ * the Onboarding tab reappears (current_stage ≠ 'complete') until they finish
+ * again. Signed agreements and approved documents are untouched — the portal
+ * only asks for what's missing.
+ */
 export async function resetOnboarding(args: { workerId: string }): Promise<SimpleResult> {
   try {
     const admin = await requireAdmin();
@@ -309,11 +321,24 @@ export async function resetOnboarding(args: { workerId: string }): Promise<Simpl
         stage2_complete: false,
         stage3_complete: false,
         current_stage: 'stage1_sign',
-        completed_at: null,
         updated_at: ISO_NOW(),
       })
       .eq('worker_id', args.workerId);
     if (error) return fail(error.message);
+    // Contractors from before a kind existed (10 legacy signers predate the
+    // non-compete) have no prefill/countersign card for it — seed missing rows
+    // only, never overwriting an existing card's terms.
+    const { error: agErr } = await db.from('onboarding_agreements').upsert(
+      AGREEMENT_KINDS.map((kind) => ({
+        worker_id: args.workerId,
+        agreement_kind: kind,
+        prepared_by: admin.userId,
+        prepared_at: ISO_NOW(),
+        updated_at: ISO_NOW(),
+      })),
+      { onConflict: 'worker_id,agreement_kind', ignoreDuplicates: true },
+    );
+    if (agErr) return fail(agErr.message);
     await logEvent({
       action: 'onboarding.reset',
       entity: args.workerId,

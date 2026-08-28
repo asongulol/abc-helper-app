@@ -69,10 +69,17 @@ export const OnboardingClient = ({
 
   // Hide completed onboardings unless "Show completed" is on — BUT keep a
   // completed contractor visible while they still have open follow-ups
-  // (deferred docs), matching the legacy default view.
+  // (deferred docs), matching the legacy default view. A REOPENED onboarding
+  // (admin reset: stages cleared, completed_at kept for is_onboarded RLS) is
+  // in progress, not complete — key on current_stage, not the timestamp.
   const visible = showDone
     ? progress
-    : progress.filter((r) => !r.completedAt || (followups[r.workerId]?.count ?? 0) > 0);
+    : progress.filter(
+        (r) =>
+          r.currentStage !== 'complete' ||
+          !r.completedAt ||
+          (followups[r.workerId]?.count ?? 0) > 0,
+      );
 
   const columns: ReadonlyArray<SortableColumn<OnboardingProgressRow>> = [
     {

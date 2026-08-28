@@ -572,11 +572,15 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
           type="button"
           className="btn ghost sm"
           disabled={isPending}
+          title="Send them back through the flow: re-sign the agreement packet (only unsigned kinds), re-confirm their info, top up documents. Signed agreements, approved documents and portal access are untouched."
           onClick={() =>
-            runStage(() => resetOnboarding({ workerId: row.workerId }), 'Onboarding reset.')
+            runStage(
+              () => resetOnboarding({ workerId: row.workerId }),
+              'Onboarding reopened — the contractor will see it in their portal.',
+            )
           }
         >
-          ↺ Reset
+          ↺ Reopen onboarding
         </button>
         {([1, 2, 3] as const).map((n) => (
           <button

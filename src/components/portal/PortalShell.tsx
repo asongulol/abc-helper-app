@@ -10,6 +10,9 @@ import { createBrowserSupabase } from '@/db/clients/browser';
 interface Props {
   workerName: string;
   onboarded: boolean;
+  /** True while an admin-reopened onboarding is unfinished (current_stage ≠
+   *  'complete') — resurfaces the Onboarding tab for an onboarded contractor. */
+  onboardingOpen?: boolean;
   /** Email shown under the workspace title in the header. */
   email?: string;
   /** Count of documents needing the contractor's attention (nav badge). */
@@ -34,7 +37,14 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/portal/profile', label: 'Profile', icon: '👤' },
 ];
 
-export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, children }: Props) => {
+export const PortalShell = ({
+  workerName,
+  onboarded,
+  onboardingOpen = false,
+  email,
+  docsBadge = 0,
+  children,
+}: Props) => {
   const pathname = usePathname();
   const [signingOut, setSigningOut] = useState(false);
   // Desktop sidebar: collapse state (persisted), mirroring the legacy portal.
@@ -135,10 +145,12 @@ export const PortalShell = ({ workerName, onboarded, email, docsBadge = 0, child
         <nav className="tabs no-print" aria-label="Portal sections">
           {NAV_ITEMS.map((item) => {
             // Onboarding is the mirror image of the other sub-pages: visible only
-            // until the contractor finishes onboarding, then it hides again.
+            // until the contractor finishes onboarding, then it hides again —
+            // unless an admin REOPENED it (onboardingOpen), which shows the tab
+            // without hiding the work tabs (the contractor stays fully active).
             const hidden =
               item.href === '/portal/onboarding'
-                ? onboarded
+                ? onboarded && !onboardingOpen
                 : !onboarded && item.href !== '/portal';
             if (hidden) return null;
             const active = isActive(item);
