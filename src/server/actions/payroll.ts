@@ -11,7 +11,6 @@ import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import type {
-  NewOffCycleItem,
   OffCycleItemRow,
   PeriodSummaryRow,
   ProcessPayment,
@@ -20,15 +19,10 @@ import type {
 import {
   applyGrossOverride,
   clearSessionsPaid,
-  composeNetCentavos,
   deleteAllStatements as dbDeleteAllStatements,
   deleteStatement as dbDeleteStatement,
-  deleteOffCycleItem,
   deleteOffCycleItemsForStatements,
-  fetchOffCycleItem,
   fetchOffCycleItemsForWorkerPeriod,
-  fetchOffCycleTotalForWorker,
-  fetchPaymentForWorker,
   fetchPeriodById,
   fetchPeriodIdsForPayments,
   fetchPeriodState,
@@ -38,21 +32,16 @@ import {
   fetchPreviousRegularPeriodId,
   fetchPriorPayments,
   fetchProcessPayments,
-  fetchRates,
   fetchRoster,
   fetchSavedPayments,
-  findCurrentOpenDraft,
   findOrCreateOffCycleBatch,
   findPeriod,
   hasInAppRecalc,
-  insertOffCycleItems,
   markPaymentsPaid,
   markPaymentsUnpaid,
-  markSessionsPaid,
   officeToday,
   requireOpenPeriod,
   restorePaymentRows,
-  setPaymentOffCycle,
   setWiseRowLock,
   stepPeriodToLocked,
   syncPeriodPaidState,
@@ -63,7 +52,6 @@ import type { RateHistoryRow } from '@/db/queries/rates';
 import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
 import {
   fetchRecentSessionsForWorkers,
-  fetchSessionsByIds,
   fetchUnpaidApprovedSessions,
   type RecentSessionRow,
   type UnpaidSessionRow,
@@ -71,24 +59,28 @@ import {
 import { unapproveWindow } from '@/db/queries/time';
 import { periodFor } from '@/lib/dates/periods';
 import { humanizeError } from '@/lib/errors';
-import { centavos, mulRatioMinor } from '@/lib/money';
+import { centavos } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
 import { composeNet, miscTotal } from '@/lib/pay/calc';
-import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { payModelFor } from '@/lib/pay/expected-hours';
-import { resolveRate } from '@/lib/pay/rates';
 import { isCarriedOverClone } from '@/lib/payroll/carried-over';
 import { centavosToPhp, phpToCentavos } from '@/lib/payroll/mappers';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
-import { addOffCycleEntry } from '@/server/off-cycle';
+import {
+  addOffCycleEntry,
+  addSalariedCatchUpEntry,
+  paySessionsIntoOffCycleBatch,
+  paySessionsIntoOpenDraft,
+  paySessionsIntoPeriod,
+  removeOffCycleEntry,
+} from '@/server/off-cycle';
 import {
   type CalculateDraftResult,
   type CatchUpCandidate,
   calculateDraft,
   lockRun,
-  recomputeWorkerDraft,
   reconcileApprovedTime,
   salariedCatchUpCandidates,
   unlockRun,
@@ -1166,14 +1158,7 @@ export async function getSalariedCatchUpCandidates(args: {
   }
 }
 
-/**
- * Add a salaried catch-up ledger row: leftover approved hours from an
- * already-locked/paid ORIGINAL period, paid on the open target period. The
- * amount is recomputed server-side with the strict engine cap — never taken
- * from the client. basis='salaried_hours' rows deliberately do NOT feed the
- * per-hour date-exclusion set, so unlocking + recalculating the original
- * period stays correct (remove the catch-up item first in that case).
- */
+/** Add a salaried catch-up — see addSalariedCatchUpEntry in src/server/off-cycle.ts. */
 export async function addSalariedCatchUp(
   args: unknown,
 ): Promise<ActionResult<{ netPhp: number | null; amountPhp: number }>> {
@@ -1190,231 +1175,13 @@ export async function addSalariedCatchUp(
   }
 
   try {
-    const db = await createServerSupabase();
-
-    // Target period — must be open (money columns freeze otherwise).
-    const period = await requireOpenPeriod(
-      db,
-      {
-        companyId: input.companyId,
-        start: input.periodStart,
-        end: input.periodEnd,
-        create: 'missing',
-      },
-      'unlock it to add catch-up pay',
-    );
-
-    const roster = await fetchRoster(db, input.companyId);
-    const link = roster.find((r) => r.workerId === input.workerId);
-    if (!link) return { ok: false, error: "Contractor is not on this company's roster." };
-    if (payModelFor(link.contract, link.payBasis) !== 'salaried')
-      return { ok: false, error: 'Catch-up hours are only for FT/PT contractors.' };
-
-    // Original period — the locked/paid run the hours belong to.
-    const orig = periodFor(input.originalPeriodDate);
-    if (orig.start === input.periodStart && orig.end === input.periodEnd)
-      return {
-        ok: false,
-        error: 'That is the period being edited — its hours are paid by Calculate.',
-      };
-    const origPeriod = await findPeriod(db, input.companyId, orig.start, orig.end);
-    if (!origPeriod)
-      return {
-        ok: false,
-        error: 'That period was never run — its hours pay out via the regular Calculate.',
-      };
-    if (origPeriod.state === 'open')
-      return {
-        ok: false,
-        error: 'That period is still open — recalculate it instead of adding a catch-up.',
-      };
-
-    // Price server-side: strict engine cap against what the run already paid.
-    const [cand] = await salariedCatchUpCandidates({
-      companyId: input.companyId,
-      periodId: origPeriod.id,
-      periodStart: orig.start,
-      periodEnd: orig.end,
-      workerIds: [input.workerId],
-    });
-    if (!cand) return { ok: false, error: 'Contractor not found for that period.' };
-    const amount = salariedCatchUpAmount({
-      rate: cand.rateCentavos,
-      expectedHours: cand.expectedHours,
-      paidHours: cand.paidHours,
-      caughtUpHours: cand.caughtUpHours,
-      leftoverHours: input.hours,
-    });
-    if (amount === null)
-      return {
-        ok: false,
-        error: `No rate is set for ${orig.start} – ${orig.end}. Set a rate first.`,
-      };
-    if (amount === 0)
-      return {
-        ok: false,
-        error: 'Nothing owed — that period already paid 100% of the rate for these hours.',
-      };
-
-    // ponytail: one catch-up row per (worker, original period) — the global
-    // (company, worker, work_date) unique index; a top-up means remove + re-add.
-    try {
-      await insertOffCycleItems(db, [
-        {
-          companyId: input.companyId,
-          workerId: input.workerId,
-          payPeriodId: period.id,
-          basis: 'salaried_hours',
-          sessionId: null,
-          workDate: orig.end,
-          units: input.hours,
-          ratePhp: cand.rateCentavos === null ? null : centavosToPhp(cand.rateCentavos),
-          amountPhp: centavosToPhp(amount),
-          description:
-            input.description?.trim() ||
-            `Catch-up ${link.contract} hours · ${orig.start} – ${orig.end}`,
-        },
-      ]);
-    } catch (e) {
-      if (e instanceof Error && e.message === 'ALREADY_PAID')
-        return {
-          ok: false,
-          error:
-            'A catch-up for this contractor and period already exists — remove it first to change it.',
-        };
-      throw e;
-    }
-
-    // RP-20: a catch-up's hours belong to ANOTHER (locked/paid) period, so it
-    // cannot change what this period's window captures — only the ledger total.
-    // Update off_cycle_php + net_php in place rather than re-running the engine
-    // for a gross that cannot have moved (the rebuild preserves manual columns
-    // now, but it would still recompute gross from current time/sessions).
-    // No row yet (the worker has no other activity here) → build one.
-    const existing = await fetchPaymentForWorker(db, period.id, input.workerId);
-    let netPhp: number | null;
-    if (existing) {
-      const offCycleC = await fetchOffCycleTotalForWorker(db, period.id, input.workerId);
-      netPhp = centavosToPhp(composeNetCentavos(existing, offCycleC));
-      await setPaymentOffCycle(db, existing.paymentId, centavosToPhp(offCycleC), netPhp);
-    } else {
-      ({ netPhp } = await recomputeWorkerDraft({
-        companyId: input.companyId,
-        periodId: period.id,
-        periodStart: input.periodStart,
-        periodEnd: input.periodEnd,
-        workerId: input.workerId,
-        offCycleOnly: period.kind === 'off_cycle',
-      }));
-    }
-
-    await logEvent({
-      companyId: input.companyId,
-      action: 'add_off_cycle',
-      entity: input.workerId,
-      detail: {
-        basis: 'salaried_hours',
-        hours: input.hours,
-        amount_php: centavosToPhp(amount),
-        original_period: `${orig.start} → ${orig.end}`,
-        period: `${input.periodStart} → ${input.periodEnd}`,
-      },
-    });
-
-    return { ok: true, data: { netPhp, amountPhp: centavosToPhp(amount) } };
+    return { ok: true, data: await addSalariedCatchUpEntry(input) };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Add catch-up pay failed.') };
   }
 }
 
-/**
- * Shared core: add APPROVED per-session sessions to `period` as off-cycle pay
- * lines (marking them paid so they leave the pickers / normal windowed sum),
- * then rebuild the affected workers' rows. `offCycleOnly` is true for the
- * dedicated batch (ledger-only rows) and false for a regular draft (the worker's
- * full row is recomputed). Used by the current-draft / next-period / off-cycle
- * routes below.
- */
-async function addApprovedSessionsToPeriod(
-  db: Awaited<ReturnType<typeof createServerSupabase>>,
-  companyId: string,
-  period: { id: string; periodStart: string; periodEnd: string },
-  sessionIds: string[],
-  offCycleOnly: boolean,
-): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
-  const roster = await fetchRoster(db, companyId);
-  const rates = await fetchRates(db, companyId);
-  const sessions = await fetchSessionsByIds(createServiceClient(), sessionIds);
-  if (sessions.length !== sessionIds.length)
-    return { ok: false, error: 'One or more sessions were not found.' };
-
-  const rows: NewOffCycleItem[] = [];
-  const sessionIdsToMark: string[] = [];
-  const affectedWorkers = new Set<string>();
-  for (const s of sessions) {
-    if (!s.workerId) return { ok: false, error: 'A session has no contractor.' };
-    if (s.approval !== 'approved')
-      return { ok: false, error: 'Only approved sessions can be paid.' };
-    if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
-    const link = roster.find((r) => r.workerId === s.workerId);
-    if (!link) return { ok: false, error: "A session's contractor is not on the roster." };
-    if (payModelFor(link.contract, link.payBasis) !== 'per_session')
-      return { ok: false, error: 'Session pay is for per-session contractors.' };
-    const rate = resolveRate(rates, s.workerId, s.sessionDate, s.sessionDate);
-    if (rate === null)
-      return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
-    rows.push({
-      companyId,
-      workerId: s.workerId,
-      payPeriodId: period.id,
-      basis: 'per_session',
-      sessionId: s.id,
-      workDate: s.sessionDate,
-      units: s.units,
-      ratePhp: centavosToPhp(rate),
-      amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
-      description: 'Approved session',
-    });
-    sessionIdsToMark.push(s.id);
-    affectedWorkers.add(s.workerId);
-  }
-
-  try {
-    await insertOffCycleItems(db, rows);
-  } catch (e) {
-    if (e instanceof Error && e.message === 'ALREADY_PAID')
-      return { ok: false, error: 'A selected session has already been paid.' };
-    throw e;
-  }
-  await markSessionsPaid(
-    createServiceClient(),
-    sessionIdsToMark,
-    period.id,
-    null,
-    new Date().toISOString(),
-  );
-  for (const workerId of affectedWorkers) {
-    await recomputeWorkerDraft({
-      companyId,
-      periodId: period.id,
-      periodStart: period.periodStart,
-      periodEnd: period.periodEnd,
-      workerId,
-      offCycleOnly,
-    });
-  }
-  return { ok: true, count: rows.length };
-}
-
-/**
- * Approve → pay: add approved per-session sessions to the OPEN regular draft
- * whose window contains each session's date. Returns `paidInto: 'none'` (no
- * write) when no open draft covers the date(s) — the caller then offers
- * next-period / off-cycle. A bulk selection whose dates resolve to more than
- * one outcome (different drafts, or some covered and some not) is rejected
- * with a clear message rather than silently splitting or picking one
- * (audit #001/#009 — never join a session to another period's draft).
- */
+/** Approve → pay into the open draft — see paySessionsIntoOpenDraft in src/server/off-cycle.ts. */
 export async function payApprovedSessions(args: {
   companyId: string;
   sessionIds: string[];
@@ -1423,64 +1190,14 @@ export async function payApprovedSessions(args: {
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
     return { ok: false, error: 'No access to this company.' };
-  if (args.sessionIds.length === 0) return { ok: true, data: { paidInto: 'none', count: 0 } };
   try {
-    const db = await createServerSupabase();
-    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
-    if (sessions.length !== args.sessionIds.length)
-      return { ok: false, error: 'One or more sessions were not found.' };
-    const dates = [...new Set(sessions.map((s) => s.sessionDate))];
-    const drafts = await Promise.all(dates.map((d) => findCurrentOpenDraft(db, args.companyId, d)));
-    const resolved = new Set(drafts.map((d) => d?.id ?? 'none'));
-    if (resolved.size > 1) {
-      return {
-        ok: false,
-        error:
-          'These sessions span more than one pay period (or one date has no open draft). Pay them one period at a time.',
-      };
-    }
-    const draft = drafts[0] ?? null;
-    if (!draft) return { ok: true, data: { paidInto: 'none', count: 0 } };
-    const res = await addApprovedSessionsToPeriod(
-      db,
-      args.companyId,
-      draft,
-      args.sessionIds,
-      false,
-    );
-    if (!res.ok) return res;
-    await logEvent({
-      companyId: args.companyId,
-      action: 'pay_sessions_draft',
-      entity: draft.id,
-      detail: { count: res.count },
-    });
-    return {
-      ok: true,
-      data: { paidInto: 'draft', count: res.count, periodStart: draft.periodStart },
-    };
+    return { ok: true, data: await paySessionsIntoOpenDraft(args) };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Add to draft failed.') };
   }
 }
 
-/**
- * No open draft → pay these sessions in a scheduled period, creating it open if
- * it doesn't exist yet. Defaults to the period that OWNS their dates; the caller
- * may name a LATER one via `periodStart` (the owning run is closed, or the pay
- * is deliberately held a cycle).
- *
- * Never the period containing today: payroll runs a half-month in arrears, so on
- * Jul 28 the next payroll to go out is Jul 1–15 (pay date Jul 31), not the
- * in-progress Jul 16–31 (pay date Aug 15). Keying off today pushed Jul 1–14
- * sessions a full cycle late AND joined them to a window that doesn't contain
- * them — the exact thing audit #001/#009 forbids.
- *
- * An EARLIER period is refused outright: a run whose window closed before the
- * work happened cannot be the one that pays for it. A period that is already
- * locked/paid is refused rather than reopened (requireOpenPeriod guards before
- * it creates); the off-period batch is how you pay into a closed cycle.
- */
+/** Pay into a scheduled (possibly future) period — see paySessionsIntoPeriod in src/server/off-cycle.ts. */
 export async function payApprovedSessionsToNextPeriod(args: {
   companyId: string;
   sessionIds: string[];
@@ -1491,70 +1208,14 @@ export async function payApprovedSessionsToNextPeriod(args: {
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
     return { ok: false, error: 'No access to this company.' };
-  if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
   try {
-    const db = await createServerSupabase();
-    const sessions = await fetchSessionsByIds(createServiceClient(), args.sessionIds);
-    if (sessions.length !== args.sessionIds.length)
-      return { ok: false, error: 'One or more sessions were not found.' };
-    const periods = new Set(sessions.map((s) => periodFor(s.sessionDate).start));
-    if (periods.size > 1)
-      return {
-        ok: false,
-        error: 'These sessions span more than one pay period. Pay them one period at a time.',
-      };
-    const first = sessions[0];
-    if (!first) return { ok: false, error: 'No sessions selected.' };
-    const owning = periodFor(first.sessionDate);
-    let p = owning;
-    if (args.periodStart && args.periodStart !== owning.start) {
-      const chosen = periodFor(args.periodStart);
-      if (chosen.start !== args.periodStart)
-        return { ok: false, error: 'Pick a semi-monthly pay period (the 1st–15th or 16th–EOM).' };
-      if (chosen.start < owning.start)
-        return {
-          ok: false,
-          error: `The ${chosen.start} – ${chosen.end} period ended before this work happened. Pay it in ${owning.start} – ${owning.end} or later.`,
-        };
-      p = chosen;
-    }
-    const period = await requireOpenPeriod(
-      db,
-      { companyId: args.companyId, start: p.start, end: p.end, create: 'missing' },
-      'use the off-period batch to pay these now',
-    );
-    const res = await addApprovedSessionsToPeriod(
-      db,
-      args.companyId,
-      { id: period.id, periodStart: p.start, periodEnd: p.end },
-      args.sessionIds,
-      false,
-    );
-    if (!res.ok) return res;
-    // This routes money into a run and left no trace: when Jul 1–14 sessions
-    // turned up in the Jul 16–31 batch, the audit log could not say who put
-    // them there or which run they meant to pick.
-    await logEvent({
-      companyId: args.companyId,
-      action: 'pay_sessions_period',
-      entity: period.id,
-      detail: {
-        count: res.count,
-        period: `${p.start} → ${p.end}`,
-        owning_period: `${owning.start} → ${owning.end}`,
-        chosen: p.start !== owning.start,
-      },
-    });
-    return { ok: true, data: { count: res.count, periodStart: p.start } };
+    return { ok: true, data: await paySessionsIntoPeriod(args) };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Add to next period failed.') };
   }
 }
 
-/**
- * Pay now in the dedicated OFF-CYCLE BATCH (a separate run, independent of the
- * scheduled periods). Uses the single open batch, creating one if none.
- */
+/** Pay now in the off-cycle batch — see paySessionsIntoOffCycleBatch in src/server/off-cycle.ts. */
 export async function routeSessionsToOffCycleBatch(args: {
   companyId: string;
   sessionIds: string[];
@@ -1563,27 +1224,8 @@ export async function routeSessionsToOffCycleBatch(args: {
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   if (!admin.isOwner && !admin.companyIds.includes(args.companyId))
     return { ok: false, error: 'No access to this company.' };
-  if (args.sessionIds.length === 0) return { ok: false, error: 'No sessions selected.' };
   try {
-    const db = await createServerSupabase();
-    // RP-67: the batch label is the OFFICE's calendar day, not UTC's — after
-    // ~8 PM in New York the UTC date is already tomorrow.
-    const batch = await findOrCreateOffCycleBatch(db, args.companyId, officeToday());
-    const res = await addApprovedSessionsToPeriod(
-      db,
-      args.companyId,
-      { id: batch.id, periodStart: batch.periodStart, periodEnd: batch.periodEnd },
-      args.sessionIds,
-      true,
-    );
-    if (!res.ok) return res;
-    await logEvent({
-      companyId: args.companyId,
-      action: 'off_cycle_batch_add',
-      entity: batch.id,
-      detail: { count: res.count },
-    });
-    return { ok: true, data: { batchId: batch.id, count: res.count } };
+    return { ok: true, data: await paySessionsIntoOffCycleBatch(args) };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Off-cycle batch failed.') };
   }
@@ -1627,8 +1269,7 @@ export async function openOffCycleBatch(args: {
   }
 }
 
-/** Remove an off-cycle pay item (open periods only): deletes the ledger row,
- *  unmarks any paid session, and recomputes the worker's draft net. */
+/** Remove an off-cycle pay item — see removeOffCycleEntry in src/server/off-cycle.ts. */
 export async function removeOffCyclePayItem(
   args: unknown,
 ): Promise<ActionResult<{ netPhp: number | null }>> {
@@ -1645,36 +1286,7 @@ export async function removeOffCyclePayItem(
   }
 
   try {
-    const db = await createServerSupabase();
-    const item = await fetchOffCycleItem(db, input.companyId, input.itemId);
-    if (!item) return { ok: false, error: 'Off-cycle item not found.' };
-
-    const period = await requireOpenPeriod(
-      db,
-      { periodId: item.payPeriodId, companyId: input.companyId },
-      'unlock it to remove off-cycle pay',
-    );
-
-    await deleteOffCycleItem(db, input.companyId, input.itemId);
-    if (item.sessionId) await clearSessionsPaid(createServiceClient(), [item.sessionId]);
-
-    const { netPhp } = await recomputeWorkerDraft({
-      companyId: input.companyId,
-      periodId: period.id,
-      periodStart: period.periodStart,
-      periodEnd: period.periodEnd,
-      workerId: item.workerId,
-      offCycleOnly: period.kind === 'off_cycle',
-    });
-
-    await logEvent({
-      companyId: input.companyId,
-      action: 'remove_off_cycle',
-      entity: item.workerId,
-      detail: { item: input.itemId },
-    });
-
-    return { ok: true, data: { netPhp } };
+    return { ok: true, data: await removeOffCycleEntry(input) };
   } catch (err) {
     return {
       ok: false,
