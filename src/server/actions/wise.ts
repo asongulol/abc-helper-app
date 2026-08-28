@@ -554,7 +554,7 @@ export async function wiseUnlinkTransfer(
 const toAttributionPayment = (row: {
   id: string;
   net_php: number | null;
-  gross_php: number | null;
+  gross_php: number;
   health_allowance_php: number | null;
   thirteenth_month_php: number | null;
   pdd_lunch_php: number | null;

@@ -17,6 +17,7 @@ import {
   mulRatioMinor,
   roundHalfAwayFromZero,
   subMinor,
+  sumMinor,
   zeroCentavos,
 } from '@/lib/money';
 import { healthAllowance, thirteenthAccrual } from '@/lib/pay/allowances';
@@ -53,6 +54,41 @@ export const miscTotal = (items: readonly MiscItem[] | null | undefined): Centav
   }
   return centavos(total);
 };
+
+/** Everything added to gross to make net. All integer centavos. */
+export type NetParts = {
+  healthAllowance: Centavos;
+  thirteenth: Centavos;
+  pddLunch: Centavos;
+  bonus: Centavos;
+  /** Net effect of misc items (see miscTotal) — deductions already subtracted. */
+  misc: Centavos;
+  offCycle: Centavos;
+};
+
+/**
+ * THE net formula: net = gross + HA + 13th + PDD lunch + bonus + misc + off-cycle.
+ *
+ * One null rule everywhere: gross null (no rate — the row is unpayable) ⇒ net
+ * null. Components are never a substitute for a price; toPaymentDraft refuses
+ * to persist a null-net row for the same reason. The engine below, the row
+ * editor (recomputeNetCentavos) and the surgical DB writes (composeNetCentavos)
+ * all delegate here, so they cannot drift.
+ */
+export function composeNet(gross: Centavos, parts: NetParts): Centavos;
+export function composeNet(gross: Centavos | null, parts: NetParts): Centavos | null;
+export function composeNet(gross: Centavos | null, parts: NetParts): Centavos | null {
+  if (gross === null) return null;
+  return sumMinor([
+    gross,
+    parts.healthAllowance,
+    parts.thirteenth,
+    parts.pddLunch,
+    parts.bonus,
+    parts.misc,
+    parts.offCycle,
+  ]);
+}
 
 export type ContractorRowInput = {
   /** Σ (tracked_seconds + pto_seconds) over approved entries in the period. */
@@ -244,13 +280,14 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
   }
   const offCycle = perUnit ? zeroCentavos() : offCycleRaw;
 
-  const net =
-    gross === null
-      ? null
-      : addMinor(
-          addMinor(addMinor(addMinor(addMinor(addMinor(gross, ha), t13), pdd), bonus), misc),
-          offCycle,
-        );
+  const net = composeNet(gross, {
+    healthAllowance: ha,
+    thirteenth: t13,
+    pddLunch: pdd,
+    bonus,
+    misc,
+    offCycle,
+  });
 
   return {
     workedHours: worked,

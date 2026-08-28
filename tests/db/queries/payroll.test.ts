@@ -384,9 +384,9 @@ describe('composeNetCentavos — net for the surgical off-cycle write (RP-20)', 
     );
   });
 
-  it('treats a null gross (no rate) as zero rather than NaN-ing the net', () => {
-    expect(composeNetCentavos({ ...components, grossPhp: null }, centavos(0))).toBe(195_000);
-  });
+  // No null-gross case: gross_php is NOT NULL in the schema, so a persisted row
+  // always has one — composeNet's null rule (no rate ⇒ no net) is exercised in
+  // tests/lib/pay/compose-net.test.ts where nulls can actually occur.
 });
 
 describe('preferredOpenDraft — which period /payroll opens on (RP-25)', () => {
