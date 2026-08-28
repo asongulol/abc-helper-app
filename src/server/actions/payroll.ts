@@ -76,6 +76,7 @@ import {
   paySessionsIntoPeriod,
   removeOffCycleEntry,
 } from '@/server/off-cycle';
+import { recordOutsidePayment } from '@/server/outside-payment';
 import {
   type CalculateDraftResult,
   type CatchUpCandidate,
@@ -95,6 +96,7 @@ import {
   MarkAllUnpaidSchema,
   MarkPaidSchema,
   RateSaveSchema,
+  RecordOutsidePaymentSchema,
   RemoveOffCyclePaySchema,
   RestoreSnapshotSchema,
   ToggleWiseRowLockSchema,
@@ -777,6 +779,32 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
       ok: false,
       error: humanizeError(err, 'Mark paid failed.'),
     };
+  }
+}
+
+/* ---------- outside payments (money that moved without the app) ---------- */
+
+export async function addOutsidePayment(
+  args: unknown,
+): Promise<ActionResult<{ paymentId: string; periodId: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = RecordOutsidePaymentSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const data = await recordOutsidePayment(input);
+    revalidatePeriodViews();
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Recording the payment failed.') };
   }
 }
 
