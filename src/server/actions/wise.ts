@@ -311,29 +311,21 @@ export async function wiseMatch(_args: {
       },
     });
 
-    // Return the whole tally, not just the two outcomes the UI used to show —
-    // `unmatched` lumps "no recipient on file" (fix the profile) together with
-    // "no transfer found" (check Wise), and ambiguous / db-write-failed rows had
-    // no representation at all, so a run where nothing linked still read as a
-    // success. See matchSummary.
-    const count = (...outcomes: string[]): number =>
-      result.results.filter((r) => outcomes.includes(r.outcome)).length;
-
+    // The whole tally, not just the two outcomes the UI used to show — counted
+    // once in tallyMatch (MatchStats extends MatchTally). See matchSummary.
+    const { scanned, matched, variances, ambiguous, noRecipient, noTransfer } = result;
+    const { dbWriteFailed, unpaidLink, wrongPeriod } = result;
     return ok({
       unlinked: result.unlinked,
-      scanned: result.scanned,
-      matched: result.matched,
-      variances: result.variances,
-      ambiguous: result.ambiguous,
-      noRecipient: count('no_recipient'),
-      noTransfer: count('no_wise_transfer', 'no_wise_transfer_in_window'),
-      dbWriteFailed: count('db_write_failed'),
-      unpaidLink: count(
-        'refresh_transfer_dead',
-        'refresh_transfer_unfunded',
-        'refresh_transfer_not_in_history',
-      ),
-      wrongPeriod: count('reference_names_other_period'),
+      scanned,
+      matched,
+      variances,
+      ambiguous,
+      noRecipient,
+      noTransfer,
+      dbWriteFailed,
+      unpaidLink,
+      wrongPeriod,
     });
   } catch (e) {
     return fail(e);
@@ -390,24 +382,17 @@ export async function wisePeriodMatches(
     const db = createServiceClient();
     const rows = await fetchPeriodPayments(db, payPeriodId);
 
-    // Only pay for the Wise pull when something in the period actually needs it.
+    // Only pay for the Wise pull when the period has wise rows at all. ONE
+    // dry-run refresh pass decides everything: unmatched rows get discovery
+    // suggestions, and LINKED rows are re-checked too — a row can hold a
+    // transfer that never paid (a cancelled ghost, an unfunded draft), and
+    // without that check the period reads as fully reconciled while the
+    // transfer that actually paid it sits unclaimed.
     const suggestions = new Map<string, UnlinkedPayment>();
-    const wiseRows = rows.filter((r) => r.payoutMethod === 'wise');
-    if (wiseRows.some((r) => !r.wiseTransferId)) {
-      const res = await serviceMatch(db, { payPeriodId, dryRun: true });
-      for (const u of res.unlinked) suggestions.set(u.paymentId, u);
-    }
-    // A LINKED row can still be linked to a transfer that never paid — a
-    // cancelled ghost or an unfunded draft. Only the refresh pass looks at those,
-    // and without it the period reads as fully reconciled while the transfer that
-    // actually paid it sits unclaimed. Both passes pull a period-sized window.
-    const attributed = await paymentsWithAttribution(
-      db,
-      rows.map((r) => r.id),
-    );
     const deltas = new Map<string, number>();
     const cancellable = new Set<string>();
-    if (wiseRows.some((r) => r.wiseTransferId)) {
+    const wiseRows = rows.filter((r) => r.payoutMethod === 'wise');
+    if (wiseRows.length > 0) {
       const res = await serviceMatch(db, { payPeriodId, dryRun: true, refresh: true });
       for (const u of res.unlinked) suggestions.set(u.paymentId, u);
       for (const r of res.results) {
@@ -415,6 +400,10 @@ export async function wisePeriodMatches(
         if (r.outcome === 'refresh_transfer_unfunded') cancellable.add(r.payment_id);
       }
     }
+    const attributed = await paymentsWithAttribution(
+      db,
+      rows.map((r) => r.id),
+    );
 
     return ok(
       rows.map((r): PeriodMatchRow => {

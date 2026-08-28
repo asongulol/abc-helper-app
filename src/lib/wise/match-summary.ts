@@ -11,7 +11,7 @@
  * they count as linked — they're flagged, not skipped.
  */
 
-import type { UnlinkedPayment } from './types';
+import type { MatchOutcome, UnlinkedPayment } from './types';
 
 export interface MatchTally {
   /** Rows the matcher looked at. */
@@ -40,6 +40,62 @@ export interface MatchTally {
 export interface MatchOutcomeReport extends MatchTally {
   unlinked: UnlinkedPayment[];
 }
+
+/**
+ * The one place run outcomes become counts — serviceMatch's stats and the
+ * action's report both read from here. Counted AFTER writes are applied, so a
+ * row whose write failed counts as dbWriteFailed and nothing else.
+ */
+export const tallyMatch = (results: readonly { outcome: MatchOutcome }[]): MatchTally => {
+  const t: MatchTally = {
+    scanned: results.length,
+    matched: 0,
+    variances: 0,
+    ambiguous: 0,
+    noRecipient: 0,
+    noTransfer: 0,
+    dbWriteFailed: 0,
+    unpaidLink: 0,
+    wrongPeriod: 0,
+  };
+  for (const { outcome } of results) {
+    switch (outcome) {
+      case 'matched_exact':
+      case 'matched_closest_date':
+      case 'refreshed_clean':
+        t.matched++;
+        break;
+      case 'matched_with_variance_overridden':
+      case 'matched_with_variance':
+        t.variances++;
+        break;
+      case 'ambiguous_exact':
+        t.ambiguous++;
+        break;
+      case 'no_recipient':
+        t.noRecipient++;
+        break;
+      case 'no_wise_transfer':
+      case 'no_wise_transfer_in_window':
+        t.noTransfer++;
+        break;
+      case 'db_write_failed':
+        t.dbWriteFailed++;
+        break;
+      case 'refresh_transfer_not_in_history':
+      case 'refresh_transfer_dead':
+      case 'refresh_transfer_unfunded':
+        t.unpaidLink++;
+        break;
+      case 'reference_names_other_period':
+        t.wrongPeriod++;
+        break;
+      default:
+        outcome satisfies never;
+    }
+  }
+  return t;
+};
 
 export interface MatchSummary {
   text: string;

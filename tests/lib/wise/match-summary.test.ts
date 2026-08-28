@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { type MatchTally, matchSummary } from '@/lib/wise/match-summary';
+import { type MatchTally, matchSummary, tallyMatch } from '@/lib/wise/match-summary';
+import type { MatchOutcome } from '@/lib/wise/types';
 
 const tally = (over: Partial<MatchTally> = {}): MatchTally => ({
   scanned: 0,
@@ -59,5 +60,43 @@ describe('matchSummary', () => {
   it('distinguishes "nothing to do" from "nothing worked"', () => {
     expect(matchSummary(tally()).tone).toBe('info');
     expect(matchSummary(tally({ scanned: 1, noTransfer: 1 })).tone).toBe('warn');
+  });
+});
+
+describe('tallyMatch', () => {
+  it('buckets every outcome exactly once', () => {
+    const outcomes: MatchOutcome[] = [
+      'matched_exact',
+      'matched_closest_date',
+      'refreshed_clean',
+      'matched_with_variance_overridden',
+      'matched_with_variance',
+      'ambiguous_exact',
+      'no_recipient',
+      'no_wise_transfer',
+      'no_wise_transfer_in_window',
+      'db_write_failed',
+      'refresh_transfer_not_in_history',
+      'refresh_transfer_dead',
+      'refresh_transfer_unfunded',
+      'reference_names_other_period',
+    ];
+    expect(tallyMatch(outcomes.map((outcome) => ({ outcome })))).toEqual(
+      tally({
+        scanned: 14,
+        matched: 3,
+        variances: 2,
+        ambiguous: 1,
+        noRecipient: 1,
+        noTransfer: 2,
+        dbWriteFailed: 1,
+        unpaidLink: 3,
+        wrongPeriod: 1,
+      }),
+    );
+  });
+
+  it('an empty run is all zeros', () => {
+    expect(tallyMatch([])).toEqual(tally());
   });
 });
