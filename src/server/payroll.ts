@@ -81,7 +81,7 @@ export type PayrollDeps = {
   serviceDb: SupabaseClient<Database>;
 };
 
-const realDeps = async (): Promise<PayrollDeps> => ({
+export const realDeps = async (): Promise<PayrollDeps> => ({
   db: await createServerSupabase(),
   serviceDb: createServiceClient(),
 });

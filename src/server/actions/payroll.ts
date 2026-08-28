@@ -82,6 +82,7 @@ import { centavosToPhp, phpToCentavos } from '@/lib/payroll/mappers';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
+import { addOffCycleEntry } from '@/server/off-cycle';
 import {
   type CalculateDraftResult,
   type CatchUpCandidate,
@@ -1062,15 +1063,7 @@ export async function getOffCycleItems(args: {
   }
 }
 
-/**
- * Add an off-cycle pay entry (pick existing approved sessions, or a manual
- * date+units+description) to a per-session/per-hour contractor's row on the
- * (open) period. The session/work date need NOT fall in the period window. The
- * DB unique indexes are the hard double-pay guard; picked sessions are marked
- * paid so they leave the picker and the normal windowed sum. The worker's draft
- * row is then recomputed (gross excludes the now-paid sessions; the off-cycle
- * total is re-applied from the ledger so it survives later recalcs).
- */
+/** Add an off-cycle pay entry — see addOffCycleEntry in src/server/off-cycle.ts. */
 export async function addOffCyclePayItem(
   args: unknown,
 ): Promise<ActionResult<{ netPhp: number | null; count: number }>> {
@@ -1087,144 +1080,7 @@ export async function addOffCyclePayItem(
   }
 
   try {
-    const db = await createServerSupabase();
-
-    // Resolve the target period — must be open (money columns freeze otherwise).
-    const period = await requireOpenPeriod(
-      db,
-      {
-        companyId: input.companyId,
-        start: input.periodStart,
-        end: input.periodEnd,
-        create: 'missing',
-      },
-      'unlock it to add off-cycle pay',
-    );
-
-    // Worker must be on the employer roster and paid per-session/per-hour.
-    const roster = await fetchRoster(db, input.companyId);
-    const link = roster.find((r) => r.workerId === input.workerId);
-    if (!link) return { ok: false, error: "Contractor is not on this company's roster." };
-    const model = payModelFor(link.contract, link.payBasis);
-    if (model === 'salaried')
-      return { ok: false, error: 'Off-cycle pay is only for per-session / per-hour contractors.' };
-    if (model === 'unset')
-      return { ok: false, error: "Set the contractor's pay basis (hourly / per session) first." };
-    if (model !== input.basis)
-      return {
-        ok: false,
-        error: `This contractor is paid ${model.replace('_', '-')}, not ${input.basis.replace('_', '-')}.`,
-      };
-
-    const rates = await fetchRates(db, input.companyId);
-    const rows: NewOffCycleItem[] = [];
-    const sessionIdsToMark: string[] = [];
-
-    if (input.mode === 'pick') {
-      const serviceDb = createServiceClient();
-      const ids = input.sessionIds ?? [];
-      const sessions = await fetchSessionsByIds(serviceDb, ids);
-      if (sessions.length !== ids.length)
-        return { ok: false, error: 'One or more sessions were not found.' };
-      for (const s of sessions) {
-        if (s.workerId !== input.workerId)
-          return { ok: false, error: 'A selected session belongs to another contractor.' };
-        if (s.approval !== 'approved')
-          return { ok: false, error: 'Only approved sessions can be paid.' };
-        if (s.paidAt) return { ok: false, error: 'A selected session has already been paid.' };
-        const rate = resolveRate(rates, input.workerId, s.sessionDate, s.sessionDate);
-        if (rate === null)
-          return { ok: false, error: `No rate is set for ${s.sessionDate}. Set a rate first.` };
-        rows.push({
-          companyId: input.companyId,
-          workerId: input.workerId,
-          payPeriodId: period.id,
-          basis: 'per_session',
-          sessionId: s.id,
-          workDate: s.sessionDate,
-          units: s.units,
-          ratePhp: centavosToPhp(rate),
-          amountPhp: centavosToPhp(mulRatioMinor(rate, s.units)),
-          description: input.description,
-        });
-        sessionIdsToMark.push(s.id);
-      }
-    } else {
-      const workDate = input.workDate as string;
-      const rate = resolveRate(rates, input.workerId, workDate, workDate);
-      let amountPhp: number;
-      if (input.amountPhp != null) {
-        amountPhp = input.amountPhp;
-      } else {
-        if (rate === null)
-          return {
-            ok: false,
-            error: `No rate is set for ${workDate}. Set a rate or enter an amount.`,
-          };
-        amountPhp = centavosToPhp(mulRatioMinor(rate, input.units ?? 0));
-      }
-      rows.push({
-        companyId: input.companyId,
-        workerId: input.workerId,
-        payPeriodId: period.id,
-        basis: input.basis,
-        sessionId: null,
-        workDate,
-        units: input.units ?? null,
-        ratePhp: rate === null ? null : centavosToPhp(rate),
-        amountPhp,
-        description: input.description,
-      });
-    }
-
-    // Insert — the unique indexes reject a double-pay (session_id or worker+date).
-    try {
-      await insertOffCycleItems(db, rows);
-    } catch (e) {
-      if (e instanceof Error && e.message === 'ALREADY_PAID')
-        return {
-          ok: false,
-          error:
-            input.mode === 'pick'
-              ? 'That session has already been paid.'
-              : 'An off-cycle entry already exists for this contractor on that date.',
-        };
-      throw e;
-    }
-
-    if (sessionIdsToMark.length > 0) {
-      await markSessionsPaid(
-        createServiceClient(),
-        sessionIdsToMark,
-        period.id,
-        null,
-        new Date().toISOString(),
-      );
-    }
-
-    const { netPhp } = await recomputeWorkerDraft({
-      companyId: input.companyId,
-      periodId: period.id,
-      periodStart: input.periodStart,
-      periodEnd: input.periodEnd,
-      workerId: input.workerId,
-      offCycleOnly: period.kind === 'off_cycle',
-    });
-
-    await logEvent({
-      companyId: input.companyId,
-      action: 'add_off_cycle',
-      entity: input.workerId,
-      detail: {
-        basis: input.basis,
-        mode: input.mode,
-        count: rows.length,
-        amount_php: rows.reduce((s, r) => s + r.amountPhp, 0),
-        period: `${input.periodStart} → ${input.periodEnd}`,
-      },
-    });
-
-    return { ok: true, data: { netPhp, count: rows.length } };
+    return { ok: true, data: await addOffCycleEntry(input) };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Add off-cycle pay failed.') };
   }
