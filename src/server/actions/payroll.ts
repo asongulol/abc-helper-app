@@ -71,9 +71,9 @@ import {
 import { unapproveWindow } from '@/db/queries/time';
 import { periodFor } from '@/lib/dates/periods';
 import { humanizeError } from '@/lib/errors';
-import { centavos, mulRatioMinor, sumMinor } from '@/lib/money';
+import { centavos, mulRatioMinor } from '@/lib/money';
 import type { MiscItem } from '@/lib/pay/calc';
-import { miscTotal } from '@/lib/pay/calc';
+import { composeNet, miscTotal } from '@/lib/pay/calc';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { payModelFor } from '@/lib/pay/expected-hours';
 import { resolveRate } from '@/lib/pay/rates';
@@ -532,13 +532,19 @@ export async function updatePaymentRowAction(
         ? (cur.misc_items as MiscItem[])
         : [];
 
-    // Recompute net via same composition as the engine (single-currency sum).
+    // Recompute net via the engine's own composeNet — one formula everywhere.
     // off_cycle_php is durable (re-applied from the ledger on recalc) — include
     // it so editing misc never silently drops it.
-    const miscC = miscTotal(miscItemsNew);
-    const offCycleC = phpToCentavos(Number(cur.off_cycle_php ?? 0)) ?? centavos(0);
-    const netC = sumMinor([grossNew, haNew, t13New, pddNew, bonusNew, miscC, offCycleC]);
-    const netPhp = centavosToPhp(netC);
+    const netPhp = centavosToPhp(
+      composeNet(grossNew, {
+        healthAllowance: haNew,
+        thirteenth: t13New,
+        pddLunch: pddNew,
+        bonus: bonusNew,
+        misc: miscTotal(miscItemsNew),
+        offCycle: phpToCentavos(Number(cur.off_cycle_php ?? 0)) ?? centavos(0),
+      }),
+    );
 
     await updatePaymentRow(db, input.paymentId, {
       ...(gross

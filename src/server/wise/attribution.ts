@@ -23,7 +23,8 @@ export type AttributionTarget = 'misc' | 'health_allowance' | 'thirteenth_month'
 
 /** The payment columns that compose net. */
 export interface AttributableRow {
-  gross_php: number | null;
+  /** NOT NULL in the schema — a persisted row always has a priced gross. */
+  gross_php: number;
   health_allowance_php: number | null;
   thirteenth_month_php: number | null;
   pdd_lunch_php: number | null;

@@ -11,8 +11,8 @@ import { cache } from 'react';
 import { selectAll } from '@/db/queries/paging';
 import type { Database, Json } from '@/db/types';
 import { periodFor } from '@/lib/dates/periods';
-import { type Centavos, centavos, majorToMinor, sumMinor } from '@/lib/money';
-import { type MiscItem, miscTotal } from '@/lib/pay/calc';
+import { type Centavos, centavos, majorToMinor } from '@/lib/money';
+import { composeNet, type MiscItem, miscTotal } from '@/lib/pay/calc';
 import type { RateRow } from '@/lib/pay/rates';
 import {
   centavosToPhp,
@@ -531,7 +531,8 @@ export const clearSessionsPaid = async (db: Db, sessionIds: readonly string[]): 
 /** A payment row's money components for the surgical off-cycle net recompute. */
 export type PaymentComponents = {
   paymentId: string;
-  grossPhp: number | null;
+  /** NOT NULL in the schema — a persisted row always has a priced gross. */
+  grossPhp: number;
   haPhp: number;
   t13Php: number;
   pddPhp: number;
@@ -573,24 +574,26 @@ export const fetchPaymentForWorker = async (
 
 /**
  * Net for a surgical (non-rebuilding) write: the stored row's own components
- * plus the ledger total — the same single-currency composition the engine and
- * updatePaymentRowAction use. Keeping this in one place is what makes the
- * surgical path safe: every column the rebuild would have recomputed is carried
- * through verbatim, so a manual misc/bonus/PDD/gross-override survives (RP-20).
+ * plus the ledger total, via composeNet — the same composition as the engine
+ * and updatePaymentRowAction, so the three cannot drift. Gross is non-null on
+ * every persisted row (schema NOT NULL), so composeNet's null rule never fires
+ * here and the result stays a number. Keeping this in one place is what makes
+ * the surgical path safe: every column the rebuild would have recomputed is
+ * carried through verbatim, so a manual misc/bonus/PDD/gross-override survives
+ * (RP-20).
  */
 export const composeNetCentavos = (
   c: Pick<PaymentComponents, 'grossPhp' | 'haPhp' | 't13Php' | 'pddPhp' | 'bonusPhp' | 'miscItems'>,
   offCycle: Centavos,
 ): Centavos =>
-  sumMinor([
-    centavos(majorToMinor(Number(c.grossPhp ?? 0))),
-    centavos(majorToMinor(c.haPhp)),
-    centavos(majorToMinor(c.t13Php)),
-    centavos(majorToMinor(c.pddPhp)),
-    centavos(majorToMinor(c.bonusPhp)),
-    miscTotal(c.miscItems),
+  composeNet(centavos(majorToMinor(Number(c.grossPhp))), {
+    healthAllowance: centavos(majorToMinor(c.haPhp)),
+    thirteenth: centavos(majorToMinor(c.t13Php)),
+    pddLunch: centavos(majorToMinor(c.pddPhp)),
+    bonus: centavos(majorToMinor(c.bonusPhp)),
+    misc: miscTotal(c.miscItems),
     offCycle,
-  ]);
+  });
 
 /** Surgical update of off_cycle_php + net_php on an existing (open) payment row.
  *  Matches updatePaymentRow semantics: leaves payout_amount untouched (Wise pays
