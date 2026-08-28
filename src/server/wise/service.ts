@@ -14,7 +14,7 @@ import {
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
 import { fullName } from '@/lib/names';
-import { bestSentDate, wiseDatesFromListRow, wiseDatesFromRow } from '@/lib/wise/dates';
+import { bestSentDate, wiseDatesFromListRow } from '@/lib/wise/dates';
 import { classifyDraftError } from '@/lib/wise/draft-error';
 import { type DraftOverride, resolveDraftRow } from '@/lib/wise/draft-row';
 import {
@@ -37,6 +37,7 @@ import type {
 } from '@/lib/wise/types';
 import { isCancellable, WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
+import { realWiseApi, type WiseApi, type WiseRecipient } from './api';
 import {
   type AttributableRow,
   type AttributionRecord,
@@ -44,7 +45,11 @@ import {
   planAttribution,
   planUndo,
 } from './attribution';
-import { wiseRequest, wiseRequestNullable } from './client';
+import { wiseRequest } from './client';
+
+// Recipient/transfer/contact types live with the seam now; re-exported so
+// existing importers keep working.
+export type { WiseContact, WiseRecipient, WiseTransferDetail } from './api';
 
 type Db = SupabaseClient<Database>;
 
@@ -82,23 +87,6 @@ const singleTransferIndex = (
   return out;
 };
 
-// ─── profile id cache ─────────────────────────────────────────────────────────
-
-// The Wise business profile id is constant for the account. Memoize at module
-// scope so warm Next.js instances skip the redundant GET /v2/profiles round-trip.
-// Only the resolved value is cached; a thrown fetch never poisons the cache.
-let cachedProfileId: number | null = null;
-
-export async function getBusinessProfileId(): Promise<number> {
-  if (cachedProfileId != null) return cachedProfileId;
-  const profiles = await wiseRequest<{ id: number; type: string }[]>('/v2/profiles');
-  // Wise returns type as "BUSINESS"/"PERSONAL" (uppercase) — compare case-insensitively.
-  const biz = profiles.find((p) => p.type?.toUpperCase() === 'BUSINESS') ?? profiles[0];
-  if (!biz) throw new Error('No Wise business profile found on this account.');
-  cachedProfileId = biz.id;
-  return cachedProfileId;
-}
-
 // ─── concurrency helper ────────────────────────────────────────────────────────
 
 async function mapLimit<T, R>(
@@ -126,10 +114,10 @@ async function mapLimit<T, R>(
  * Pull a single transfer's full detail to capture dateFunded / dateSent that
  * the LIST endpoint omits. Falls back to list-row created if the detail fetch
  * fails. Use only when you have a list row (not the full detail) — the poll
- * loop already has the detail and should use wiseDatesFromRow() directly.
+ * loop already has the detail and uses its dates directly.
  */
-async function fetchWiseDates(listRow: WiseTransfer): Promise<WiseDates> {
-  return (await fetchWiseDetail(listRow)).dates;
+async function fetchWiseDates(api: WiseApi, listRow: WiseTransfer): Promise<WiseDates> {
+  return (await fetchWiseDetail(api, listRow)).dates;
 }
 
 /**
@@ -139,23 +127,22 @@ async function fetchWiseDates(listRow: WiseTransfer): Promise<WiseDates> {
  * extra to read. See lib/wise/reference.ts.
  */
 async function fetchWiseDetail(
+  api: WiseApi,
   listRow: WiseTransfer,
 ): Promise<{ dates: WiseDates; reference: string | null }> {
   const dates = wiseDatesFromListRow(listRow);
-  let reference: string | null = null;
   try {
-    const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${listRow.id}`);
-    const d = wiseDatesFromRow(detail);
-    dates.dateFunded = d.dateFunded;
-    dates.dateSent = d.dateSent;
-    if (!dates.created) dates.created = d.created;
-    const details = detail.details as { reference?: unknown } | null | undefined;
-    const raw = details?.reference ?? detail.reference;
-    reference = typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+    const detail = await api.getTransfer(listRow.id);
+    if (detail) {
+      dates.dateFunded = detail.dates.dateFunded;
+      dates.dateSent = detail.dates.dateSent;
+      if (!dates.created) dates.created = detail.dates.created;
+      return { dates, reference: detail.reference };
+    }
   } catch {
     // best-effort — keep created at minimum
   }
-  return { dates, reference };
+  return { dates, reference: null };
 }
 
 // ─── draft ────────────────────────────────────────────────────────────────────
@@ -265,7 +252,7 @@ export const triageDraftRow = (
 
 /** Draft a Wise transfer for each of the given payment IDs. OWNER-only. */
 export async function serviceDraft(db: Db, paymentIds: string[]): Promise<ServiceDraftResult> {
-  const profileId = await getBusinessProfileId();
+  const profileId = await realWiseApi.getBusinessProfileId();
   const rows = await fetchDraftPayments(db, paymentIds);
   const results: DraftOneResult[] = [];
 
@@ -313,7 +300,7 @@ export async function serviceBatch(
   items: WiseBatchItem[],
   name?: string,
 ): Promise<ServiceBatchResult> {
-  const profileId = await getBusinessProfileId();
+  const profileId = await realWiseApi.getBusinessProfileId();
   const overrides = new Map(items.map((i) => [i.paymentId, i]));
   const rows = await fetchDraftPayments(
     db,
@@ -429,6 +416,7 @@ export interface ServicePollResult {
 export async function servicePoll(
   db: Db,
   opts: { onlyDrafts?: boolean; payPeriodId?: string } = {},
+  api: WiseApi = realWiseApi,
 ): Promise<ServicePollResult> {
   const onlyDrafts = opts.onlyDrafts !== false;
   const payments = await fetchPollPayments(db, {
@@ -445,10 +433,8 @@ export async function servicePoll(
   // Fetch every transfer's full detail in parallel (bounded concurrency = 8).
   const fetched = await mapLimit(payments, 8, async (p) => {
     try {
-      const detail = await wiseRequest<Record<string, unknown>>(
-        `/v1/transfers/${p.wise_transfer_id}`,
-      );
-      return { p, ok: true as const, detail };
+      const detail = await api.getTransfer(p.wise_transfer_id);
+      return detail ? { p, ok: true as const, detail } : { p, ok: false as const };
     } catch {
       return { p, ok: false as const };
     }
@@ -470,13 +456,12 @@ export async function servicePoll(
       });
       continue;
     }
-    const wiseRow = f.detail;
-    const st = String(wiseRow.status ?? '');
+    const st = f.detail.status ?? '';
 
     if (WISE_PAID_STATES.has(st)) {
       // Use Wise's REAL sent date (or dateFunded / created as fallbacks) instead of
       // now(). Also captures the full wise_dates triple for the UI tooltip.
-      const dates = wiseDatesFromRow(wiseRow);
+      const dates = f.detail.dates;
       const realSent = bestSentDate(dates) ?? nowIso;
       try {
         await markPaymentSent(db, p.id, realSent, dates, nowIso);
@@ -557,6 +542,7 @@ export async function serviceMatch(
     payPeriodId?: string | undefined;
     dryRun?: boolean | undefined;
   } = {},
+  api: WiseApi = realWiseApi,
 ): Promise<MatchStats> {
   const windowDays = Number(opts.windowDays ?? 7);
   const refresh = opts.refresh === true;
@@ -611,27 +597,9 @@ export async function serviceMatch(
   const fromIso = new Date(minTs - pullPaddingDays * DAY_MS).toISOString();
   const toIso = new Date(maxTs + pullPaddingDays * DAY_MS).toISOString();
 
-  // 3. Pull Wise transfer history for the union window with pagination.
-  const profileId = await getBusinessProfileId();
-  const wiseTransfers: WiseTransfer[] = [];
-  let offset = 0;
-  const pageSize = 100;
-
-  // Safety: cap at 50 pages = 5,000 transfers (~2 years).
-  for (let i = 0; i < 50; i++) {
-    const qs = new URLSearchParams({
-      profile: String(profileId),
-      limit: String(pageSize),
-      offset: String(offset),
-      createdDateStart: fromIso,
-      createdDateEnd: toIso,
-    });
-    const page = await wiseRequest<WiseTransfer[]>(`/v1/transfers?${qs.toString()}`);
-    if (!Array.isArray(page) || page.length === 0) break;
-    wiseTransfers.push(...page);
-    if (page.length < pageSize) break;
-    offset += pageSize;
-  }
+  // 3. Pull Wise transfer history for the union window (paging in the adapter).
+  const profileId = await api.getBusinessProfileId();
+  const wiseTransfers = await api.listTransfers({ fromIso, toIso });
 
   // 4. Filter out cancelled "ghost" transfers.
   const liveTransfers = filterLive(wiseTransfers);
@@ -708,7 +676,7 @@ export async function serviceMatch(
         for (const id of d.result.candidate_transfer_ids.slice(0, MAX_REFERENCE_PROBES)) {
           const t = idIndex.get(id);
           if (!t) continue;
-          const { reference } = await fetchWiseDetail(t);
+          const { reference } = await fetchWiseDetail(api, t);
           if (referenceMatchesPeriod(reference, periodWindow(m)) === true) named.push(id);
         }
         // Exactly one claiming this period resolves it; two still means guess.
@@ -728,7 +696,7 @@ export async function serviceMatch(
       if (d.patch?.wise_transfer_id) {
         const t = idIndex.get(d.patch.wise_transfer_id);
         if (t) {
-          const { dates: realDates, reference } = await fetchWiseDetail(t);
+          const { dates: realDates, reference } = await fetchWiseDetail(api, t);
 
           // DUPLICATE GUARD: a transfer whose reference names a DIFFERENT period
           // is the previous batch's, sitting in this period's window because the
@@ -770,7 +738,7 @@ export async function serviceMatch(
       // REFRESH FAST PATH: fetch detail dates from Wise for the stored transfer.
       const storedT = idIndex.get(String(p.wise_transfer_id));
       const dates: WiseDates = storedT
-        ? await fetchWiseDates(storedT)
+        ? await fetchWiseDates(api, storedT)
         : { created: null, dateFunded: null, dateSent: null };
       decision = decideRefresh(mp, idIndex, dates, nowIso);
 
@@ -901,12 +869,12 @@ export async function serviceMatch(
   let recipientNames: Map<string, string> | undefined;
   if (needsFallback) {
     try {
-      const { recipients } = await serviceRecipients(profileId);
+      const { recipients } = await serviceRecipients(profileId, api);
       const names = new Map(recipients.map((r) => [String(r.id), r.name] as [string, string]));
       // ponytail: one GET per since-deleted recipient (9 across all of 2024–2026),
       // so no caching or paging. Batch it if the recipient list ever churns hard.
       const extra = await mapLimit(unknownTargetAccounts(unclaimed, names), 8, (id) =>
-        serviceGetRecipient(Number(id)).catch(() => null),
+        serviceGetRecipient(Number(id), api).catch(() => null),
       );
       for (const r of extra) if (r?.name) names.set(String(r.id), r.name);
       recipientNames = names;
@@ -1028,6 +996,7 @@ export async function serviceLinkTransfer(
     note?: string | null | undefined;
     window?: { periodStart: string | null; payDate: string | null } | undefined;
   } = {},
+  api: WiseApi = realWiseApi,
 ): Promise<LinkTransferResult> {
   // One transfer pays one row. The matcher drops claimed transfers before it
   // indexes; the manual path had no such check, and unlink is what made a
@@ -1039,8 +1008,9 @@ export async function serviceLinkTransfer(
     );
   }
 
-  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
-  const status = (detail.status as string | null | undefined) ?? null;
+  const detail = await api.getTransfer(transferId);
+  if (!detail) throw new Error(`Wise transfer ${transferId} was not found on this account.`);
+  const status = detail.status;
   if (status === 'cancelled') {
     throw new Error(`Wise transfer ${transferId} is cancelled — it never paid anyone.`);
   }
@@ -1050,9 +1020,9 @@ export async function serviceLinkTransfer(
     );
   }
 
-  const dates = wiseDatesFromRow(detail);
+  const dates = detail.dates;
   const sentIso = bestSentDate(dates);
-  const wiseAmount = Number(detail.targetValue ?? 0);
+  const wiseAmount = detail.targetValue ?? 0;
 
   // Outside the window the matcher searches, the link is a claim only the
   // operator can make — Zagado's 2024-08-16→31 was paid three days before the
@@ -1129,14 +1099,15 @@ export async function serviceUnlinkTransfer(
   db: Db,
   payment: { id: string; wise_transfer_id: string | null; status: string; note: string | null },
   reason: string,
+  api: WiseApi = realWiseApi,
 ): Promise<UnlinkTransferResult> {
   const transferId = payment.wise_transfer_id;
   if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
 
   // A transfer we can't read is one we can't call live, so it can't block the
   // unlink — but an in-flight draft we CAN read must.
-  const detail = await wiseRequestNullable<Record<string, unknown>>(`/v1/transfers/${transferId}`);
-  const status = (detail?.status as string | null | undefined) ?? null;
+  const detail = await api.getTransfer(transferId);
+  const status = detail?.status ?? null;
   if (status && WISE_IN_FLIGHT_STATES.has(status)) {
     throw new Error(
       `Transfer ${transferId} is ${status} — an unfunded draft that is still live in Wise. Cancel it first ("Cancel draft in Wise"), or funding it later pays this row twice.`,
@@ -1174,98 +1145,69 @@ export interface WiseRateRow {
   error?: string;
 }
 
-export interface WiseRecipient {
-  id: number;
-  name: string;
-  currency: string;
-  account: string;
-  email: string | null;
-  active: boolean;
-}
-
 export async function serviceStatus(
   transferIds: (string | number)[],
+  api: WiseApi = realWiseApi,
 ): Promise<WiseTransferStatus[]> {
   return mapLimit(transferIds, 8, async (id) => {
     try {
-      const t = await wiseRequest<{ status: string }>(`/v1/transfers/${id}`);
-      return { id, status: t.status ?? null };
+      const t = await api.getTransfer(id);
+      if (!t) return { id, status: null, error: 'fetch failed' };
+      return { id, status: t.status };
     } catch {
       return { id, status: null, error: 'fetch failed' };
     }
   });
 }
 
-export async function serviceRates(transferIds: (string | number)[]): Promise<WiseRateRow[]> {
+export async function serviceRates(
+  transferIds: (string | number)[],
+  api: WiseApi = realWiseApi,
+): Promise<WiseRateRow[]> {
   return mapLimit(transferIds, 8, async (id) => {
+    const failed = {
+      id,
+      rate: null,
+      status: null,
+      sourceCurrency: null,
+      targetCurrency: null,
+      sourceValue: null,
+      targetValue: null,
+      targetAccount: null,
+      reference: null,
+      created: null,
+      error: `fetch failed for ${id}`,
+    };
     try {
-      const t = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${id}`);
+      const t = await api.getTransfer(id);
+      if (!t) return failed;
       return {
         id,
-        rate: (t.rate as number | null | undefined) ?? null,
-        status: (t.status as string | null | undefined) ?? null,
-        sourceCurrency: (t.sourceCurrency as string | null | undefined) ?? null,
-        targetCurrency: (t.targetCurrency as string | null | undefined) ?? null,
-        sourceValue: (t.sourceValue as number | null | undefined) ?? null,
-        targetValue: (t.targetValue as number | null | undefined) ?? null,
-        targetAccount: (t.targetAccount as number | null | undefined) ?? null,
-        reference:
-          ((t.details as Record<string, unknown> | null | undefined)?.reference as
-            | string
-            | null
-            | undefined) ?? null,
-        created: (t.created as string | null | undefined) ?? null,
+        rate: t.rate,
+        status: t.status,
+        sourceCurrency: t.sourceCurrency,
+        targetCurrency: t.targetCurrency,
+        sourceValue: t.sourceValue,
+        targetValue: t.targetValue,
+        targetAccount: t.targetAccount == null ? null : Number(t.targetAccount),
+        reference: t.reference,
+        created: t.created,
       };
     } catch {
-      return {
-        id,
-        rate: null,
-        status: null,
-        sourceCurrency: null,
-        targetCurrency: null,
-        sourceValue: null,
-        targetValue: null,
-        targetAccount: null,
-        reference: null,
-        created: null,
-        error: `fetch failed for ${id}`,
-      };
+      return failed;
     }
   });
 }
 
-export async function serviceRecipients(profileId?: number): Promise<{
+export async function serviceRecipients(
+  profileId?: number,
+  api: WiseApi = realWiseApi,
+): Promise<{
   profileId: number;
   recipients: WiseRecipient[];
 }> {
-  const pid = profileId ?? (await getBusinessProfileId());
-  const accounts = await wiseRequest<Record<string, unknown>[]>(`/v1/accounts?profile=${pid}`);
-
-  const recipients = (Array.isArray(accounts) ? accounts : []).map((a): WiseRecipient => {
-    const d = (a.details as Record<string, unknown> | null | undefined) ?? {};
-    const hint =
-      (d.accountNumber as string | null | undefined) ??
-      (d.iban as string | null | undefined) ??
-      (d.email as string | null | undefined) ??
-      '';
-    const masked = hint ? `••••${String(hint).slice(-4)}` : '';
-    return {
-      id: a.id as number,
-      name:
-        (a.accountHolderName as string | null | undefined) ??
-        (a.name as string | null | undefined) ??
-        '',
-      currency:
-        (a.currency as string | null | undefined) ??
-        (d.currency as string | null | undefined) ??
-        '',
-      account: masked,
-      email: (d.email as string | null | undefined) ?? null,
-      active: (a.active as boolean | null | undefined) !== false,
-    };
-  });
-
-  return { profileId: pid, recipients };
+  const pid = profileId ?? (await api.getBusinessProfileId());
+  return { profileId: pid, recipients: await api.listRecipients(pid) };
 }
 
 /**
@@ -1284,21 +1226,11 @@ export async function serviceRecipients(profileId?: number): Promise<{
 export async function serviceSearchContacts(
   term: string,
   profileId?: number,
+  api: WiseApi = realWiseApi,
 ): Promise<{ uuid: string; recipientId: number; name: string }[]> {
-  const pid = profileId ?? (await getBusinessProfileId());
-  const raw = await wiseRequest<Record<string, unknown>[]>(
-    `/v1/profiles/${pid}/contacts?searchTerm=${encodeURIComponent(term)}`,
-  );
-  return (Array.isArray(raw) ? raw : [])
-    .map((c) => ({
-      uuid: String((c.id as string | number | null | undefined) ?? ''),
-      recipientId: Number(c.balanceRecipientId ?? 0),
-      name:
-        (c.name as string | null | undefined) ??
-        (c.accountHolderName as string | null | undefined) ??
-        '',
-    }))
-    .filter((c) => /-/.test(c.uuid)); // keep real UUID contacts only (batch-CSV key)
+  const pid = profileId ?? (await api.getBusinessProfileId());
+  const contacts = await api.listContacts(pid, term);
+  return contacts.filter((c) => /-/.test(c.uuid)); // keep real UUID contacts only (batch-CSV key)
 }
 
 /**
@@ -1307,9 +1239,12 @@ export async function serviceSearchContacts(
  * problem (when the token sees zero recipients). Call this ONLY on the miss
  * path — it performs one extra recipient-list request.
  */
-export async function explainMissingRecipient(recipientId: number): Promise<string> {
+export async function explainMissingRecipient(
+  recipientId: number,
+  api: WiseApi = realWiseApi,
+): Promise<string> {
   try {
-    const { recipients } = await serviceRecipients();
+    const { recipients } = await serviceRecipients(undefined, api);
     return missingRecipientReason(recipientId, recipients.length);
   } catch (e) {
     return (
@@ -1319,28 +1254,11 @@ export async function explainMissingRecipient(recipientId: number): Promise<stri
   }
 }
 
-export async function serviceGetRecipient(recipientId: number): Promise<WiseRecipient | null> {
-  const a = await wiseRequestNullable<Record<string, unknown>>(`/v1/accounts/${recipientId}`);
-  if (!a) return null;
-  const d = (a.details as Record<string, unknown> | null | undefined) ?? {};
-  const hint =
-    (d.accountNumber as string | null | undefined) ??
-    (d.iban as string | null | undefined) ??
-    (d.email as string | null | undefined) ??
-    '';
-  const masked = hint ? `••••${String(hint).slice(-4)}` : '';
-  return {
-    id: a.id as number,
-    name:
-      (a.accountHolderName as string | null | undefined) ??
-      (a.name as string | null | undefined) ??
-      '',
-    currency:
-      (a.currency as string | null | undefined) ?? (d.currency as string | null | undefined) ?? '',
-    account: masked,
-    email: (d.email as string | null | undefined) ?? null,
-    active: (a.active as boolean | null | undefined) !== false,
-  };
+export async function serviceGetRecipient(
+  recipientId: number,
+  api: WiseApi = realWiseApi,
+): Promise<WiseRecipient | null> {
+  return api.getRecipient(recipientId);
 }
 
 export interface TransferMatch {
@@ -1356,6 +1274,7 @@ export interface TransferMatch {
 export async function serviceFindTransfersByRecipient(
   recipientId: number,
   opts: { fromIso?: string; toIso?: string } = {},
+  api: WiseApi = realWiseApi,
 ): Promise<{
   recipientId: number;
   window: { from: string; to: string };
@@ -1368,26 +1287,7 @@ export async function serviceFindTransfersByRecipient(
     ? new Date(opts.fromIso).toISOString()
     : new Date(Date.now() - 90 * DAY_MS).toISOString();
 
-  const profileId = await getBusinessProfileId();
-  const all: WiseTransfer[] = [];
-  let offset = 0;
-  const pageSize = 100;
-
-  for (let i = 0; i < 50; i++) {
-    const qs = new URLSearchParams({
-      profile: String(profileId),
-      limit: String(pageSize),
-      offset: String(offset),
-      createdDateStart: fromIso,
-      createdDateEnd: toIso,
-    });
-    const page = await wiseRequest<WiseTransfer[]>(`/v1/transfers?${qs.toString()}`);
-    if (!Array.isArray(page) || page.length === 0) break;
-    all.push(...page);
-    if (page.length < pageSize) break;
-    offset += pageSize;
-  }
-
+  const all = await api.listTransfers({ fromIso, toIso });
   const matches = all.filter((t) => String(t.targetAccount) === String(recipientId));
 
   return {
@@ -1436,15 +1336,17 @@ export async function serviceAttributeVariance(
   db: Db,
   payment: AttributionPayment,
   opts: { target: AttributionTarget; label?: string | undefined; companyId?: string | undefined },
+  api: WiseApi = realWiseApi,
 ): Promise<AttributionResult> {
   if (!payment.wise_transfer_id) {
     throw new Error('Link the Wise transfer first — there is no variance until there is a link.');
   }
 
-  const detail = await wiseRequest<Record<string, unknown>>(
-    `/v1/transfers/${payment.wise_transfer_id}`,
-  );
-  const wiseAmount = Number(detail.targetValue ?? 0);
+  const detail = await api.getTransfer(payment.wise_transfer_id);
+  if (!detail) {
+    throw new Error(`Wise transfer ${payment.wise_transfer_id} was not found on this account.`);
+  }
+  const wiseAmount = detail.targetValue ?? 0;
   const delta = wiseAmount - Number(payment.net_php ?? 0);
 
   const plan = planAttribution(payment, {
