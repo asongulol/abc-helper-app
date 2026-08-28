@@ -37,7 +37,7 @@ import type {
 } from '@/lib/wise/types';
 import { isCancellable, WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
-import { realWiseApi, type WiseApi, type WiseRecipient } from './api';
+import { realWiseApi, type WiseApi, type WiseQuote, type WiseRecipient } from './api';
 import {
   type AttributableRow,
   type AttributionRecord,
@@ -45,7 +45,6 @@ import {
   planAttribution,
   planUndo,
 } from './attribution';
-import { wiseRequest } from './client';
 
 // Recipient/transfer/contact types live with the seam now; re-exported so
 // existing importers keep working.
@@ -160,23 +159,16 @@ export interface DraftOneResult {
  * endpoint — the owner funds manually in the Wise UI (ADR-0007).
  */
 async function draftOne(
+  api: WiseApi,
   profileId: number,
   paymentId: string,
   recipientId: number,
   amountPhp: number,
 ): Promise<DraftOneResult> {
   // 1. Quote (PHP → PHP, BALANCE payout).
-  let quote: { id: string; rate?: number };
+  let quote: WiseQuote;
   try {
-    quote = await wiseRequest<{ id: string; rate?: number }>(`/v3/profiles/${profileId}/quotes`, {
-      method: 'POST',
-      body: {
-        sourceCurrency: 'PHP',
-        targetCurrency: 'PHP',
-        targetAmount: amountPhp,
-        payOut: 'BALANCE',
-      },
-    });
+    quote = await api.createQuote(profileId, amountPhp);
   } catch (e) {
     return { paymentId, status: 'failed', error: `quote: ${String(e)}` };
   }
@@ -184,18 +176,7 @@ async function draftOne(
   // 2. Transfer (references an EXISTING recipient by id; no bank details here).
   let transfer: { id: number };
   try {
-    transfer = await wiseRequest<{ id: number }>('/v1/transfers', {
-      method: 'POST',
-      body: {
-        targetAccount: recipientId,
-        quoteUuid: quote.id,
-        customerTransactionId: crypto.randomUUID(),
-        details: {
-          reference: 'Payroll',
-          transferPurpose: 'verification.transfers.purpose.pay.bills',
-        },
-      },
-    });
+    transfer = await api.createTransfer(recipientId, quote.id);
   } catch (e) {
     return { paymentId, status: 'failed', error: classifyDraftError('transfer: ', e) };
   }
@@ -204,7 +185,7 @@ async function draftOne(
   return {
     paymentId,
     transferId: transfer.id,
-    fxRate: quote.rate ?? 1,
+    fxRate: quote.rate,
     status: 'drafted',
   };
 }
@@ -251,8 +232,12 @@ export const triageDraftRow = (
 };
 
 /** Draft a Wise transfer for each of the given payment IDs. OWNER-only. */
-export async function serviceDraft(db: Db, paymentIds: string[]): Promise<ServiceDraftResult> {
-  const profileId = await realWiseApi.getBusinessProfileId();
+export async function serviceDraft(
+  db: Db,
+  paymentIds: string[],
+  api: WiseApi = realWiseApi,
+): Promise<ServiceDraftResult> {
+  const profileId = await api.getBusinessProfileId();
   const rows = await fetchDraftPayments(db, paymentIds);
   const results: DraftOneResult[] = [];
 
@@ -263,7 +248,7 @@ export async function serviceDraft(db: Db, paymentIds: string[]): Promise<Servic
       continue;
     }
 
-    const res = await draftOne(profileId, row.id, triage.recipientId, triage.amountPhp);
+    const res = await draftOne(api, profileId, row.id, triage.recipientId, triage.amountPhp);
     if (res.status === 'drafted' && res.transferId !== undefined) {
       await setWiseTransferIdSafe(db, row.id, String(res.transferId), res.fxRate);
     }
@@ -299,8 +284,9 @@ export async function serviceBatch(
   db: Db,
   items: WiseBatchItem[],
   name?: string,
+  api: WiseApi = realWiseApi,
 ): Promise<ServiceBatchResult> {
-  const profileId = await realWiseApi.getBusinessProfileId();
+  const profileId = await api.getBusinessProfileId();
   const overrides = new Map(items.map((i) => [i.paymentId, i]));
   const rows = await fetchDraftPayments(
     db,
@@ -312,13 +298,10 @@ export async function serviceBatch(
     throw new Error('No eligible payments (already drafted, or missing recipient or amount)');
 
   // 1. Create the batch group.
-  const group = await wiseRequest<{ id: string }>(`/v3/profiles/${profileId}/batch-groups`, {
-    method: 'POST',
-    body: {
-      name: name ?? `Payroll ${new Date().toISOString().slice(0, 10)}`,
-      sourceCurrency: 'PHP',
-    },
-  });
+  const group = await api.createBatchGroup(
+    profileId,
+    name ?? `Payroll ${new Date().toISOString().slice(0, 10)}`,
+  );
 
   const results: DraftOneResult[] = [];
 
@@ -332,43 +315,19 @@ export async function serviceBatch(
     const { recipientId, amountPhp } = triage;
 
     try {
-      // Quote.
-      const quote = await wiseRequest<{ id: string; rate?: number }>(
-        `/v3/profiles/${profileId}/quotes`,
-        {
-          method: 'POST',
-          body: {
-            sourceCurrency: 'PHP',
-            targetCurrency: 'PHP',
-            targetAmount: amountPhp,
-            payOut: 'BALANCE',
-          },
-        },
-      );
-
-      // Transfer inside the batch group.
-      const t = await wiseRequest<{ id: number }>(
-        `/v3/profiles/${profileId}/batch-groups/${group.id}/transfers`,
-        {
-          method: 'POST',
-          body: {
-            targetAccount: recipientId,
-            quoteUuid: quote.id,
-            customerTransactionId: crypto.randomUUID(),
-            details: {
-              reference: 'Payroll',
-              transferPurpose: 'verification.transfers.purpose.pay.bills',
-            },
-          },
-        },
-      );
+      // Quote, then a transfer inside the batch group.
+      const quote = await api.createQuote(profileId, amountPhp);
+      const t = await api.createTransfer(recipientId, quote.id, {
+        profileId,
+        batchGroupId: group.id,
+      });
 
       // Write back to DB.
-      await setWiseTransferIdSafe(db, row.id, String(t.id), quote.rate ?? 1);
+      await setWiseTransferIdSafe(db, row.id, String(t.id), quote.rate);
       results.push({
         paymentId: row.id,
         transferId: t.id,
-        fxRate: quote.rate ?? 1,
+        fxRate: quote.rate,
         status: 'drafted',
       });
     } catch (e) {
@@ -1414,12 +1373,14 @@ export async function serviceCancelTransfer(
   db: Db,
   payment: { id: string; wise_transfer_id: string | null; note: string | null },
   reason?: string,
+  api: WiseApi = realWiseApi,
 ): Promise<CancelTransferResult> {
   const transferId = payment.wise_transfer_id;
   if (!transferId) throw new Error('This payment is not linked to a Wise transfer.');
 
-  const detail = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${transferId}`);
-  const previousStatus = String(detail.status ?? '');
+  const detail = await api.getTransfer(transferId);
+  if (!detail) throw new Error(`Wise transfer ${transferId} was not found on this account.`);
+  const previousStatus = detail.status ?? '';
   if (WISE_PAID_STATES.has(previousStatus)) {
     throw new Error(
       `Transfer ${transferId} is ${previousStatus} — that money has already gone out. Nothing to cancel.`,
@@ -1429,11 +1390,7 @@ export async function serviceCancelTransfer(
     throw new Error(`Transfer ${transferId} is ${previousStatus} — it cannot be cancelled.`);
   }
 
-  const cancelled = await wiseRequest<Record<string, unknown>>(
-    `/v1/transfers/${transferId}/cancel`,
-    { method: 'PUT' },
-  );
-  const status = String(cancelled.status ?? 'cancelled');
+  const { status } = await api.cancelTransfer(transferId);
 
   await appendPaymentNote(
     db,
