@@ -2,9 +2,9 @@
  * In-memory WiseApi for service-layer tests (the WiseApi seam).
  *
  * Seeded with detail-shaped transfers; list rows are derived from them, the
- * way the real list endpoint is a projection of the same data. Read-only —
- * exactly the seam's surface, and like the real adapter it has no funding
- * method (ADR-0007 holds in tests too).
+ * way the real list endpoint is a projection of the same data. Mutate calls
+ * are recorded on `.calls` for assertions, and like the real adapter the fake
+ * has no funding method (ADR-0007 holds in tests too).
  */
 
 import { toIsoWise } from '@/lib/wise/dates';
@@ -43,10 +43,21 @@ const toListRow = (t: WiseTransferDetail): WiseTransfer => ({
   created: t.created,
 });
 
-export const fakeWise = (seed: FakeWiseSeed = {}): WiseApi => {
+/** Every mutate call the fake saw, for "nothing was drafted" assertions. */
+export interface FakeWiseCalls {
+  quotes: { profileId: number; targetAmountPhp: number }[];
+  transfers: { recipientId: number; quoteId: string; batchGroupId?: string }[];
+  batchGroups: { profileId: number; name: string }[];
+  cancels: string[];
+}
+
+export const fakeWise = (seed: FakeWiseSeed = {}): WiseApi & { calls: FakeWiseCalls } => {
   const transfers = seed.transfers ?? [];
   const recipients = seed.recipients ?? [];
+  const calls: FakeWiseCalls = { quotes: [], transfers: [], batchGroups: [], cancels: [] };
+  let nextId = 9000;
   return {
+    calls,
     async getBusinessProfileId() {
       return seed.profileId ?? 1;
     },
@@ -69,6 +80,28 @@ export const fakeWise = (seed: FakeWiseSeed = {}): WiseApi => {
     },
     async listContacts() {
       return seed.contacts ?? [];
+    },
+    async createQuote(profileId, targetAmountPhp) {
+      calls.quotes.push({ profileId, targetAmountPhp });
+      return { id: `q-${calls.quotes.length}`, rate: 1 };
+    },
+    async createTransfer(recipientId, quoteId, batch) {
+      calls.transfers.push({
+        recipientId,
+        quoteId,
+        ...(batch ? { batchGroupId: batch.batchGroupId } : {}),
+      });
+      return { id: ++nextId };
+    },
+    async createBatchGroup(profileId, name) {
+      calls.batchGroups.push({ profileId, name });
+      return { id: `bg-${calls.batchGroups.length}` };
+    },
+    async cancelTransfer(id) {
+      calls.cancels.push(String(id));
+      const t = transfers.find((x) => String(x.id) === String(id));
+      if (t) t.status = 'cancelled';
+      return { status: 'cancelled' };
     },
   };
 };

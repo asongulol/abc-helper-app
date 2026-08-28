@@ -10,10 +10,9 @@ import { wiseRequest, wiseRequestNullable } from './client';
  * bodies, URL paths, or paging loops. `realWiseApi` is the HTTP adapter over
  * client.ts; tests inject the in-memory fake (tests/fixtures/wise-fake.ts).
  *
- * READ-ONLY for now: quote/draft/batch/cancel still call the HTTP client
- * directly in service.ts and move behind this seam in the follow-up PR.
- * DRAFT-ONLY (ADR-0007): there is deliberately no funding method here and
- * never will be — the guardrail scanner enforces that repo-wide.
+ * DRAFT-ONLY (ADR-0007): the mutate half stops at drafting (quote, transfer,
+ * batch group) and cancelling. There is deliberately no funding method here
+ * and never will be — the guardrail scanner enforces that repo-wide.
  */
 
 /** GET /v1/transfers/{id}, every field the service layer reads, typed once. */
@@ -53,6 +52,12 @@ export interface WiseContact {
   name: string;
 }
 
+/** A quote for a draft transfer. `rate` falls back to 1 when Wise omits it. */
+export interface WiseQuote {
+  id: string;
+  rate: number;
+}
+
 export interface WiseApi {
   /** The business profile id (memoized — constant for the account). */
   getBusinessProfileId(): Promise<number>;
@@ -67,6 +72,24 @@ export interface WiseApi {
   /** Balance/Wisetag contacts. Wise IGNORES searchTerm and returns the first
    *  page regardless — callers filter client-side. */
   listContacts(profileId: number, searchTerm?: string): Promise<WiseContact[]>;
+
+  // Mutate half — drafting and cancelling ONLY. No funding method (ADR-0007).
+
+  /** PHP→PHP BALANCE quote for a target amount. */
+  createQuote(profileId: number, targetAmountPhp: number): Promise<WiseQuote>;
+  /** Draft a transfer against an EXISTING recipient (no bank details), inside a
+   *  batch group when `batch` is given. Money does NOT move — the draft sits
+   *  unfunded until the owner funds it in the Wise UI. */
+  createTransfer(
+    recipientId: number,
+    quoteId: string,
+    batch?: { profileId: number; batchGroupId: string },
+  ): Promise<{ id: number }>;
+  /** An empty PHP batch group for createTransfer to draft into. */
+  createBatchGroup(profileId: number, name: string): Promise<{ id: string }>;
+  /** PUT cancel on an unfunded draft; returns the post-cancel status.
+   *  Callers gate on isCancellable first — this is the raw call. */
+  cancelTransfer(id: string | number): Promise<{ status: string }>;
 }
 
 // ─── HTTP adapter ─────────────────────────────────────────────────────────────
@@ -181,5 +204,50 @@ export const realWiseApi: WiseApi = {
         (c.accountHolderName as string | null | undefined) ??
         '',
     }));
+  },
+
+  async createQuote(profileId, targetAmountPhp) {
+    const q = await wiseRequest<{ id: string; rate?: number }>(`/v3/profiles/${profileId}/quotes`, {
+      method: 'POST',
+      body: {
+        sourceCurrency: 'PHP',
+        targetCurrency: 'PHP',
+        targetAmount: targetAmountPhp,
+        payOut: 'BALANCE',
+      },
+    });
+    return { id: q.id, rate: q.rate ?? 1 };
+  },
+
+  async createTransfer(recipientId, quoteId, batch) {
+    const path = batch
+      ? `/v3/profiles/${batch.profileId}/batch-groups/${batch.batchGroupId}/transfers`
+      : '/v1/transfers';
+    return wiseRequest<{ id: number }>(path, {
+      method: 'POST',
+      body: {
+        targetAccount: recipientId,
+        quoteUuid: quoteId,
+        customerTransactionId: crypto.randomUUID(),
+        details: {
+          reference: 'Payroll',
+          transferPurpose: 'verification.transfers.purpose.pay.bills',
+        },
+      },
+    });
+  },
+
+  async createBatchGroup(profileId, name) {
+    return wiseRequest<{ id: string }>(`/v3/profiles/${profileId}/batch-groups`, {
+      method: 'POST',
+      body: { name, sourceCurrency: 'PHP' },
+    });
+  },
+
+  async cancelTransfer(id) {
+    const cancelled = await wiseRequest<Record<string, unknown>>(`/v1/transfers/${id}/cancel`, {
+      method: 'PUT',
+    });
+    return { status: String(cancelled.status ?? 'cancelled') };
   },
 };
