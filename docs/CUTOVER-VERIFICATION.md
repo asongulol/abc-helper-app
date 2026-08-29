@@ -65,7 +65,7 @@ for the full prepare-now / flip-later runbook. At the flip, between pay periods:
    window: remove the legacy `documents-expiry-check` / `hiring-docs-review-check`
    crons and schedule the new `/api/cron/{doc-expiry,hiring-review}` digests. Leave
    the Hubstaff cron legacy-owned. *(Done 2026-08-29 — both digests now hit the app;
-   Wise reconcile is also app-owned via `/api/cron/wise-reconcile`, see migration 40.)*
+   Wise reconcile is also app-owned via `/api/cron/wise-reconcile`, see migration 43.)*
 6. Keep the old app deployed at `payroll.*` / `portal.*` as the rollback until **two
    full clean pay periods** run on the new app.
 
