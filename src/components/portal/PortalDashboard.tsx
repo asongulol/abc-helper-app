@@ -1,6 +1,9 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
+import type { PortalNotificationRow } from '@/db/queries/portal';
+import { dismissOwnNotification } from '@/server/actions/portal';
 import { DocReminderOverlay } from './DocReminderOverlay';
 import { FromNewYork } from './FromNewYork';
 import { MoodCheckinOverlay } from './MoodCheckinOverlay';
@@ -24,6 +27,7 @@ interface Props {
   pendingDocs: string[];
   toolsPending: boolean;
   moodPrompt: 'start' | 'end' | null;
+  notifications: PortalNotificationRow[];
 }
 
 const TOOLKIT = [
@@ -97,13 +101,22 @@ export const PortalDashboard = ({
   pendingDocs,
   toolsPending,
   moodPrompt,
+  notifications,
 }: Props) => {
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
   const [, tick] = useState(0);
   // Legacy sequencing: the doc reminder waits until the mood check is decided
   // (answered or none due), so the two overlays never stack.
   const [moodDone, setMoodDone] = useState(false);
   const markMoodDone = useCallback(() => setMoodDone(true), []);
+  // Optimistically hide dismissed notifications; router.refresh() re-syncs.
+  const [dismissedIds, setDismissedIds] = useState<string[]>([]);
+  const visibleNotifications = notifications.filter((n) => !dismissedIds.includes(n.id));
+  const dismiss = (id: string) => {
+    setDismissedIds((ids) => [...ids, id]);
+    void dismissOwnNotification({ id }).then(() => router.refresh());
+  };
 
   useEffect(() => {
     setMounted(true);
@@ -186,6 +199,35 @@ export const PortalDashboard = ({
       </div>
 
       <FromNewYork />
+
+      {/* Notifications (doc review outcomes etc.) — only when there are any */}
+      {visibleNotifications.length > 0 && (
+        <div className="dash-cell">
+          <div className="stickwrap">
+            <span className="sticker">🔔 For you</span>
+          </div>
+          <div className="card annlist">
+            {visibleNotifications.map((n) => (
+              <div
+                className="item"
+                key={n.id}
+                style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700 }}>{n.title}</div>
+                  <div className="sub" style={{ margin: '1px 0 3px' }}>
+                    {String(n.createdAt).slice(0, 10)}
+                  </div>
+                  {n.body && <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{n.body}</div>}
+                </div>
+                <button type="button" className="btn ghost" onClick={() => dismiss(n.id)}>
+                  Dismiss
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Word from Your Mother (announcements) */}
       <div className="dash-cell dash-word">

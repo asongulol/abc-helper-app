@@ -4,6 +4,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import {
   fetchAnnouncements,
   fetchOwnDocuments,
+  fetchOwnNotifications,
   fetchOwnPayments,
   fetchOwnProfile,
   fetchOwnTimeEntries,
@@ -30,6 +31,7 @@ export default async function PortalHomePage() {
     settings,
     profile,
     recentMoodKinds,
+    notifications,
     { data: toolsPendingData },
   ] = await Promise.all([
     fetchAnnouncements(supabase),
@@ -39,6 +41,7 @@ export default async function PortalHomePage() {
     getCachedPortalSettings(),
     fetchOwnProfile(supabase, worker.workerId),
     fetchRecentMoodKinds(supabase, worker.workerId, moodSinceIso),
+    fetchOwnNotifications(supabase, worker.workerId),
     // Folded into the batch (was a separate serial round-trip): tools-pending
     // overlay flag; independent of every other read here.
     supabase.rpc('my_tools_pending'),
@@ -136,6 +139,7 @@ export default async function PortalHomePage() {
       pendingDocs={pendingDocs}
       toolsPending={toolsPending}
       moodPrompt={moodPrompt}
+      notifications={notifications}
     />
   );
 }
