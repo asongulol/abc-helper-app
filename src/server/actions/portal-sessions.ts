@@ -64,6 +64,9 @@ export async function createContractorSession(args: unknown): Promise<ActionResu
       units: 1,
       childInitials,
       eiid,
+      // Owner decision (2026-08-29): child_initials + eiid deliberately replace
+      // the legacy portal's free-text case_ref for contractor entries. case_ref
+      // stays admin/CSV-only.
       caseRef: null,
       notes: notes ?? null,
     });
