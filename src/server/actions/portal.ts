@@ -19,7 +19,12 @@ import {
   updateDocumentReview,
   updateOnboardingProgressStage3,
 } from '@/db/queries/documents';
-import { fetchOwnProfile, fetchPortalSettings, insertMoodCheckin } from '@/db/queries/portal';
+import {
+  dismissNotification,
+  fetchOwnProfile,
+  fetchPortalSettings,
+  insertMoodCheckin,
+} from '@/db/queries/portal';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
@@ -723,6 +728,24 @@ export async function reviewDocument(args: {
       args.note?.trim() ?? null,
     );
 
+    // Tell the contractor the outcome on their portal Home. Best-effort like
+    // logEvent — a failed notification never rolls back the review itself.
+    // (Other portal_notification_kind values have no writer yet; add them at
+    // their own event sites when wanted.)
+    if (reviewStatus === 'approved' || reviewStatus === 'needs_replacement') {
+      const docLabel = doc.kind.replace(/_/g, ' ');
+      const { error: notifyErr } = await svc.from('portal_notifications').insert({
+        worker_id: doc.worker_id,
+        kind: reviewStatus === 'approved' ? 'doc_approved' : 'doc_needs_replacement',
+        title: reviewStatus === 'approved' ? 'Document approved' : 'Document needs replacement',
+        body:
+          reviewStatus === 'approved'
+            ? `Your ${docLabel} was approved.`
+            : `Please re-upload your ${docLabel}${args.note?.trim() ? `: ${args.note.trim()}` : '.'}`,
+      });
+      if (notifyErr) console.error('portal notification failed:', notifyErr.message);
+    }
+
     // An approved/waived UPLOAD fulfills the slot — drop any fileless
     // waived/deferred placeholder so it stops counting as an open follow-up
     // (otherwise the 📌 badge and docs digest keep flagging the old deferral).
@@ -971,6 +994,23 @@ export async function saveMoodCheckin(args: {
     return {
       ok: false,
       error: humanizeError(err, 'Could not save check-in.'),
+    };
+  }
+}
+
+/** Dismiss one of the worker's own portal notifications. RLS
+ * portal_notifications_dismiss scopes the update to worker_id = my_worker_id(),
+ * so no service client and no explicit ownership check are needed. */
+export async function dismissOwnNotification(args: { id: string }): Promise<ActionResult> {
+  await requireWorker();
+  try {
+    const db = await createServerSupabase();
+    await dismissNotification(db, args.id);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: humanizeError(err, 'Could not dismiss notification.'),
     };
   }
 }

@@ -261,9 +261,9 @@ export interface ServicePollResult {
  * queries Wise, and updates payments.status to 'sent' for terminal-success
  * states. Idempotent. Safe to call manually or on a schedule.
  *
- * Note: the cron path (x-cron-secret) is handled by the deployed Deno edge
- * function (supabase/functions/wise-payouts/index.ts). This action covers the
- * on-demand admin-triggered reconcile path only.
+ * Callers: the admin "Check statuses" action (wisePoll) and the scheduled
+ * /api/cron/wise-reconcile route (app-owned since 2026-08-29; the Deno edge
+ * function's cron path was never scheduled in prod).
  *
  * @param onlyDrafts   Default true — restrict to status='draft' (fast + idempotent).
  * @param payPeriodId  Optional scope to a single period.

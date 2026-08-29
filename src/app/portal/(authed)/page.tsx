@@ -4,11 +4,14 @@ import { createServerSupabase } from '@/db/clients/server';
 import {
   fetchAnnouncements,
   fetchOwnDocuments,
+  fetchOwnNotifications,
   fetchOwnPayments,
   fetchOwnProfile,
   fetchOwnTimeEntries,
+  fetchRecentMoodKinds,
 } from '@/db/queries/portal';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { moodPromptFor, parseShiftHM } from '@/lib/portal/mood';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { getCachedPortalSettings } from '@/server/config-cache';
 
@@ -19,6 +22,7 @@ export default async function PortalHomePage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
+  const moodSinceIso = new Date(Date.now() - 16 * 3600 * 1000).toISOString();
   const [
     announcements,
     payments,
@@ -26,6 +30,8 @@ export default async function PortalHomePage() {
     ownDocs,
     settings,
     profile,
+    recentMoodKinds,
+    notifications,
     { data: toolsPendingData },
   ] = await Promise.all([
     fetchAnnouncements(supabase),
@@ -34,6 +40,8 @@ export default async function PortalHomePage() {
     fetchOwnDocuments(supabase, worker.workerId),
     getCachedPortalSettings(),
     fetchOwnProfile(supabase, worker.workerId),
+    fetchRecentMoodKinds(supabase, worker.workerId, moodSinceIso),
+    fetchOwnNotifications(supabase, worker.workerId),
     // Folded into the batch (was a separate serial round-trip): tools-pending
     // overlay flag; independent of every other read here.
     supabase.rpc('my_tools_pending'),
@@ -76,6 +84,21 @@ export default async function PortalHomePage() {
     return { date, activity: a ? Math.round(a.s / a.w) : 0 };
   });
 
+  // Shift mood check-in — which pop-out (if any) is due right now.
+  const phHM = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Manila',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date());
+  const [phH = 0, phM = 0] = phHM.split(':').map(Number);
+  const moodPrompt = moodPromptFor(
+    phH * 60 + phM,
+    parseShiftHM(profile?.shift_start ?? null),
+    parseShiftHM(profile?.shift_end ?? null),
+    recentMoodKinds,
+  );
+
   // Pay timeline.
   const todayManila = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -115,6 +138,8 @@ export default async function PortalHomePage() {
       activity={activity}
       pendingDocs={pendingDocs}
       toolsPending={toolsPending}
+      moodPrompt={moodPrompt}
+      notifications={notifications}
     />
   );
 }

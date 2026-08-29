@@ -144,17 +144,20 @@ export const fetchAnnouncements = async (db: Db) => {
   return data ?? [];
 };
 
-/** Latest mood check-in for the worker (to check if already submitted today). */
-export const fetchLatestMoodCheckin = async (db: Db, workerId: string) => {
+/** Kinds ('start'/'end') of the worker's mood check-ins since `sinceIso` —
+ *  the legacy 16h shift de-dupe lookback (handles overnight US-hours shifts). */
+export const fetchRecentMoodKinds = async (
+  db: Db,
+  workerId: string,
+  sinceIso: string,
+): Promise<string[]> => {
   const { data, error } = await db
     .from('mood_checkins')
-    .select('id, mood, note, kind, created_at')
+    .select('kind')
     .eq('worker_id', workerId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .gte('created_at', sinceIso);
   if (error) throw new Error(`mood_checkins: ${error.message}`);
-  return data;
+  return (data ?? []).map((r) => r.kind ?? '');
 };
 
 /** Worker profile row. */
@@ -162,7 +165,7 @@ export const fetchOwnProfile = async (db: Db, workerId: string) => {
   const { data, error } = await db
     .from('workers')
     .select(
-      'id, first_name, middle_name, last_name, email, work_email, mobile, work_number, work_extension, ph_address, permanent_address, address_landmark, postal_code, date_of_birth, gcash, paymaya, paypal, wise_tag, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, profile_extras, payout_method, status, hire_date',
+      'id, first_name, middle_name, last_name, email, work_email, mobile, work_number, work_extension, ph_address, permanent_address, address_landmark, postal_code, date_of_birth, gcash, paymaya, paypal, wise_tag, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, profile_extras, payout_method, status, hire_date, shift_start, shift_end',
     )
     .eq('id', workerId)
     .maybeSingle();

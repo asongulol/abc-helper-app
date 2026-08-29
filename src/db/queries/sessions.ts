@@ -391,6 +391,25 @@ export const updateSessionsApproval = async (
   if (error) throw new Error(`session approval: ${error.message}`);
 };
 
+/** Delete the worker's OWN session, scoped to `approval='pending'` (portal
+ *  self-service; approved sessions bill, so they're frozen — legacy portal
+ *  del(), portal/index.html ~897). Returns whether a row was removed. */
+export const deleteOwnPendingSession = async (
+  db: Db,
+  workerId: string,
+  id: string,
+): Promise<boolean> => {
+  const { data, error } = await db
+    .from('service_sessions')
+    .delete()
+    .eq('id', id)
+    .eq('worker_id', workerId)
+    .eq('approval', 'pending')
+    .select('id');
+  if (error) throw new Error(`delete own session: ${error.message}`);
+  return (data ?? []).length > 0;
+};
+
 /** Delete a single session (scoped to the client for safety). */
 export const deleteSession = async (db: Db, clientId: string, id: string): Promise<void> => {
   const { error } = await db

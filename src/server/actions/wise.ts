@@ -242,7 +242,7 @@ export async function wiseBatch(
  * Admin: server-side reconcile — flip payments to 'sent' on terminal Wise
  * success. Idempotent. Safe to call repeatedly.
  *
- * Note: the cron path stays in the deployed Deno edge function.
+ * The scheduled path is /api/cron/wise-reconcile (same servicePoll underneath).
  * This covers the on-demand admin-triggered reconcile path.
  */
 export async function wisePoll(): Promise<WiseActionResult<{ updated: number; checked: number }>> {
