@@ -56,6 +56,9 @@ export default async function PortalHomePage() {
       ? (profile.profile_extras as Record<string, unknown>)
       : {};
   const greetName = (worker.firstName || String(extras.nickname ?? '').trim() || '').trim();
+  // Personal motto (profile_extras, editable on the profile's About tab) — shown
+  // as the greeting subtitle in place of the generic time-of-day line.
+  const motto = String(extras.motto ?? '').trim();
 
   // Required onboarding docs the contractor still owes (reminder overlay).
   const onbConfig = (settings.onboardingConfigRaw ?? {}) as {
@@ -140,6 +143,7 @@ export default async function PortalHomePage() {
       toolsPending={toolsPending}
       moodPrompt={moodPrompt}
       notifications={notifications}
+      motto={motto}
     />
   );
 }
