@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useTablist, useToast } from '@/components/ui';
 import { formatPhone, PhoneInput } from '@/components/ui/PhoneInput';
+import { suggestMottos } from '@/lib/portal/motto';
 import { updateOwnProfile } from '@/server/actions/portal';
 
 type Profile = {
@@ -287,7 +288,7 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
       );
     }
     const mirrored = !!f.sameAs && sameAddr;
-    return (
+    const input = (
       <input
         id={f.k}
         type={f.type === 'date' ? 'date' : 'text'}
@@ -296,6 +297,29 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
         placeholder={f.wise ? '@yourtag' : ''}
         onChange={(e) => set(f.k, e.target.value)}
       />
+    );
+    if (f.k !== 'motto') return input;
+    // Default motto suggestions in the language of the contractor's area
+    // (from ph_address; PH-wide default is Tagalog). Tap to prefill — still
+    // free text.
+    return (
+      <>
+        {input}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+          {suggestMottos(profile.ph_address).map((s) => (
+            <button
+              key={s}
+              type="button"
+              className="btn ghost"
+              disabled={isPending}
+              onClick={() => set('motto', s)}
+              style={{ fontSize: 12, padding: '4px 8px' }}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+      </>
     );
   };
 

@@ -28,6 +28,8 @@ interface Props {
   toolsPending: boolean;
   moodPrompt: 'start' | 'end' | null;
   notifications: PortalNotificationRow[];
+  /** Contractor's own motto (profile About tab); replaces the generic greeting line. */
+  motto: string;
 }
 
 const TOOLKIT = [
@@ -102,6 +104,7 @@ export const PortalDashboard = ({
   toolsPending,
   moodPrompt,
   notifications,
+  motto,
 }: Props) => {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
@@ -192,8 +195,11 @@ export const PortalDashboard = ({
             {greetTL}
             {greetName ? `, ${greetName}` : ''} {greetEmoji}
           </h2>
-          <div className="sub" style={{ margin: '1px 0 0' }}>
-            {greetSub}
+          <div
+            className="sub"
+            style={{ margin: '1px 0 0', ...(motto ? { fontStyle: 'italic' } : {}) }}
+          >
+            {motto ? `“${motto}”` : greetSub}
           </div>
         </div>
       </div>
