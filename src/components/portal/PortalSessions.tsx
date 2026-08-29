@@ -5,7 +5,7 @@ import { useState, useTransition } from 'react';
 import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { PortalSessionRow, WorkerClient } from '@/db/queries/sessions';
 import { fmtDate } from '@/lib/format';
-import { createContractorSession } from '@/server/actions/portal-sessions';
+import { createContractorSession, deleteContractorSession } from '@/server/actions/portal-sessions';
 import { EI_SESSION_ITEMS } from '@/types/schemas/sessions';
 
 interface Props {
@@ -66,6 +66,19 @@ export const PortalSessions = ({ clients, sessions, defaultDate }: Props) => {
       setChildInitials('');
       setEiid('');
       setItem(EI_SESSION_ITEMS[0]);
+      router.refresh();
+    });
+  };
+
+  const remove = (id: string) => {
+    if (!window.confirm('Remove this pending session?')) return;
+    startSave(async () => {
+      const res = await deleteContractorSession({ id });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify('Session removed.', { type: 'success' });
       router.refresh();
     });
   };
@@ -177,6 +190,7 @@ export const PortalSessions = ({ clients, sessions, defaultDate }: Props) => {
                   <th scope="col">Child</th>
                   <th scope="col">EIID</th>
                   <th scope="col">Status</th>
+                  <th scope="col" aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
@@ -189,6 +203,18 @@ export const PortalSessions = ({ clients, sessions, defaultDate }: Props) => {
                     <td data-label="EIID">{s.eiid ?? '—'}</td>
                     <td data-label="Status">
                       <Badge tone={STATUS_TONE[s.approval] ?? 'neutral'}>{s.approval}</Badge>
+                    </td>
+                    <td>
+                      {s.approval === 'pending' && (
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          disabled={isSaving}
+                          onClick={() => remove(s.id)}
+                        >
+                          Remove
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

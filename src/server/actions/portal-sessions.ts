@@ -9,11 +9,19 @@
  */
 
 import { createServiceClient } from '@/db/clients/service';
-import { fetchWorkerClients, findSessionOnDate, insertSession } from '@/db/queries/sessions';
+import {
+  deleteOwnPendingSession,
+  fetchWorkerClients,
+  findSessionOnDate,
+  insertSession,
+} from '@/db/queries/sessions';
 import { humanizeError } from '@/lib/errors';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { getCurrentWorker } from '@/server/auth/worker';
-import { CreateContractorSessionSchema } from '@/types/schemas/sessions';
+import {
+  CreateContractorSessionSchema,
+  DeleteContractorSessionSchema,
+} from '@/types/schemas/sessions';
 
 export async function createContractorSession(args: unknown): Promise<ActionResult> {
   const worker = await getCurrentWorker();
@@ -62,5 +70,29 @@ export async function createContractorSession(args: unknown): Promise<ActionResu
     return { ok: true };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Could not submit session.') };
+  }
+}
+
+/** Remove one of the logged-in contractor's OWN still-pending sessions. The
+ *  query is scoped to worker_id + approval='pending', so an approved (billing)
+ *  or someone else's session can never be deleted here. */
+export async function deleteContractorSession(args: unknown): Promise<ActionResult> {
+  const worker = await getCurrentWorker();
+  if (!worker) return { ok: false, error: 'Contractor login required.' };
+
+  const parsed = DeleteContractorSessionSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+
+  try {
+    const removed = await deleteOwnPendingSession(
+      createServiceClient(),
+      worker.workerId,
+      parsed.data.id,
+    );
+    if (!removed) return { ok: false, error: 'Session not found or no longer pending.' };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not remove session.') };
   }
 }

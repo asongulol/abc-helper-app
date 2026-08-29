@@ -74,6 +74,10 @@ export const CreateContractorSessionSchema = z.object({
 });
 export type CreateContractorSessionInput = z.infer<typeof CreateContractorSessionSchema>;
 
+/** Remove one of the CONTRACTOR's own still-PENDING sessions. */
+export const DeleteContractorSessionSchema = z.object({ id: uuid() });
+export type DeleteContractorSessionInput = z.infer<typeof DeleteContractorSessionSchema>;
+
 /** Bulk-import sessions (admin CSV). Each row carries a roster-resolved workerId. */
 export const ImportSessionRowSchema = z.object({
   workerId: uuid(),
