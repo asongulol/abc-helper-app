@@ -64,7 +64,8 @@ for the full prepare-now / flip-later runbook. At the flip, between pay periods:
 5. Announce `3a.abbilabs.com` to users. **Single-own the two digest crons** in this
    window: remove the legacy `documents-expiry-check` / `hiring-docs-review-check`
    crons and schedule the new `/api/cron/{doc-expiry,hiring-review}` digests. Leave
-   the Hubstaff/Wise crons legacy-owned.
+   the Hubstaff cron legacy-owned. *(Done 2026-08-29 — both digests now hit the app;
+   Wise reconcile is also app-owned via `/api/cron/wise-reconcile`, see migration 40.)*
 6. Keep the old app deployed at `payroll.*` / `portal.*` as the rollback until **two
    full clean pay periods** run on the new app.
 
