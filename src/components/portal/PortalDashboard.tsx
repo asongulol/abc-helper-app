@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { DocReminderOverlay } from './DocReminderOverlay';
 import { FromNewYork } from './FromNewYork';
+import { MoodCheckinOverlay } from './MoodCheckinOverlay';
 import { type HomePay, PortalPayActivity } from './PortalPayActivity';
 import { ToolsPopup } from './ToolsPopup';
 
@@ -22,6 +23,7 @@ interface Props {
   activity: { date: string; activity: number }[];
   pendingDocs: string[];
   toolsPending: boolean;
+  moodPrompt: 'start' | 'end' | null;
 }
 
 const TOOLKIT = [
@@ -94,9 +96,14 @@ export const PortalDashboard = ({
   activity,
   pendingDocs,
   toolsPending,
+  moodPrompt,
 }: Props) => {
   const [mounted, setMounted] = useState(false);
   const [, tick] = useState(0);
+  // Legacy sequencing: the doc reminder waits until the mood check is decided
+  // (answered or none due), so the two overlays never stack.
+  const [moodDone, setMoodDone] = useState(false);
+  const markMoodDone = useCallback(() => setMoodDone(true), []);
 
   useEffect(() => {
     setMounted(true);
@@ -151,7 +158,8 @@ export const PortalDashboard = ({
     // left margin (each .wrap re-applies margin-left), shoving content far right.
     <>
       <ToolsPopup pending={toolsPending} />
-      <DocReminderOverlay docs={pendingDocs} />
+      <MoodCheckinOverlay prompt={moodPrompt} onDone={markMoodDone} />
+      {moodDone && <DocReminderOverlay docs={pendingDocs} />}
 
       {/* PHT clock + Kumusta greeting */}
       <div style={{ margin: '8px 2px 2px', fontSize: 13, color: 'var(--muted)' }}>
