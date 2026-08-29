@@ -167,7 +167,10 @@ export const FromNewYork = () => {
   useEffect(() => {
     setMounted(true);
     try {
-      const stored = Number(sessionStorage.getItem('nyc_fact'));
+      // NB: getItem returns null for a missing key and Number(null) is 0 (not
+      // NaN) — coercing before the null check pinned everyone to fact #0.
+      const raw = sessionStorage.getItem('nyc_fact');
+      const stored = raw == null ? Number.NaN : Number(raw);
       const idx =
         Number.isInteger(stored) && stored >= 0 && stored < NYC_TRIVIA.length
           ? stored
