@@ -158,9 +158,25 @@ export const FromNewYork = () => {
     weather_code: number;
   } | null>(null);
   const [forcedWx, setForcedWx] = useState<string | null>(null);
+  // Milo's fact rotates per SESSION, not per day: each new login/visit draws a
+  // random fact once and keeps it for the session (sessionStorage), so it stays
+  // stable across in-session navigations. Resolved after mount (SSR fallback is
+  // the old daily pick) to avoid a hydration mismatch.
+  const [factIdx, setFactIdx] = useState<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
+    try {
+      const stored = Number(sessionStorage.getItem('nyc_fact'));
+      const idx =
+        Number.isInteger(stored) && stored >= 0 && stored < NYC_TRIVIA.length
+          ? stored
+          : Math.floor(Math.random() * NYC_TRIVIA.length);
+      sessionStorage.setItem('nyc_fact', String(idx));
+      setFactIdx(idx);
+    } catch {
+      /* storage blocked — keep the daily fallback */
+    }
     const id = setInterval(() => tick((t) => t + 1), 20000);
     return () => clearInterval(id);
   }, []);
@@ -209,7 +225,7 @@ export const FromNewYork = () => {
   const doy = Math.floor(
     (Date.UTC(yy ?? 2026, (mm ?? 1) - 1, dd ?? 1) - Date.UTC(yy ?? 2026, 0, 1)) / 86400000,
   );
-  const fact = NYC_TRIVIA[doy % NYC_TRIVIA.length];
+  const fact = NYC_TRIVIA[factIdx ?? doy % NYC_TRIVIA.length];
   const forced = forcedWx ? FORCE_WX[forcedWx] : null;
   const fcode = forced ? forced.code : wx?.weather_code;
   const ftemp = forced ? forced.temp : wx?.temperature_2m;

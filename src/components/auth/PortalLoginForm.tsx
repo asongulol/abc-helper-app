@@ -43,6 +43,12 @@ export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
       setBusy(false);
       return;
     }
+    // Fresh login → Milo redraws his NYC fact (FromNewYork keeps it per session).
+    try {
+      sessionStorage.removeItem('nyc_fact');
+    } catch {
+      /* ignore */
+    }
     window.location.href = postLoginDest();
   };
 
