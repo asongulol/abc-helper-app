@@ -2,8 +2,18 @@
 
 > **Status:** slice 1 (schema + reads + stamps, §6.1) merged 2026-09-04 (PR #153); migration 44
 > applied to prod 2026-09-04. Slice 2 (draft / send / void + admin UI, §6.2) merged 2026-09-04
-> (PR #154). Slice 3 (portal sign + frozen print + history, §6.3) built 2026-09-04 on
-> `feat/contract-versions-3-sign-print-history`. Slices 4–5 not started.
+> (PR #154). Slice 3 (portal sign + frozen print + history, §6.3) merged 2026-09-04 (PR #155).
+> Slice 4 (countersign write-through + rate guard, §6.4) built 2026-09-04 on
+> `feat/contract-versions-4-countersign`. Slice 5 (docs) not started.
+>
+> Slice 4 deviations from §4 below: the prior version is matched by status (whatever is
+> `active` for the engagement) rather than by `supersedes_id`, so the one-active index can never
+> fire; an `ended` prior (rehire) keeps its termination date instead of being re-stamped
+> `superseded` as of `effective_from − 1` — the contractor was not under contract in between.
+> `pay_basis` is not written (a version has no such column). Step 5 (`set_tools_requested`) is
+> skipped: `clearWorkerTools` wipes only the credentials, never `requested`, so the old request
+> is still on file. The rate card keeps the editor for the OWNER under a versioned contract, as
+> the correction tool decision 8 allows; other admins see only "New contract".
 >
 > Slice 3 deviations from the text below: `signContractVersion` lives in
 > `src/server/actions/contracts.ts` with the other status transitions, not in `portal.ts`; the

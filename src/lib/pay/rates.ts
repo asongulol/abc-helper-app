@@ -12,7 +12,7 @@ import { type Centavos, centavos, majorToMinor } from '@/lib/money';
 const DAY_MS = 86_400_000;
 
 /** The ISO date one day before `date` (UTC-day based). */
-const dayBefore = (date: string): string => utcMsToIso(isoToUtcMs(date) - DAY_MS);
+export const dayBefore = (date: string): string => utcMsToIso(isoToUtcMs(date) - DAY_MS);
 
 export type RateRow = {
   workerId: string;

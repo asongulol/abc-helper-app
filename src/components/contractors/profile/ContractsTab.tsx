@@ -4,7 +4,7 @@
  * Contracts tab — the contract of record and every version of it
  * (docs/CONTRACT-VERSIONS-PLAN.md §5). Self-contained like RateCard: owns its
  * data and its actions, so it sits outside the profile form. Sign lives in the
- * portal; countersign arrives with slice 4.
+ * portal; countersign here is what writes the rate and (re)opens the engagement.
  */
 
 import { useCallback, useEffect, useState, useTransition } from 'react';
@@ -18,6 +18,7 @@ import type { RosterWorker } from '@/db/queries/workers';
 import { nextPeriod } from '@/lib/dates/periods';
 import { fmtDate, money } from '@/lib/format';
 import {
+  countersignContractVersion,
   draftContractVersion,
   listContractVersions,
   sendContractVersion,
@@ -203,6 +204,31 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
     });
   };
 
+  const countersign = (v: ContractVersion) => {
+    if (
+      !window.confirm(
+        `Countersign version ${v.version}? This sets the rate to ${money(v.ratePhp)} / period from ${fmtDate(
+          v.effectiveFrom,
+        )}${rehire ? ` and reopens the engagement from ${fmtDate(v.startDate)}` : ''}.`,
+      )
+    )
+      return;
+    startBusy(async () => {
+      const res = await countersignContractVersion({ versionId: v.id });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      const base = res.data.rehired
+        ? `Version ${v.version} countersigned — engagement reopened.`
+        : `Version ${v.version} is now the contract of record.`;
+      notify(res.data.emailSent ? base : `${base} The email could not be sent.`, {
+        type: res.data.emailSent ? 'success' : 'warn',
+      });
+      await load();
+    });
+  };
+
   const update = <K extends keyof DraftForm>(key: K, value: DraftForm[K]) =>
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
@@ -292,6 +318,16 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                   Send for signature
                 </button>
               </>
+            )}
+            {inFlight?.status === 'signed' && (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={busy}
+                onClick={() => countersign(inFlight)}
+              >
+                Countersign
+              </button>
             )}
             {inFlight && (
               <button
