@@ -203,7 +203,7 @@ export const runHiringReviewCheck = async (
               '#3730a3',
             )
           : ''
-      }<p style="color:#666;font-size:12px">Open the HR &amp; Payroll app → Hiring &amp; Onboarding to review.</p>`;
+      }<p style="color:#666;font-size:12px">Open the HR &amp; Payroll app → Onboarding &amp; contracts to review.</p>`;
 
       const subject = `Hiring docs to review: ${pendingDocs} waiting${deferredDocs ? `, ${deferredDocs} follow-up` : ''}`;
       const result = await sendEmail({ to, subject, html });

@@ -200,6 +200,12 @@ export const fetchAttentionCounts = cache(
               .select('worker_id, agreement_kind')
               .eq('status', 'signed'),
             db.from('onboarding_agreements').select('worker_id, agreement_kind, countersigned_at'),
+            // Contract versions signed by the contractor, waiting on an admin (plan §7).
+            db
+              .from('contract_versions')
+              .select('id', { count: 'exact', head: true })
+              .eq('company_id', companyId)
+              .eq('status', 'signed'),
           ])
         : null,
       isOwner
@@ -261,15 +267,15 @@ export const fetchAttentionCounts = cache(
     // kind) pair. Names/kinds only — never signature payloads or IPs (§12 PHI).
     let countersignPending = 0;
     if (countersign) {
-      const [sigRes, agrRes] = countersign;
+      const [sigRes, agrRes, versionsRes] = countersign;
       const signedOff = new Set(
         (agrRes.data ?? [])
           .filter((a) => a.countersigned_at != null)
           .map((a) => `${a.worker_id}:${a.agreement_kind}`),
       );
-      countersignPending = (sigRes.data ?? []).filter(
-        (s) => !signedOff.has(`${s.worker_id}:${s.agreement_kind}`),
-      ).length;
+      countersignPending =
+        (sigRes.data ?? []).filter((s) => !signedOff.has(`${s.worker_id}:${s.agreement_kind}`))
+          .length + (versionsRes.count ?? 0);
     }
 
     const arOutstandingUsd = (invoices?.data ?? []).reduce(

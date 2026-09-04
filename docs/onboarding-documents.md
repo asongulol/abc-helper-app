@@ -30,6 +30,23 @@ single stage, `markOnboardingComplete()` forces completion, `resetOnboarding()` 
 stage 1. `seedOnboardingProgress()` (`src/db/queries/onboarding.ts`) creates the initial row
 when a portal login is provisioned.
 
+## The queue (`/onboarding`)
+
+**Onboarding & contracts** is the one place to chase signatures and documents, in two tabs that
+each count the contractors with at least one open item:
+
+- **New hires** — `onboarding_progress` rows still in progress (stage 1–3, or reopened). "Show
+  completed" reveals the rest.
+- **Current team** — every active contractor whose onboarding is not in progress and who still
+  owes something: a contract drafted / sent / signed-awaiting-countersign, no IC agreement in the
+  app (the **Onboard current** wizard is their action when they have no portal login), or a
+  document pending review / needing replacement / deferred and due / expired or expiring within
+  30 days. One row per contractor; the row opens the contractor profile. `deriveOpenItems()`
+  (`src/lib/onboarding/current-team.ts`) is the pure rule, fed by `fetchCurrentTeam()`.
+
+The Overview "Countersign N" duty counts contractor-signed contract versions alongside signed
+agreements. `/onboarding?tab=team` deep-links to the second tab.
+
 ## Agreements
 
 Agreement bodies are templates with `{{token}}` placeholders. Merge logic is pure and

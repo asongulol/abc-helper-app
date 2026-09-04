@@ -6,10 +6,12 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { deriveOpenItems, type OpenItem, type TeamDoc } from '@/lib/onboarding/current-team';
 import { decryptIfNeeded } from '@/server/crypto';
 import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
+type ContractVersionStatus = Database['public']['Enums']['contract_version_status'];
 
 export type OnboardingProgressRow = {
   workerId: string;
@@ -432,4 +434,116 @@ export const seedAgreementPrefill = async (
     .from('onboarding_agreements')
     .upsert(rows, { onConflict: 'worker_id,agreement_kind', ignoreDuplicates: true });
   if (error) throw new Error(`seed onboarding_agreements: ${error.message}`);
+};
+
+export type CurrentTeamRow = {
+  workerId: string;
+  workerName: string;
+  email: string | null;
+  /** No portal login yet → the Onboard Current wizard is their action, not a reminder. */
+  hasLogin: boolean;
+  items: OpenItem[];
+};
+
+/**
+ * The Current team queue (docs/CONTRACT-VERSIONS-PLAN.md §7.4): every ACTIVE
+ * contractor at the company whose onboarding is not in progress, with what they
+ * still owe — an in-flight contract, no IC agreement in the app, or a document
+ * to chase. Only contractors with ≥1 open item come back. Service client:
+ * contractor_logins is self-RLS and deferred hiring docs carry a NULL company_id.
+ */
+export const fetchCurrentTeam = async (
+  svc: Db,
+  companyId: string,
+  today: string,
+): Promise<CurrentTeamRow[]> => {
+  const { data: links, error } = await svc
+    .from('worker_companies')
+    .select('worker_id, workers!inner(first_name, middle_name, last_name, email, status)')
+    .eq('company_id', companyId)
+    .eq('status', 'active')
+    .eq('workers.status', 'active');
+  if (error) throw new Error(`current team: ${error.message}`);
+  const ids = (links ?? []).map((l) => l.worker_id);
+  if (ids.length === 0) return [];
+
+  const [versions, sigs, logins, docs, progress] = await Promise.all([
+    svc
+      .from('contract_versions')
+      .select('worker_id, status, sent_at')
+      .eq('company_id', companyId)
+      .in('status', ['draft', 'sent', 'signed', 'active'])
+      .in('worker_id', ids),
+    svc
+      .from('onboarding_signatures')
+      .select('worker_id')
+      .eq('agreement_kind', 'ic_agreement')
+      .eq('status', 'signed')
+      .in('worker_id', ids),
+    svc.from('contractor_logins').select('worker_id').in('worker_id', ids),
+    svc
+      .from('documents')
+      .select(
+        'id, worker_id, kind, side, review_status, storage_path, expires_on, defer_until, created_at',
+      )
+      .in('worker_id', ids),
+    svc
+      .from('onboarding_progress')
+      .select('worker_id, current_stage, completed_at')
+      .in('worker_id', ids),
+  ]);
+  for (const r of [versions, sigs, logins, docs, progress])
+    if (r.error) throw new Error(`current team: ${r.error.message}`);
+
+  // Mid-onboarding contractors are the New hires tab's rows, never this one's.
+  const inProgress = new Set(
+    (progress.data ?? [])
+      .filter((p) => p.current_stage !== 'complete' || !p.completed_at)
+      .map((p) => p.worker_id),
+  );
+  // One in flight at most per engagement (partial unique index); it wins over active.
+  const versionBy = new Map<string, { status: ContractVersionStatus; sentAt: string | null }>();
+  for (const v of versions.data ?? []) {
+    const cur = versionBy.get(v.worker_id);
+    if (!cur || cur.status === 'active')
+      versionBy.set(v.worker_id, { status: v.status, sentAt: v.sent_at });
+  }
+  const signed = new Set((sigs.data ?? []).map((s) => s.worker_id));
+  const hasLogin = new Set((logins.data ?? []).map((l) => l.worker_id));
+  const docsBy = new Map<string, TeamDoc[]>();
+  for (const d of docs.data ?? []) {
+    const list = docsBy.get(d.worker_id) ?? [];
+    list.push({
+      id: d.id,
+      kind: d.kind,
+      side: d.side,
+      reviewStatus: d.review_status,
+      storagePath: d.storage_path,
+      expiresOn: d.expires_on,
+      deferUntil: d.defer_until,
+      createdAt: d.created_at,
+    });
+    docsBy.set(d.worker_id, list);
+  }
+
+  return (links ?? [])
+    .filter((l) => !inProgress.has(l.worker_id))
+    .map((l) => ({
+      workerId: l.worker_id,
+      workerName: [l.workers.first_name, l.workers.middle_name, l.workers.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim(),
+      email: l.workers.email,
+      hasLogin: hasLogin.has(l.worker_id),
+      items: deriveOpenItems(
+        {
+          version: versionBy.get(l.worker_id) ?? null,
+          hasIcSignature: signed.has(l.worker_id),
+          docs: docsBy.get(l.worker_id) ?? [],
+        },
+        today,
+      ),
+    }))
+    .filter((r) => r.items.length > 0);
 };

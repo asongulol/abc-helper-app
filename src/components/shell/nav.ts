@@ -44,7 +44,7 @@ export const NAV_GROUPS: ReadonlyArray<NavGroup> = [
     label: 'Manage Team',
     items: [
       { href: '/contractors', label: 'Contractors', icon: '👥' },
-      { href: '/onboarding', label: 'Hiring & Onboarding', icon: '🧭' },
+      { href: '/onboarding', label: 'Onboarding & contracts', icon: '🧭' },
       { href: '/documents', label: 'Documents', icon: '📄' },
       { href: '/coverage', label: 'Coverage', icon: '📉' },
     ],
