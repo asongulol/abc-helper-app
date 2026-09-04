@@ -19,14 +19,13 @@ import { endEngagement } from '@/db/queries/workers';
 import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
 import { getCurrentAdmin } from '@/server/auth/admin';
+import { portalUrl, trySend } from '@/server/email/send';
 import {
   DEFAULT_HIRE_EMAILS,
   escapeHtml,
   mergeTemplate,
   toolsBlock,
 } from '@/server/email/templates';
-import { sendEmail } from '@/server/email/transport';
-import { env } from '@/server/env';
 
 /**
  * Result of a server action. When `T` is `undefined` (the default) the success
@@ -45,15 +44,6 @@ const genTempPassword = (): string =>
 // ---------------------------------------------------------------------------
 // Internal email helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Build the portal URL for template merge vars. The app is single-domain with
- * path-based routing (admin at `/`, contractor portal at `/portal`), so the
- * link must carry the `/portal` path — a bare-origin link would route a
- * logged-out contractor to the ADMIN login. APP_URL stays a clean origin.
- */
-const portalUrl = (): string =>
-  `${(env.APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')}/portal`;
 
 /**
  * Look up a worker's display name from the service client.
@@ -75,28 +65,6 @@ const fetchWorkerName = async (workerId: string): Promise<string> => {
   } catch {
     return 'there';
   }
-};
-
-/**
- * Best-effort email send. Never throws; logs 'email_failed' on failure.
- * Returns whether the email actually went out so callers can tell the admin —
- * a silent no-op (unset SMTP creds) looks identical to success otherwise.
- */
-const trySend = async (
-  to: string,
-  subject: string,
-  html: string,
-  context: string,
-): Promise<boolean> => {
-  const result = await sendEmail({ to, subject, html });
-  if (!result.ok) {
-    await logEvent({
-      action: 'email_failed',
-      entity: to,
-      detail: { context, error: result.error ?? 'unknown' },
-    }).catch(() => {});
-  }
-  return result.ok;
 };
 
 /**

@@ -85,7 +85,7 @@ export const EditableWorkerStatusSchema = z.enum(['active', 'inactive']);
 
 /** Today in Manila — the eastern-most timezone this app is used from, so a UTC
  *  server never rejects a browser's own "today" as tomorrow. */
-const todayManila = (): string =>
+export const todayManila = (): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
 
 /**

@@ -4,6 +4,7 @@ import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import { listAdmins } from '@/db/queries/admins';
 import { listAnnouncementsAll } from '@/db/queries/config';
+import { fetchAwaitingSignature } from '@/db/queries/contracts';
 import { fetchRates } from '@/db/queries/payroll';
 import {
   fetchRoster,
@@ -33,13 +34,15 @@ export default async function ContractorsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const db = await createServerSupabase();
 
-  const [fullRoster, allRates, admins, announcements, selectedClientIds] = await Promise.all([
-    fetchRoster(db, companyId),
-    fetchRates(db, companyId),
-    listAdmins(db),
-    listAnnouncementsAll(db),
-    getSelectedClientIds(),
-  ]);
+  const [fullRoster, allRates, admins, announcements, selectedClientIds, awaitingSignature] =
+    await Promise.all([
+      fetchRoster(db, companyId),
+      fetchRates(db, companyId),
+      listAdmins(db),
+      listAnnouncementsAll(db),
+      getSelectedClientIds(),
+      fetchAwaitingSignature(db, companyId),
+    ]);
   // Header Client filter: keep only workers assigned to a selected client.
   const roster =
     selectedClientIds.length === 0
@@ -88,6 +91,7 @@ export default async function ContractorsPage() {
       companies={companies}
       announcements={announcements}
       photoUrlByWorker={photoUrlByWorker}
+      awaitingSignature={awaitingSignature}
     />
   );
 }

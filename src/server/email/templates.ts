@@ -9,6 +9,8 @@
  *   credentials  → {{name}} {{portal_url}} {{email}} {{password}}
  *   tools        → {{name}} {{portal_url}} {{tools_block}}
  *   withdraw     → {{name}}
+ *   contract_review        → {{name}} {{portal_url}} {{version}} {{effective_from}}
+ *   contract_countersigned → {{name}} {{print_url}} {{version}} {{effective_from}}
  */
 
 // ---------------------------------------------------------------------------
@@ -80,6 +82,10 @@ export interface HireEmailConfig {
   credentials: EmailTemplate;
   tools: EmailTemplate;
   withdraw: EmailTemplate;
+  /** A new contract version is out for signature (docs/CONTRACT-VERSIONS-PLAN.md §3, send). */
+  contract_review: EmailTemplate;
+  /** A version was countersigned and is now the contract of record (§4 step 6). */
+  contract_countersigned: EmailTemplate;
 }
 
 export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
@@ -140,6 +146,29 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
       '<p>After further review we won’t be moving forward with onboarding at this time, and your contractor portal access has been deactivated.</p>',
       '<p>We’re grateful for the opportunity to have connected, and we wish you all the best. If anything changes on our side, we’ll be in touch.</p>',
       '<p>Warm regards,<br>— Aaron Anderson E.H.S. LLC</p>',
+    ].join('\n'),
+  },
+  // Sent by sendContractVersion: a new version of the IC agreement is waiting
+  // in the portal. The prior agreement stays in force until countersign.
+  contract_review: {
+    subject: 'Your updated Aaron Anderson E.H.S. LLC contractor agreement is ready to sign',
+    html: [
+      '<p>Hi {{name}},</p>',
+      '<p>A new version of your Independent Contractor Agreement (version {{version}}) is ready for your review and signature. The new terms take effect on <b>{{effective_from}}</b>.</p>',
+      '<p>Please sign in to the contractor portal, read the agreement through to the end, and sign it:</p>',
+      '<p><a href="{{portal_url}}" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Review and sign</a></p>',
+      '<p>Your current agreement stays in force until the new one is countersigned. Questions? Just reply to this email.</p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
+    ].join('\n'),
+  },
+  // Sent at countersign: the version is now the contract of record.
+  contract_countersigned: {
+    subject: 'Your Aaron Anderson E.H.S. LLC contractor agreement is countersigned',
+    html: [
+      '<p>Hi {{name}},</p>',
+      '<p>Version {{version}} of your Independent Contractor Agreement has been countersigned and is now your agreement of record, effective <b>{{effective_from}}</b>.</p>',
+      '<p>You can view or print your signed copy anytime: <a href="{{print_url}}">{{print_url}}</a></p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },
 };

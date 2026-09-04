@@ -1,6 +1,7 @@
 'use client';
 
 import type { RosterWorker } from '@/db/queries/workers';
+import { ContractsTab } from './ContractsTab';
 import { DocumentsTab } from './DocumentsTab';
 import { PayTab } from './PayTab';
 import { PersonalTab } from './PersonalTab';
@@ -95,6 +96,11 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [],
           onSubmit={p.handleSave}
           panelProps={tablist.panelProps()}
         />
+      )}
+
+      {/* ─── Contracts tab ─── */}
+      {activeTab === 'contracts' && (
+        <ContractsTab worker={worker} companyId={companyId} panelProps={tablist.panelProps()} />
       )}
 
       {/* ─── Personal / HR tab ─── */}

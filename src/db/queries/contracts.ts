@@ -193,3 +193,30 @@ export const contractOfRecord = async (
     docSha256: signature.data?.doc_sha256 ?? null,
   };
 };
+
+/** One version by id, whatever engagement it belongs to. Null when it doesn't exist. */
+export const fetchContractVersion = async (db: Db, id: string): Promise<ContractVersion | null> => {
+  const { data, error } = await db.from('contract_versions').select('*').eq('id', id).maybeSingle();
+  if (error) throw new Error(`contract_versions: ${error.message}`);
+  return data ? mapVersion(data) : null;
+};
+
+/**
+ * worker_id → sent_at for every version out for signature at one company —
+ * the roster's "Awaiting signature · N days" badge. One row per worker at most
+ * (the one-in-flight index).
+ */
+export const fetchAwaitingSignature = async (
+  db: Db,
+  companyId: string,
+): Promise<Record<string, string>> => {
+  const { data, error } = await db
+    .from('contract_versions')
+    .select('worker_id, sent_at')
+    .eq('company_id', companyId)
+    .eq('status', 'sent');
+  if (error) throw new Error(`contract_versions: ${error.message}`);
+  const out: Record<string, string> = {};
+  for (const r of data ?? []) if (r.sent_at) out[r.worker_id] = r.sent_at;
+  return out;
+};

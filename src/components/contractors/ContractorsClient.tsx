@@ -53,6 +53,8 @@ type Props = {
   announcements: AnnouncementRow[];
   /** Short-lived signed avatar URLs by workerId; absent → initials fallback. */
   photoUrlByWorker: Record<string, string>;
+  /** workerId → sent_at of a contract version out for signature (the roster badge). */
+  awaitingSignature: Record<string, string>;
 };
 
 type RowShape = RosterWorker & {
@@ -85,6 +87,8 @@ export function ContractorsClient({
   companies,
   announcements,
   photoUrlByWorker,
+  awaitingSignature,
+  today,
 }: Props) {
   const { notify } = useToast();
   const router = useRouter();
@@ -111,7 +115,11 @@ export function ContractorsClient({
 
   const profileHref = (workerId: string) => `/contractors/${workerId}`;
 
-  const visibleRows = showInactive ? rows : rows.filter((r) => r._statusLabel === 'active');
+  // A departed contractor with a rehire contract out for signature stays visible:
+  // the badge below is the only place the wait shows.
+  const visibleRows = showInactive
+    ? rows
+    : rows.filter((r) => r._statusLabel === 'active' || r.workerId in awaitingSignature);
   const inactiveCount = rows.filter((r) => r._statusLabel !== 'active').length;
 
   function refreshRow(updated: RosterWorker) {
@@ -278,9 +286,22 @@ export function ContractorsClient({
       label: 'Status',
       sortable: true,
       accessor: (r) => r._statusLabel,
-      render: (r) => (
-        <Badge tone={r._statusLabel === 'active' ? 'good' : 'neutral'}>{r._statusLabel}</Badge>
-      ),
+      render: (r) => {
+        const sentAt = awaitingSignature[r.workerId];
+        return (
+          <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+            <Badge tone={r._statusLabel === 'active' ? 'good' : 'neutral'}>{r._statusLabel}</Badge>
+            {sentAt && (
+              <Badge
+                tone="warn"
+                title={`Contract sent ${sentAt.slice(0, 10)} — see the Contracts tab`}
+              >
+                Awaiting signature · {daysSince(sentAt, today)}d
+              </Badge>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: '_actions',
@@ -502,6 +523,11 @@ export function ContractorsClient({
       )}
     </>
   );
+}
+
+/** Whole days between an ISO timestamp and today's ISO date (never negative). */
+function daysSince(iso: string, today: string): number {
+  return Math.max(0, Math.floor((Date.parse(today) - Date.parse(iso)) / 86_400_000));
 }
 
 function isActive(w: RosterWorker): boolean {
