@@ -4,9 +4,11 @@
 > applied to prod 2026-09-04. Slice 2 (draft / send / void + admin UI, §6.2) merged 2026-09-04
 > (PR #154). Slice 3 (portal sign + frozen print + history, §6.3) merged 2026-09-04 (PR #155).
 > Slice 4 (countersign write-through + rate guard, §6.4) merged 2026-09-04 (PR #156). Slice 4b
-> (backpay for a backdated effective date, §4b below) built 2026-09-04 on
-> `feat/contract-versions-4b-backpay` (PR #157); migration 45 (basis CHECK + 'backpay') applied
-> to prod 2026-09-04. Slice 5 (docs) not started.
+> (backpay for a backdated effective date, §4b below) merged 2026-09-04 (PR #157); migration 45
+> (basis CHECK + 'backpay') applied to prod 2026-09-04. Slice 5 (docs) done 2026-09-04 — the
+> feature is documented in [Onboarding & documents](./onboarding-documents.md#contract-versions),
+> [Data model](./data-model.md#contract-versions), [Contractor portal](./portal.md#contracts) and
+> the server-actions reference. **All slices complete.**
 >
 > Slice 4 deviations from §4 below: the prior version is matched by status (whatever is
 > `active` for the engagement) rather than by `supersedes_id`, so the one-active index can never

@@ -113,7 +113,7 @@ src/
     auth/callback/          OAuth callback (SSO domain gate)
     login/, portal/login/   Public sign-in pages
   server/
-    actions/                'use server' mutations — the app's "API" (23 files)
+    actions/                'use server' mutations — the app's "API" (27 files)
     auth/                   Session resolvers + SSO domain allowlist
     <domain>/               Service orchestration (payroll, hubstaff, wise, documents, …)
     crypto/                 PHI envelope encryption (local key or AWS KMS)

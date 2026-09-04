@@ -39,7 +39,9 @@ XSS-hardened in `src/lib/agreements/merge.ts`:
 - Prefill values are staged on `onboarding_agreements` by `editAgreementPrefill()`
   (`src/server/actions/onboarding.ts`): `f_position`, `f_rate` (semi-monthly), `f_start_date`,
   `f_company_name`, `f_employment_type`, `f_hours_per_week`, `f_schedule`.
-  `monthlyFromPeriod()` derives the monthly figure (× 2) for display.
+  `monthlyFromPeriod()` derives the monthly figure (× 2) for display. This is the **version 1**
+  IC agreement only; any later change to a rendered term is a new
+  [contract version](#contract-versions), never an edit of a signed document.
 - Drawn signatures are validated on two paths: `signAgreement()` checks an inline
   `data:image/(png|jpe?g|webp);base64,…` regex with a **1 MB** cap; `safeSigImg()`
   (`src/lib/agreements/merge.ts`, ≤ ~1.4 MB, no quotes/`<`) is the **render-time** XSS guard used
@@ -56,6 +58,67 @@ XSS-hardened in `src/lib/agreements/merge.ts`:
    **`can_countersign`** flag (`admin_users.can_countersign` → `CurrentAdmin.canCountersign`),
    the contractor must have already signed, and once countersigned it's immutable. If one admin
    is assigned as countersigner, only that admin may complete it.
+
+## Contract versions {#contract-versions}
+
+Rehiring a former contractor, changing a current contractor's rate or terms, and re-issuing an
+agreement are one feature: a **new version of the IC agreement** that the contractor signs and an
+admin countersigns. The signed document, the `worker_companies` row and the effective-dated rate
+are one unit — none changes without the others. Decisions and history: the
+[Contract versions plan](./CONTRACT-VERSIONS-PLAN.md). Only the IC agreement is versioned;
+non-compete, NDA and BAA stay once-per-worker.
+
+```
+draft ──send──▶ sent ──sign──▶ signed ──countersign──▶ active ──▶ superseded (next countersign)
+  │              │               │                                └─▶ ended     (termination)
+  └──────────────┴───────────────┴── void (admin only; a signature on it → status 'superseded')
+```
+
+Rows live in `contract_versions` (see [Data model](./data-model.md#contract-versions)); every
+current engagement's **version 1 is a read-through** of the legacy `ic_agreement` row + its
+`doc_version='1'` signature, so rows start at 2. Actions in `src/server/actions/contracts.ts`
+(all admin actions require `can_countersign` + company scope; Zod schemas in
+`src/types/schemas/contracts.ts`):
+
+| Step | Action | What happens |
+|---|---|---|
+| Draft | `draftContractVersion()` | Insert prefilled from `contractOfRecord()`; `effective_from` defaults to the next period start. A draft is edited in place (drafts are free). Refused while a version is `sent`/`signed`. |
+| Send | `sendContractVersion()` | Freezes the document: `renderAgreementParts`-style merge of **today's** template + the version's terms + one merge line ("takes effect on X and supersedes the agreement dated Y") → `rendered_body`, `doc_sha256`. Guarantees a portal login (`createPortalLogin` if none, `restorePortalLogin` if revoked), emails `contract_review`. The engagement stays `ended` on a rehire until countersign. |
+| Sign | `signContractVersion()` (contractor, `requireWorker`) | Same scroll-to-end + typed/drawn contract as `signAgreement()`. Inserts an `onboarding_signatures` row with `doc_version=String(N)` and the frozen `doc_sha256`; PHI encrypted as usual. A second sign **errors** (plain insert, not an ignore-duplicates upsert). |
+| Countersign | `countersignContractVersion()` | The "one unit" write, sequential with `hireContractor`-style undo-in-reverse rollback: (1) `executeRateUpsert` at `effective_from` (the planner closes the prior open rate the day before), (2) `worker_companies` contract/hours/role — a rehire reopens the link and the worker from `start_date` (**not** `reactivateWorkerLink`, which would reopen the old rate), (3) the `active` prior → `superseded`, `ended_on = effective_from − 1` (an `ended` prior keeps its termination date), (4) this version → `active` + `countersigned_*`, (5) `contract_countersigned` email with the portal print link. |
+| Void | `voidContractVersion()` | Any in-flight version. A signature on it becomes `superseded`. Re-revokes the login when the worker is `ended` and fully paid — the same predicate as the nightly sunset sweep. |
+
+**What else moves with a version**
+
+- **Termination** (`endEngagement`, under both `terminateContractor` and `endAssignment`) stamps
+  the `active` version `ended` with `ended_on = last day`. No document, no signature.
+- **Rate corrections** (`saveRate`): once a versioned contract is `active`, the editor is
+  **owner-only** and the amount must equal the contract's `rate_php` — it fixes an effective
+  date, never the amount. "Change the rate" means a new contract. Engagements still on v1 keep the
+  free editor; the profile's rate card shows **New contract** instead.
+- **Portal access exceptions**: the nightly `sunsetPortalLogins` sweep and the portal resolver
+  (`src/server/auth/worker.ts`) both keep a departed, fully-paid contractor's login alive while a
+  version is `sent`/`signed`, so a rehire can sign. Send restored it on purpose.
+- **Backpay for a backdated effective date** (a late review): countersign writes the rate from
+  `effective_from`, so periods already **paid** at the old rate are owed the difference. The
+  Contracts tab shows a quote (`getContractBackpay`) the admin confirms (`addContractBackpay`); it
+  lands as `off_cycle_pay_items` rows with `basis='backpay'` on the **next open regular period**.
+  Pricing is pure (`src/lib/pay/backpay.ts`): `paid × (new − old) / old × fraction`, the first
+  period prorated by **working days** on/after the effective date, never negative. Salaried
+  catch-up rows on those periods are included; a locked-but-unpaid period is excluded with a
+  warning (unlock + recalc is the fix). Service: `quoteContractBackpay` /
+  `addContractBackpayEntry` in `src/server/off-cycle.ts`.
+
+**Where it shows**: the admin profile's **Contracts** tab
+(`src/components/contractors/profile/ContractsTab.tsx`) — version list, draft form, Send / Void /
+Countersign / Print, the backpay quote; the roster's "Awaiting signature · N days" badge on
+`sent`; the portal's **Contracts** tab (see [Contractor portal](./portal.md#contracts)). Print
+pages render the frozen `rendered_body` (`src/components/print/ContractVersionPrint.tsx`) at
+`/contracts/[versionId]/print` (admin) and `/portal/contracts/[versionId]/print` — **never** the
+live template. No FX on any of it.
+
+Known ceiling: `doc_version` is per worker, not per engagement, so two companies at the same
+version number would collide on the signature unique key. No worker has two engagements today.
 
 ## Documents
 

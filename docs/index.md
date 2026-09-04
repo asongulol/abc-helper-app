@@ -17,7 +17,7 @@ invoicing → Wise payments — plus the self-serve contractor portal.
 
 ## Domain guides
 
-- [Onboarding & documents](./onboarding-documents.md) — the 3-stage wizard, agreements/countersign, doc review, reminder digests
+- [Onboarding & documents](./onboarding-documents.md) — the 3-stage wizard, agreements/countersign, contract versions (rehire / re-issue), doc review, reminder digests
 - [Hubstaff integration](./hubstaff.md) — time sync, matching, approval
 - [Invoicing](./invoicing.md) — client billing in USD
 - [Wise payouts (draft-only)](./wise.md) — PHP payouts; the no-funding invariant
