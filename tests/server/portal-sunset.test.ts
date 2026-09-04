@@ -34,6 +34,8 @@ type World = {
   /** worker ids whose contractor_logins row is still 'active'. */
   activeLogins: string[];
   pay: Record<string, Pay>;
+  /** worker ids with a contract version out for signature (sent / signed). */
+  inFlight?: string[];
   /** Table whose read fails, to prove the sweep stops instead of guessing. */
   failReadOn?: string;
 };
@@ -60,6 +62,16 @@ const stub = (world: World) => {
         const wanted = (filters.worker_id as string[] | undefined) ?? [];
         return {
           data: world.activeLogins
+            .filter((id) => wanted.includes(id))
+            .map((worker_id) => ({ worker_id })),
+          error: null,
+          count: null,
+        };
+      }
+      if (table === 'contract_versions') {
+        const wanted = (filters.worker_id as string[] | undefined) ?? [];
+        return {
+          data: (world.inFlight ?? [])
             .filter((id) => wanted.includes(id))
             .map((worker_id) => ({ worker_id })),
           error: null,
@@ -188,6 +200,23 @@ describe('sunsetPortalLogins — RLS enforces the end of access, not just the re
 
     expect(res).toEqual({ checked: 2, revoked: [WORKER] });
     expect(revocations(updates).map((u) => u.filters.worker_id)).toEqual([WORKER]);
+  });
+
+  it('skips a departed contractor whose rehire contract is out for signature', async () => {
+    // sendContractVersion restored this login on purpose so they can sign; the
+    // engagement stays 'ended' and fully paid until countersign, so without the
+    // exclusion the sweep would take the login back the same night.
+    const { db, updates } = stub({
+      ended: [WORKER],
+      activeLogins: [WORKER],
+      pay: { [WORKER]: settled },
+      inFlight: [WORKER],
+    });
+
+    const res = await sunsetPortalLogins(db);
+
+    expect(res).toEqual({ checked: 1, revoked: [] });
+    expect(revocations(updates)).toHaveLength(0);
   });
 
   it('stops without revoking anyone when a read fails', async () => {

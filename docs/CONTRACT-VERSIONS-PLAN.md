@@ -1,7 +1,8 @@
 # Contract versions — rehire, modify, re-issue
 
-> **Status:** PLAN ONLY. No code/schema changes made. Written 2026-09-04 after a decision
-> interview with the owner. Every numbered decision below was put to the owner and confirmed.
+> **Status:** slice 1 (schema + reads + stamps, §6.1) built 2026-09-04 on
+> `feat/contract-versions-1-schema`; migration 44 NOT yet applied to prod. Slices 2–5 not started.
+> Written 2026-09-04 after a decision interview with the owner. Every numbered decision below was put to the owner and confirmed.
 > **Covers:** rehiring a previous contractor, changing the terms of a current contractor,
 > sending a new contract to a current contractor. All three are the same feature.
 

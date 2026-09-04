@@ -582,6 +582,20 @@ export const endEngagement = async (
   );
   if (targetErr) throw new Error(`coverage_targets close: ${targetErr.message}`);
 
+  // 4. the contract of record — termination stamps the ACTIVE version, no
+  //    document, no signature (docs/CONTRACT-VERSIONS-PLAN.md, decision 11).
+  //    An in-flight draft/sent/signed is left for the admin to void; superseded
+  //    and void rows already carry their own date. Engagements still on the v1
+  //    read-through have no row here, and that is fine — nothing to stamp.
+  const { error: versionErr } = await forOneCompany(
+    db
+      .from('contract_versions')
+      .update({ status: 'ended' as const, ended_on: args.lastDay })
+      .eq('worker_id', args.workerId)
+      .eq('status', 'active'),
+  );
+  if (versionErr) throw new Error(`contract_versions end: ${versionErr.message}`);
+
   return { endedCompanyIds: (ended ?? []).map((r) => r.company_id) };
 };
 
@@ -781,13 +795,26 @@ export const sunsetPortalLogins = async (
     .in('worker_id', endedIds);
   if (lErr) throw new Error(`active contractor logins: ${lErr.message}`);
 
+  // A rehire in progress: sendContractVersion restores the login ON PURPOSE so
+  // the departed contractor can sign, and the engagement stays 'ended' until
+  // countersign. Without this the sweep re-revoked it the night after send
+  // (docs/CONTRACT-VERSIONS-PLAN.md §3). Drafts don't restore anything, so
+  // only sent/signed count.
+  const { data: inFlight, error: vErr } = await db
+    .from('contract_versions')
+    .select('worker_id')
+    .in('status', ['sent', 'signed'])
+    .in('worker_id', endedIds);
+  if (vErr) throw new Error(`in-flight contract versions: ${vErr.message}`);
+  const rehiring = new Set((inFlight ?? []).map((v) => v.worker_id));
+
   // ponytail: serial, and it re-reads the same worker_companies/payments rows per
   // worker. The candidate set is "departed contractors who still have a login" —
   // single digits per night. Upgrade path if that ever stops being true: batch the
   // three reads once and pass slices to a pure predicate.
   const revoked: string[] = [];
   for (const { worker_id } of logins ?? []) {
-    if (await hasPayOutstanding(db, worker_id)) continue;
+    if (rehiring.has(worker_id) || (await hasPayOutstanding(db, worker_id))) continue;
     const { error } = await db
       .from('contractor_logins')
       .update({ status: 'revoked' })
