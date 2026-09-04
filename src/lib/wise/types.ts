@@ -75,6 +75,17 @@ export const isDeadTransfer = (status: string): boolean =>
   !WISE_PAID_STATES.has(status) && !WISE_IN_FLIGHT_STATES.has(status);
 
 /**
+ * ponytail: calibration knobs, not facts. A transfer Wise reports as sent can
+ * still come back (`bounced_back` → `funds_refunded`) days later. The poll
+ * re-checks `sent` rows this recent so the bounce gets recorded (#90 B), and
+ * the portal sunset treats a payment as LANDED only once it has stayed sent
+ * this long — revoking first would lock out someone the bounce left unpaid.
+ * Widen both if a bounce ever outlives them.
+ */
+export const WISE_BOUNCE_WINDOW_DAYS = 30;
+export const WISE_SETTLE_DAYS = 7;
+
+/**
  * Can this transfer still be cancelled?
  *
  * Only one that has not moved money. Wise refuses anything else, but the check

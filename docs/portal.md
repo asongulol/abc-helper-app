@@ -41,7 +41,9 @@ the `FromNewYork` hero, the docs-reminder overlay, and the tools popup.
 - **Onboarding gate**: Time and Sessions check `worker.onboarded`; until onboarding is complete
   they show a "will appear once onboarding is complete" notice.
 - **Departure gate**: a worker with `status = 'ended'` keeps access only while pay is still
-  outstanding (`hasPayOutstanding`) — someone who left last week still needs their payslips —
+  outstanding (`hasPayOutstanding`) — someone who left last week still needs their payslips.
+  A payment counts as landed only once it has stayed `sent` for `WISE_SETTLE_DAYS` (7): the Wise
+  poll flips a bounced transfer to `failed` + `paid_at` null within that window (#90 B) —
   **or** while a contract version is `sent`/`signed` (a rehire in progress; send restored the
   login so they can sign). The nightly `sunsetPortalLogins` sweep applies the same rule when it
   revokes.

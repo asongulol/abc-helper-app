@@ -185,7 +185,7 @@ Source: `wise.ts`.
 |---|---|---|---|---|
 | `wiseDraft` | Create a quote + draft transfer per payment (no funding; refuses rows whose period isn't locked) | `paymentIds: string[]` | owner | Wise API → update `payments` (`wise_transfer_id`, `fx_rate`); audit `wise_draft` |
 | `wiseBatch` | Draft transfers inside a Wise batch group (no funding; refuses rows whose period isn't locked) | `paymentIds: string[]` | owner | Wise API → update `payments` + batch group; audit `wise_batch` |
-| `wisePoll` | Reconcile — flip payments to `sent` on terminal Wise success (idempotent) | — (none) | admin | Wise API → update `payments` (audit inside service) |
+| `wisePoll` | Reconcile — flip payments to `sent` on terminal Wise success; re-checks rows sent in the last 30 days and flips a bounced one to `failed` + `paid_at` null (idempotent) | — (none) | admin | Wise API → update `payments` (audit inside service) |
 | `wiseMatch` | Backfill matcher for payments missing `wise_transfer_id` | `{ periodStart?, periodEnd?, payPeriodId?, windowDays?, refresh? }` | admin | Wise API → update `payments`; audit `wise_match` / `wise_match_override` |
 | `wiseStatus` | Transfer-status lookups for payment ids | `WiseStatusSchema` (`paymentIds: string[]`) | admin | Wise API read-only |
 | `wiseRecipients` | Recipient list for the profile panel | — (none) | admin | Wise API read-only |

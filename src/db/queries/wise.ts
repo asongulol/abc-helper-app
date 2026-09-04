@@ -27,6 +27,7 @@ export interface PollPayment {
   wise_transfer_id: string;
   status: Database['public']['Enums']['payment_status'];
   net_php: number | null;
+  note: string | null;
 }
 
 export interface MatchPayment {
@@ -78,31 +79,45 @@ export interface DraftPayment {
  * are eligible to be reconciled. Used by the `poll` action.
  *
  * @param onlyDrafts  When true (default), restricts to status='draft' — fast
- *                    and idempotent. Pass false to re-check 'sent' rows too.
+ *                    and idempotent — plus, with `sentSince`, the 'sent' rows
+ *                    paid on or after it (a sent transfer can still bounce,
+ *                    #90 B). Pass false to re-check every 'sent' row.
  * @param payPeriodId Optional scope to a single period.
  */
 export const fetchPollPayments = async (
   db: Db,
-  opts: { onlyDrafts: boolean; payPeriodId?: string },
+  opts: { onlyDrafts: boolean; payPeriodId?: string; sentSince?: string },
 ): Promise<PollPayment[]> => {
-  let q = db
-    .from('payments')
-    .select('id, worker_id, pay_period_id, wise_transfer_id, status, net_php')
-    .not('wise_transfer_id', 'is', null);
-
+  const cols = 'id, worker_id, pay_period_id, wise_transfer_id, status, net_php, note';
+  let q = db.from('payments').select(cols).not('wise_transfer_id', 'is', null);
   if (opts.onlyDrafts) q = q.eq('status', 'draft');
   if (opts.payPeriodId) q = q.eq('pay_period_id', opts.payPeriodId);
 
   const { data, error } = await q;
   if (error) throw new Error(`payments (poll): ${error.message}`);
+  const rows = [...(data ?? [])];
 
-  return (data ?? []).map((row) => ({
+  if (opts.onlyDrafts && opts.sentSince) {
+    let r = db
+      .from('payments')
+      .select(cols)
+      .not('wise_transfer_id', 'is', null)
+      .eq('status', 'sent')
+      .gte('paid_at', opts.sentSince);
+    if (opts.payPeriodId) r = r.eq('pay_period_id', opts.payPeriodId);
+    const { data: recent, error: rErr } = await r;
+    if (rErr) throw new Error(`payments (poll, recent sent): ${rErr.message}`);
+    rows.push(...(recent ?? []));
+  }
+
+  return rows.map((row) => ({
     id: row.id,
     worker_id: row.worker_id,
     pay_period_id: row.pay_period_id,
     wise_transfer_id: row.wise_transfer_id as string,
     status: row.status,
     net_php: row.net_php,
+    note: row.note,
   }));
 };
 
@@ -127,6 +142,28 @@ export const markPaymentSent = async (
     })
     .eq('id', paymentId);
   if (error) throw new Error(`markPaymentSent(${paymentId}): ${error.message}`);
+};
+
+/**
+ * Record a transfer that came back AFTER the row was marked sent: the money did
+ * not land, so the row is unpaid again (#90 B). `failed` is the enum's own word
+ * for it — the attention list, the status pills and Mark paid already know it.
+ * The transfer id and dates stay as the evidence; the note says what Wise
+ * reported and when. Unlink (dead transfers unlink freely) and re-send.
+ */
+export const markPaymentFailed = async (
+  db: Db,
+  payment: { id: string; wise_transfer_id: string; note: string | null },
+  wiseStatus: string,
+  nowIso: string,
+): Promise<void> => {
+  const line = `Wise transfer ${payment.wise_transfer_id} is ${wiseStatus} (poll ${nowIso.slice(0, 10)}) — the money did not land. Unlink and re-send.`;
+  const note = [payment.note?.trim(), line].filter(Boolean).join('\n');
+  const { error } = await db
+    .from('payments')
+    .update({ status: 'failed', paid_at: null, note })
+    .eq('id', payment.id);
+  if (error) throw new Error(`markPaymentFailed(${payment.id}): ${error.message}`);
 };
 
 // ─── match queries ─────────────────────────────────────────────────────────────

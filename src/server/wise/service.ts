@@ -10,6 +10,7 @@ import {
   fetchMatchPayments,
   fetchPollPayments,
   findPaymentByTransferId,
+  markPaymentFailed,
   markPaymentSent,
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
@@ -20,7 +21,12 @@ import { type MatchTally, tallyMatch } from '@/lib/wise/match-summary';
 import { filterLive } from '@/lib/wise/matcher';
 import { missingRecipientReason } from '@/lib/wise/recipient-miss';
 import type { MatchResult, UnlinkedPayment } from '@/lib/wise/types';
-import { isCancellable, WISE_IN_FLIGHT_STATES, WISE_PAID_STATES } from '@/lib/wise/types';
+import {
+  isCancellable,
+  WISE_BOUNCE_WINDOW_DAYS,
+  WISE_IN_FLIGHT_STATES,
+  WISE_PAID_STATES,
+} from '@/lib/wise/types';
 import type { WiseBatchItem } from '@/types/schemas/wise';
 import { realWiseApi, type WiseApi, type WiseQuote, type WiseRecipient } from './api';
 import {
@@ -245,12 +251,16 @@ export interface PollResultRow {
   markedPaid?: boolean;
   paidAt?: string;
   inFlight?: boolean;
+  /** A row that was sent and came back — now status 'failed', paid_at null. */
+  failed?: boolean;
   error?: string;
 }
 
 export interface ServicePollResult {
   checked: number;
   markedPaid: number;
+  /** Sent rows whose transfer bounced, recorded as failed this run (#90 B). */
+  failed: number;
   inFlight: number;
   unknown: number;
   results: PollResultRow[];
@@ -259,7 +269,9 @@ export interface ServicePollResult {
 /**
  * Server-side reconcile. Fetches every payment with a wise_transfer_id,
  * queries Wise, and updates payments.status to 'sent' for terminal-success
- * states. Idempotent. Safe to call manually or on a schedule.
+ * states. Rows already sent within WISE_BOUNCE_WINDOW_DAYS are re-checked and
+ * flipped to 'failed' (paid_at null) if the transfer came back (#90 B).
+ * Idempotent. Safe to call manually or on a schedule.
  *
  * Callers: the admin "Check statuses" action (wisePoll) and the scheduled
  * /api/cron/wise-reconcile route (app-owned since 2026-08-29; the Deno edge
@@ -274,16 +286,17 @@ export async function servicePoll(
   api: WiseApi = realWiseApi,
 ): Promise<ServicePollResult> {
   const onlyDrafts = opts.onlyDrafts !== false;
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
   const payments = await fetchPollPayments(db, {
     onlyDrafts,
+    sentSince: new Date(now - WISE_BOUNCE_WINDOW_DAYS * 86_400_000).toISOString(),
     ...(opts.payPeriodId ? { payPeriodId: opts.payPeriodId } : {}),
   });
 
   if (payments.length === 0) {
-    return { checked: 0, markedPaid: 0, inFlight: 0, unknown: 0, results: [] };
+    return { checked: 0, markedPaid: 0, failed: 0, inFlight: 0, unknown: 0, results: [] };
   }
-
-  const nowIso = new Date().toISOString();
 
   // Fetch every transfer's full detail in parallel (bounded concurrency = 8).
   const fetched = await mapLimit(payments, 8, async (p) => {
@@ -296,6 +309,7 @@ export async function servicePoll(
   });
 
   let markedPaid = 0;
+  let failed = 0;
   let inFlight = 0;
   let unknown = 0;
   const results: PollResultRow[] = [];
@@ -314,6 +328,11 @@ export async function servicePoll(
     const st = f.detail.status ?? '';
 
     if (WISE_PAID_STATES.has(st)) {
+      if (p.status === 'sent') {
+        // Re-checked for a bounce and still sent: already recorded, nothing to write.
+        results.push({ paymentId: p.id, transferId: p.wise_transfer_id, status: st });
+        continue;
+      }
       // Use Wise's REAL sent date (or dateFunded / created as fallbacks) instead of
       // now(). Also captures the full wise_dates triple for the UI tooltip.
       const dates = f.detail.dates;
@@ -344,8 +363,25 @@ export async function servicePoll(
         status: st,
         inFlight: true,
       });
+    } else if (p.status === 'sent') {
+      // Marked sent, and Wise now says it came back (bounced_back / funds_refunded
+      // / cancelled). This is the one place the failure can be recorded: paid_at
+      // goes back to null, so the portal sunset sees the money as still owed (#90 B).
+      try {
+        await markPaymentFailed(db, p, st, nowIso);
+        failed++;
+        results.push({ paymentId: p.id, transferId: p.wise_transfer_id, status: st, failed: true });
+      } catch {
+        results.push({
+          paymentId: p.id,
+          transferId: p.wise_transfer_id,
+          status: st,
+          error: 'db write failed',
+        });
+      }
     } else {
-      // cancelled / funds_refunded / bounced_back / etc. — surface but don't change DB.
+      // cancelled / funds_refunded / bounced_back on a row that never claimed to
+      // be paid — an unfunded draft, the normal state (ADR-0007). Surface only.
       results.push({
         paymentId: p.id,
         transferId: p.wise_transfer_id,
@@ -354,7 +390,7 @@ export async function servicePoll(
     }
   }
 
-  return { checked: payments.length, markedPaid, inFlight, unknown, results };
+  return { checked: payments.length, markedPaid, failed, inFlight, unknown, results };
 }
 
 // ─── match (backfill) ─────────────────────────────────────────────────────────

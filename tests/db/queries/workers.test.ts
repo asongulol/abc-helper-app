@@ -265,8 +265,10 @@ const payStub = (fixture: { links?: PayLink[]; payments?: PayRow[]; unpaidSessio
   return { db: db as unknown as SupabaseClient<Database>, selects, filters };
 };
 
-const outstanding = (fixture: Parameters<typeof payStub>[0]) =>
-  hasPayOutstanding(payStub(fixture).db, 'w1');
+/** Judged long after every fixture's paid_at, so WISE_SETTLE_DAYS never bites here. */
+const SETTLED = new Date('2026-12-01T00:00:00Z');
+const outstanding = (fixture: Parameters<typeof payStub>[0], now: Date = SETTLED) =>
+  hasPayOutstanding(payStub(fixture).db, 'w1', now);
 
 const CO_A = 'co-a';
 const CO_B = 'co-b';
@@ -398,6 +400,16 @@ describe('hasPayOutstanding — access outlives the last day, not the last payme
         unpaidSessions: 0,
       }),
     ).toBe(false);
+  });
+
+  // `paid_at` is when Wise SENT it; a bounce comes back days later and the poll
+  // then flips the row to failed + unpaid (#90 B). Landed means it stayed sent
+  // for WISE_SETTLE_DAYS — revoking before that locks out someone the bounce
+  // left unpaid, and the sweep never restores on its own.
+  it('does not treat a payment sent within the settle window as landed', async () => {
+    const fixture = { links: [endedAt(CO_A, LAST_DAY)], payments: [finalPay], unpaidSessions: 0 };
+    expect(await outstanding(fixture, new Date('2026-08-01T00:00:00Z'))).toBe(true);
+    expect(await outstanding(fixture, new Date('2026-08-31T00:00:00Z'))).toBe(false);
   });
 
   // The company + period scoping only works if those columns are read at all; a

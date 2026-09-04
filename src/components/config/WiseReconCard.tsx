@@ -45,7 +45,8 @@ export const WiseReconCard = () => {
       try {
         const res = await wisePoll();
         if (res.ok) {
-          toast.notify(`Updated ${res.data.updated} of ${res.data.checked} checked.`, {
+          const bounced = res.data.failed ? `, ${res.data.failed} bounced → failed` : '';
+          toast.notify(`Updated ${res.data.updated} of ${res.data.checked} checked${bounced}.`, {
             type: 'success',
           });
         } else {

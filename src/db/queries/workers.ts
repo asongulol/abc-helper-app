@@ -7,6 +7,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { cache } from 'react';
 import type { Database } from '@/db/types';
+import { WISE_SETTLE_DAYS } from '@/lib/wise/types';
 import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
@@ -674,7 +675,11 @@ export const fetchWorkerLinks = async (db: Db, workerId: string): Promise<Worker
  * reading it resolves zero rows and would silently look fully paid. Scoped by
  * `worker_id` in every query, the same way fetchUnpaidApprovedSessions is.
  */
-export const hasPayOutstanding = async (db: Db, workerId: string): Promise<boolean> => {
+export const hasPayOutstanding = async (
+  db: Db,
+  workerId: string,
+  now: Date = new Date(),
+): Promise<boolean> => {
   const { data: links, error: lErr } = await db
     .from('worker_companies')
     .select('company_id, ended_on')
@@ -700,12 +705,14 @@ export const hasPayOutstanding = async (db: Db, workerId: string): Promise<boole
   if (pErr) throw new Error(`payments outstanding: ${pErr.message}`);
   const rows = pays ?? [];
 
-  // ponytail: `paid_at` means SENT, not landed — wisePoll deliberately leaves the
-  // DB untouched for cancelled / funds_refunded / bounced_back (wise/service.ts),
-  // so a bounced final transfer still reads as paid here (#90 B). There is no DB
-  // signal to check; the fix belongs where the signal goes missing (have the poll
-  // record the failure), not in a guess here. Self-heals when an admin re-drafts.
-  if (rows.some((p) => p.paid_at === null)) return true;
+  // `paid_at` means SENT, not landed: a transfer can come back days later. The
+  // Wise poll records that as status 'failed' + paid_at null (#90 B), so an
+  // unpaid row is the signal — but only if the poll has had time to see the
+  // bounce. A payment counts as landed once it has stayed sent for
+  // WISE_SETTLE_DAYS; before that, keep access. (Timestamps compared as numbers:
+  // PostgREST writes `+00:00`, toISOString writes `Z`, and text order lies.)
+  const settledBefore = now.getTime() - WISE_SETTLE_DAYS * 86_400_000;
+  if (rows.some((p) => p.paid_at === null || Date.parse(p.paid_at) > settledBefore)) return true;
 
   // Everything left has landed, but a landed payment settles exactly ONE company's
   // last day, and only if its period actually CONTAINS that day. Before this,

@@ -245,12 +245,14 @@ export async function wiseBatch(
  * The scheduled path is /api/cron/wise-reconcile (same servicePoll underneath).
  * This covers the on-demand admin-triggered reconcile path.
  */
-export async function wisePoll(): Promise<WiseActionResult<{ updated: number; checked: number }>> {
+export async function wisePoll(): Promise<
+  WiseActionResult<{ updated: number; failed: number; checked: number }>
+> {
   try {
     await requireAdmin();
     const db = createServiceClient();
     const result = await servicePoll(db);
-    return ok({ updated: result.markedPaid, checked: result.checked });
+    return ok({ updated: result.markedPaid, failed: result.failed, checked: result.checked });
   } catch (e) {
     return fail(e);
   }
