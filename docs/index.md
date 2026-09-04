@@ -43,6 +43,7 @@ API, and code references.
 ## Specs & conformance
 
 - [Prod conformance plan](./PROD-CONFORMANCE-PLAN.md)
+- [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — rehire, modify, re-issue: confirmed decisions + PR slices
 - [Money core spec](./money-core-spec.md)
 - [Recreation handoff](./RECREATION-HANDOFF.md)
 - [Recreation recommendations](./RECREATION-RECOMMENDATIONS.md)
