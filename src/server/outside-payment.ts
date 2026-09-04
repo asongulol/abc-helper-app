@@ -102,8 +102,27 @@ export const recordOutsidePayment = async (
     );
 
   let target: { id: string } | null = covered;
-  /** Non-empty when the record lands off the covered period (slot taken). */
+  /** Non-empty when the record lands off the covered period (slot taken, or
+   *  the regular run is still ahead). */
   let covers = '';
+  // The record's own single-day batch, dated the paid day. NOTE: the Wise
+  // auto-matcher's reference guard judges against THIS window, so a transfer
+  // whose reference names the covered period is offered as a candidate to
+  // hand-link, not auto-linked — deliberate: the operator asserted the split,
+  // not Wise.
+  const landOnPaidDay = async () => {
+    const day = await findPeriod(db, input.companyId, input.paidOn, input.paidOn);
+    if (day?.state === 'open')
+      throw new Error(
+        "That day's off-cycle batch is still open — lock it first (Calculate), or use the actual paid date.",
+      );
+    if (day && (await fetchPaymentForWorker(db, day.id, input.workerId)))
+      throw new Error(
+        'An outside payment for this contractor dated that day is already recorded — one per contractor per day. Adjust the paid date by a day, or edit the existing record.',
+      );
+    target = day;
+    covers = ` — covers ${p.start} → ${p.end}`;
+  };
   if (covered) {
     const row = await fetchPaymentForWorker(db, covered.id, input.workerId);
     if (row) {
@@ -114,23 +133,19 @@ export const recordOutsidePayment = async (
         throw new Error(
           "This contractor's row on that period is not paid yet — use Mark paid (Process & Pay) on it instead. Record an outside payment only for money paid on top of an already-paid row.",
         );
-      // A second (or later) remittance for the period: its own single-day
-      // batch, dated the paid day. NOTE: the Wise auto-matcher's reference
-      // guard judges against THIS window, so a transfer whose reference names
-      // the covered period is offered as a candidate to hand-link, not
-      // auto-linked — deliberate: the operator asserted the split, not Wise.
-      const day = await findPeriod(db, input.companyId, input.paidOn, input.paidOn);
-      if (day?.state === 'open')
-        throw new Error(
-          "That day's off-cycle batch is still open — lock it first (Calculate), or use the actual paid date.",
-        );
-      if (day && (await fetchPaymentForWorker(db, day.id, input.workerId)))
-        throw new Error(
-          'An outside payment for this contractor dated that day is already recorded — one per contractor per day. Adjust the paid date by a day, or edit the existing record.',
-        );
-      target = day;
-      covers = ` — covers ${p.start} → ${p.end}`;
+      // A second (or later) remittance for the period.
+      await landOnPaidDay();
     }
+  } else if (p.payDate >= officeToday()) {
+    // No period yet and its pay date hasn't passed: the regular run is still
+    // ahead. Claiming the slot now creates the REGULAR period born locked with
+    // this one row, and the sync closes it as paid on the spot — Calculate
+    // then refuses the whole run ("Period is paid") and approved sessions have
+    // no open batch to land in. That is what a ₱5,000 one-off recorded on
+    // 2026-08-28 did to Aug 16–31 for 23 contractors. Backfilling a period
+    // whose pay date has passed (history paid outside the app) still takes
+    // the slot.
+    await landOnPaidDay();
   }
 
   let created = false;
