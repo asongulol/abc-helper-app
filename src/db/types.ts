@@ -1921,6 +1921,13 @@ export type Database = {
       is_onboarded: { Args: never; Returns: boolean }
       is_owner: { Args: never; Returns: boolean }
       my_admin_company_ids: { Args: never; Returns: string[] }
+      my_clients: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
       my_tools_pending: { Args: never; Returns: boolean }
       my_worker_id: { Args: never; Returns: string }
       payments_misc_items_ok: { Args: { items: Json }; Returns: boolean }
