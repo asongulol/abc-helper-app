@@ -63,7 +63,12 @@ fund it.
   `GET /v1/transfers/{id}` for each (bounded concurrency), and classify by status. Terminal
   success states (`WISE_PAID_STATES` in `src/lib/wise/types.ts`) → `markPaymentSent()`: status
   `sent`, real `paid_at` from Wise, the `wise_dates` triple, and `wise_locked_at = now`.
-  In-flight states are surfaced but not changed.
+  In-flight states are surfaced but not changed. Rows already `sent` within the last
+  `WISE_BOUNCE_WINDOW_DAYS` (30) are re-checked too: one whose transfer came back
+  (`bounced_back`, `funds_refunded`, `cancelled`) → `markPaymentFailed()`: status `failed`,
+  `paid_at` null, a dated line appended to `note`; the transfer id and dates stay as evidence.
+  Unlink and re-send. The portal sunset (`hasPayOutstanding`) treats a payment as landed only
+  after `WISE_SETTLE_DAYS` (7) sent, so the bounce is on record before access is judged.
 - **Match** (`serviceMatch()`): for payments that never got a transfer id, pull Wise history over
   the union date window and match by recipient + amount (±₱1.00) + time window. The pure matching
   rules live in `src/lib/wise/matcher.ts` (`decideMatch` / `decideRefresh`, recipient indexing,

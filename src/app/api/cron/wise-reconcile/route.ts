@@ -35,6 +35,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       ok: true,
       checked: r.checked,
       markedPaid: r.markedPaid,
+      failed: r.failed,
       inFlight: r.inFlight,
       unknown: r.unknown,
     });

@@ -306,9 +306,13 @@ export const BatchesClient = ({ companyId, periods, clients, roster }: BatchesCl
         notify(`Poll failed: ${res.error}`, { type: 'error' });
         return;
       }
-      notify(`Polled ${res.data.checked} transfer(s) — ${res.data.updated} marked paid.`, {
-        type: 'success',
-      });
+      const bounced = res.data.failed ? `, ${res.data.failed} bounced → failed` : '';
+      notify(
+        `Polled ${res.data.checked} transfer(s) — ${res.data.updated} marked paid${bounced}.`,
+        {
+          type: 'success',
+        },
+      );
       await load();
     } finally {
       setBusy(false);
