@@ -1,10 +1,11 @@
 'use server';
 
 /**
- * Contract-version actions — draft / send / void (docs/CONTRACT-VERSIONS-PLAN.md §3).
+ * Contract-version actions — draft / send / void / sign (docs/CONTRACT-VERSIONS-PLAN.md §3).
  * Pattern: verify admin (countersign permission + company scope) → Zod →
- * service client → audit. Sign lives in portal.ts (slice 3); countersign, the
- * write-through that makes a version the contract of record, is slice 4.
+ * service client → audit. Sign is the one contractor action here (requireWorker),
+ * kept with the other status transitions rather than in portal.ts; countersign,
+ * the write-through that makes a version the contract of record, is slice 4.
  *
  * Service client for every read that feeds a write: contract_versions has no
  * write policies (every write is an action), and a scoped admin's RLS view
@@ -25,7 +26,7 @@ import {
 } from '@/db/queries/contracts';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
 import { hasPayOutstanding } from '@/db/queries/workers';
-import { mergeAgreement, monthlyFromPeriod } from '@/lib/agreements/merge';
+import { mergeAgreement, monthlyFromPeriod, safeSigImg } from '@/lib/agreements/merge';
 import { humanizeError } from '@/lib/errors';
 import { fullName } from '@/lib/names';
 import {
@@ -36,6 +37,8 @@ import {
 } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
 import { type CurrentAdmin, getCurrentAdmin } from '@/server/auth/admin';
+import { requireWorker } from '@/server/auth/worker';
+import { encryptIfConfigured } from '@/server/crypto';
 import { portalUrl, trySend } from '@/server/email/send';
 import { DEFAULT_HIRE_EMAILS, escapeHtml, mergeTemplate } from '@/server/email/templates';
 import { todayManila } from '@/types/schemas/contractors';
@@ -43,6 +46,7 @@ import {
   ContractVersionRefSchema,
   DraftContractVersionSchema,
   EngagementRefSchema,
+  SignContractVersionSchema,
   VoidContractVersionSchema,
 } from '@/types/schemas/contracts';
 
@@ -435,5 +439,97 @@ export async function voidContractVersion(
     return { ok: true, data: { loginRevoked } };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Could not void the contract.') };
+  }
+}
+
+/**
+ * The contractor signs a sent version (decision 4): the signature row carries
+ * the real version number and the sha256 of the frozen body, so the evidence
+ * names exactly the text they scrolled through. Same scroll-to-end + typed
+ * name / drawn image contract as signAgreement.
+ *
+ * A second signature is rejected, never absorbed: the status gate answers the
+ * ordinary case, and the (worker, kind, doc_version) unique key answers the
+ * race — this is a plain insert, not signAgreement's ignore-duplicates upsert.
+ */
+export async function signContractVersion(args: unknown): Promise<ActionResult> {
+  const parsed = SignContractVersionSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+  if (!input.scrolledToEnd)
+    return { ok: false, error: 'Scroll through the whole agreement before signing.' };
+  const drawn = input.signatureDataUrl.startsWith('data:');
+  if (drawn && !safeSigImg(input.signatureDataUrl))
+    return { ok: false, error: 'Signature must be a PNG/JPEG/WebP image or a typed name.' };
+
+  try {
+    const worker = await requireWorker();
+    const svc = createServiceClient();
+    const v = await fetchContractVersion(svc, input.versionId);
+    // Someone else's version reads as "not found" — no hint that the id exists.
+    if (!v || v.workerId !== worker.workerId)
+      return { ok: false, error: 'Contract version not found.' };
+    if (v.status === 'signed')
+      return { ok: false, error: `Version ${v.version} is already signed.` };
+    if (v.status !== 'sent' || !v.docSha256)
+      return { ok: false, error: `Version ${v.version} is ${v.status} — nothing to sign.` };
+
+    // ponytail: doc_version is per worker, not per engagement, so two companies
+    // at the same version number would collide on the unique key. No worker has
+    // two engagements today; prefix the company if that changes.
+    const { error: sigErr } = await svc.from('onboarding_signatures').insert({
+      worker_id: worker.workerId,
+      agreement_kind: 'ic_agreement',
+      doc_version: String(v.version),
+      doc_sha256: v.docSha256,
+      signed_legal_name: input.typedName,
+      signature_method: drawn ? 'drawn' : 'typed',
+      // PHI — encrypted at rest when a key is configured, like signAgreement.
+      signature_data: drawn ? await encryptIfConfigured(input.signatureDataUrl) : null,
+      scrolled_to_end: true,
+      signed_date: todayManila(),
+      status: 'signed',
+    });
+    if (sigErr)
+      return {
+        ok: false,
+        error: sigErr.code === '23505' ? `Version ${v.version} is already signed.` : sigErr.message,
+      };
+
+    // Filtered on sent: if void raced the signature in, the evidence stays but
+    // binds nobody — the same 'superseded' void itself would have written.
+    const { data: signed, error } = await svc
+      .from('contract_versions')
+      .update({ status: 'signed', signed_at: new Date().toISOString() })
+      .eq('id', v.id)
+      .eq('status', 'sent')
+      .select('id');
+    if (error) throw new Error(`contract_versions sign: ${error.message}`);
+    if (!signed?.length) {
+      await svc
+        .from('onboarding_signatures')
+        .update({ status: 'superseded' })
+        .eq('worker_id', worker.workerId)
+        .eq('agreement_kind', 'ic_agreement')
+        .eq('doc_version', String(v.version));
+      return { ok: false, error: `Version ${v.version} was withdrawn — reload.` };
+    }
+
+    await logEvent({
+      companyId: v.companyId,
+      action: 'contract.signed',
+      entity: v.workerId,
+      detail: {
+        version: v.version,
+        version_id: v.id,
+        doc_sha256: v.docSha256,
+        method: drawn ? 'drawn' : 'typed',
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Sign failed.') };
   }
 }

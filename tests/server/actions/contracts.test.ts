@@ -1,11 +1,13 @@
 /**
- * Contract versions, slice 2 (docs/CONTRACT-VERSIONS-PLAN.md §6.2): the
- * portal-login side effects of send and void, and the draft bookkeeping.
+ * Contract versions, slices 2–3 (docs/CONTRACT-VERSIONS-PLAN.md §6): the
+ * portal-login side effects of send and void, the draft bookkeeping, and the
+ * contractor's signature.
  *
  * Send is what lets a departed contractor back in to sign — it restores the
  * login the sunset sweep revoked (or creates one) — so the two checks the plan
  * names are here: send restores a revoked login; void hands it back to the
- * sunset rule, and only then.
+ * sunset rule, and only then. Sign's checks: the signature row carries
+ * doc_version=N and the sha256 of the frozen body; a second sign is rejected.
  */
 
 import { createHash } from 'node:crypto';
@@ -16,7 +18,7 @@ const W = '33333333-3333-4333-8333-333333333333';
 const CO = '11111111-1111-4111-8111-111111111111';
 const V2 = '44444444-4444-4444-8444-444444444444';
 
-const world = vi.hoisted(() => ({ svc: null as unknown, payOutstanding: false }));
+const world = vi.hoisted(() => ({ svc: null as unknown, payOutstanding: false, signer: '' }));
 const portal = vi.hoisted(() => ({
   createPortalLogin: vi.fn(),
   restorePortalLogin: vi.fn(),
@@ -47,15 +49,18 @@ vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/server/actions/portal-admin', () => portal);
 vi.mock('@/server/email/send', () => mail);
 vi.mock('@/db/queries/workers', () => ({ hasPayOutstanding: async () => world.payOutstanding }));
+vi.mock('@/server/auth/worker', () => ({
+  requireWorker: async () => ({ workerId: world.signer }),
+}));
+vi.mock('@/server/crypto', () => ({ encryptIfConfigured: async (s: string) => `enc:${s}` }));
 vi.mock('@/db/queries/portal', () => ({
   fetchAgreementTemplate: async () => ({
     body: 'AGREEMENT with {{contractor_name}} for {{company_name}}. Compensation: {{rate}} from {{start_date}}.',
   }),
 }));
 
-const { draftContractVersion, sendContractVersion, voidContractVersion } = await import(
-  '@/server/actions/contracts'
-);
+const { draftContractVersion, sendContractVersion, signContractVersion, voidContractVersion } =
+  await import('@/server/actions/contracts');
 
 const version = (over: Row = {}): Row => ({
   id: V2,
@@ -131,6 +136,7 @@ const boot = (tables: Tables) => {
 beforeEach(() => {
   vi.clearAllMocks();
   world.payOutstanding = false;
+  world.signer = W;
   portal.createPortalLogin.mockResolvedValue({ ok: true, data: {} });
   portal.restorePortalLogin.mockResolvedValue({ ok: true });
   portal.revokePortalLogin.mockResolvedValue({ ok: true });
@@ -335,5 +341,87 @@ describe('draftContractVersion', () => {
     const res = await draftContractVersion({ ...terms, effectiveFrom: '2026-09-30' });
 
     expect(res).toMatchObject({ ok: false, error: /before the start date/ });
+  });
+});
+
+describe('signContractVersion', () => {
+  const BODY = 'AGREEMENT frozen at send.';
+  const SHA = createHash('sha256').update(BODY).digest('hex');
+  const sent = (over: Row = {}) =>
+    version({
+      status: 'sent',
+      sent_at: '2026-09-01T00:00:00Z',
+      rendered_body: BODY,
+      doc_sha256: SHA,
+      ...over,
+    });
+  const sigs = (tables: Tables) => tables.onboarding_signatures ?? [];
+  const input = { versionId: V2, signatureDataUrl: '', typedName: 'Ana Cruz', scrolledToEnd: true };
+
+  it('records the signature against the version number and the frozen body hash', async () => {
+    const tables = boot(seed({ versions: [sent()] }));
+
+    const res = await signContractVersion(input);
+
+    expect(res).toEqual({ ok: true });
+    expect(sigs(tables)).toHaveLength(2);
+    expect(sigs(tables)[1]).toMatchObject({
+      worker_id: W,
+      agreement_kind: 'ic_agreement',
+      doc_version: '2',
+      doc_sha256: SHA,
+      signed_legal_name: 'Ana Cruz',
+      signature_method: 'typed',
+      signature_data: null,
+      scrolled_to_end: true,
+      status: 'signed',
+    });
+    expect(first(tables).status).toBe('signed');
+    expect(first(tables).signed_at).toBeTruthy();
+  });
+
+  it('stores a drawn signature encrypted, like signAgreement', async () => {
+    const tables = boot(seed({ versions: [sent()] }));
+
+    const res = await signContractVersion({
+      ...input,
+      signatureDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+    });
+
+    expect(res).toEqual({ ok: true });
+    expect(sigs(tables)[1]).toMatchObject({
+      signature_method: 'drawn',
+      signature_data: 'enc:data:image/png;base64,iVBORw0KGgo=',
+    });
+  });
+
+  it('rejects a second signature instead of absorbing it', async () => {
+    const tables = boot(seed({ versions: [sent({ status: 'signed' })] }));
+
+    const res = await signContractVersion(input);
+
+    expect(res).toMatchObject({ ok: false, error: /already signed/ });
+    expect(sigs(tables)).toHaveLength(1);
+  });
+
+  it('refuses without the scroll-to-end evidence', async () => {
+    const tables = boot(seed({ versions: [sent()] }));
+
+    const res = await signContractVersion({ ...input, scrolledToEnd: false });
+
+    expect(res).toMatchObject({ ok: false, error: /Scroll through/ });
+    expect(sigs(tables)).toHaveLength(1);
+    expect(first(tables).status).toBe('sent');
+  });
+
+  it("does not sign another contractor's version", async () => {
+    world.signer = '99999999-9999-4999-8999-999999999999';
+    const tables = boot(seed({ versions: [sent()] }));
+
+    const res = await signContractVersion(input);
+
+    expect(res).toMatchObject({ ok: false, error: /not found/ });
+    expect(sigs(tables)).toHaveLength(1);
+    expect(first(tables).status).toBe('sent');
   });
 });

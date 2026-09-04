@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useState, useTransition } from 'react';
 import { Badge, type BadgeTone, Modal, useToast } from '@/components/ui';
 import type { Database } from '@/db/types';
 import {
@@ -10,6 +10,7 @@ import {
   finishOnboarding,
   signAgreement,
 } from '@/server/actions/portal';
+import { type SignInput, SignModal } from './SignModal';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 type OnboardingStage = Database['public']['Enums']['onboarding_stage'];
@@ -85,26 +86,8 @@ export const PortalOnboarding = ({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
 
-  // Stage 1 state
+  // Stage 1 state — the signing UI itself lives in SignModal.
   const [selectedKind, setSelectedKind] = useState<AgreementKind | null>(null);
-  const [typedName, setTypedName] = useState('');
-  const [drawMode, setDrawMode] = useState(false);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const agreementRef = useRef<HTMLElement | null>(null);
-  // E-sign evidence: the signer must scroll through the full agreement before the
-  // Sign button enables. If the body fits without scrolling there's nothing to
-  // gate on, so it counts as read.
-  const [scrolledEnd, setScrolledEnd] = useState(false);
-  useEffect(() => {
-    if (selectedKind === null) return;
-    const el = agreementRef.current;
-    setScrolledEnd(!el || el.scrollHeight <= el.clientHeight + 4);
-  }, [selectedKind]);
-  const onAgreementScroll = (e: React.UIEvent<HTMLElement>) => {
-    const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 8) setScrolledEnd(true);
-  };
-  const [drawing, setDrawing] = useState(false);
 
   // Stage 2 state
   const [activeTab, setActiveTab] = useState<string | null>(null);
@@ -123,84 +106,12 @@ export const PortalOnboarding = ({
   const s3done = s2done && !!progress?.stage3_complete;
   const stagesDone = (s1done ? 1 : 0) + (s2done ? 1 : 0) + (s3done ? 1 : 0);
 
-  // --- canvas drawing helpers ---
-  const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    setDrawing(true);
-    const rect = canvas.getBoundingClientRect();
-    ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
-  };
-  const continueDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!drawing) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
-    ctx.stroke();
-  };
-  const endDraw = () => setDrawing(false);
-
-  // --- touch equivalents (map touch → same draw logic) ---
-  const startDrawTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    const touch = e.touches[0];
-    if (!touch) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    setDrawing(true);
-    const rect = canvas.getBoundingClientRect();
-    ctx.beginPath();
-    ctx.moveTo(touch.clientX - rect.left, touch.clientY - rect.top);
-  };
-  const continueDrawTouch = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    if (!drawing) return;
-    const touch = e.touches[0];
-    if (!touch) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineTo(touch.clientX - rect.left, touch.clientY - rect.top);
-    ctx.stroke();
-  };
-  const endDrawTouch = () => setDrawing(false);
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    ctx?.clearRect(0, 0, canvas.width, canvas.height);
-  };
-
-  const handleSign = (kind: AgreementKind) => {
-    if (!typedName.trim()) {
-      notify('Please type your legal name to sign.', { type: 'warn' });
-      return;
-    }
-    let sigDataUrl = '';
-    if (drawMode && canvasRef.current) {
-      sigDataUrl = canvasRef.current.toDataURL('image/png');
-    }
+  const handleSign = (kind: AgreementKind, sig: SignInput) => {
     startTransition(async () => {
-      const result = await signAgreement({
-        agreementKey: kind,
-        signatureDataUrl: sigDataUrl,
-        typedName: typedName.trim(),
-        scrolledToEnd: scrolledEnd,
-      });
+      const result = await signAgreement({ agreementKey: kind, ...sig });
       if (result.ok) {
         notify(`${KIND_LABEL[kind] ?? kind} signed!`, { type: 'success' });
         setSelectedKind(null);
-        setTypedName('');
-        clearCanvas();
         router.refresh();
       } else {
         notify(result.error, { type: 'error' });
@@ -481,142 +392,13 @@ export const PortalOnboarding = ({
 
       {/* Signing modal */}
       {selectedKind !== null && (
-        <Modal
+        <SignModal
           title={`Sign — ${KIND_LABEL[selectedKind] ?? selectedKind}`}
-          onClose={() => {
-            setSelectedKind(null);
-            setTypedName('');
-            clearCanvas();
-          }}
-          maxWidth={600}
-        >
-          {/* Agreement body — full column width preview of the contract.
-              Scrollable region kept keyboard-focusable so non-mouse users can
-              scroll it (WCAG 2.1.1); a labelled <section> is a region landmark. */}
-          {templateMap[selectedKind]?.body && (
-            <section
-              ref={agreementRef}
-              onScroll={onAgreementScroll}
-              // biome-ignore lint/a11y/noNoninteractiveTabindex: focusable scroll region (WCAG 2.1.1).
-              tabIndex={0}
-              aria-label="Agreement text — scroll to the end to enable signing"
-              style={{
-                width: '100%',
-                maxHeight: 280,
-                overflowY: 'auto',
-                padding: '8px 12px',
-                background: 'var(--surface2)',
-                borderRadius: 6,
-                fontSize: 13,
-                whiteSpace: 'pre-wrap',
-                marginBottom: 12,
-              }}
-            >
-              {templateMap[selectedKind]?.body}
-            </section>
-          )}
-
-          {/* Signature method toggle */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-            <button
-              type="button"
-              className={`btn sm${!drawMode ? '' : ' ghost'}`}
-              onClick={() => setDrawMode(false)}
-            >
-              Type signature
-            </button>
-            <button
-              type="button"
-              className={`btn sm${drawMode ? '' : ' ghost'}`}
-              onClick={() => setDrawMode(true)}
-            >
-              Draw signature
-            </button>
-          </div>
-
-          {drawMode ? (
-            <>
-              <canvas
-                ref={canvasRef}
-                width={540}
-                height={120}
-                role="img"
-                aria-label="Signature drawing area — draw your signature with mouse or finger"
-                style={{
-                  border: '1px solid var(--border)',
-                  borderRadius: 4,
-                  cursor: 'crosshair',
-                  touchAction: 'none',
-                  width: '100%',
-                }}
-                onMouseDown={startDraw}
-                onMouseMove={continueDraw}
-                onMouseUp={endDraw}
-                onMouseLeave={endDraw}
-                onTouchStart={startDrawTouch}
-                onTouchMove={continueDrawTouch}
-                onTouchEnd={endDrawTouch}
-              />
-              <button
-                type="button"
-                className="btn ghost sm"
-                style={{ marginTop: 6 }}
-                onClick={clearCanvas}
-              >
-                Clear
-              </button>
-            </>
-          ) : null}
-
-          <label
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-              marginTop: 12,
-            }}
-          >
-            <span className="sub" style={{ fontSize: 11 }}>
-              Type your full legal name to confirm your signature
-            </span>
-            <input
-              type="text"
-              value={typedName}
-              placeholder="Your legal name"
-              onChange={(e) => setTypedName(e.target.value)}
-            />
-          </label>
-
-          {!scrolledEnd && (
-            <p
-              className="sub"
-              style={{ fontSize: 11, marginTop: 12, color: 'var(--warn, #b45309)' }}
-            >
-              Scroll through the full agreement to enable signing.
-            </p>
-          )}
-          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-            <button
-              type="button"
-              className="btn"
-              disabled={isPending || !typedName.trim() || !scrolledEnd}
-              onClick={() => handleSign(selectedKind)}
-            >
-              {isPending ? 'Signing…' : 'Sign Agreement'}
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => {
-                setSelectedKind(null);
-                setTypedName('');
-                clearCanvas();
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </Modal>
+          body={templateMap[selectedKind]?.body ?? ''}
+          busy={isPending}
+          onClose={() => setSelectedKind(null)}
+          onSign={(sig) => handleSign(selectedKind, sig)}
+        />
       )}
 
       {/* Tab-complete confirmation modal */}

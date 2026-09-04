@@ -87,8 +87,22 @@ const resolve = cache(async (): Promise<Resolution> => {
   // that keeps the access is the legacy portal, which never runs any of this.
   // Keeping the check here anyway closes the ≤24h window before the next tick,
   // for the one client that does run it.
-  if (w.status === 'ended' && !(await hasPayOutstanding(createServiceClient(), w.id))) {
-    return { worker: null, accessEnded: true };
+  //
+  // A rehire in progress is the one departure that keeps access while fully
+  // paid: sendContractVersion restored the login so they can sign, and the
+  // engagement stays 'ended' until countersign. Same rule as the sweep's skip.
+  if (w.status === 'ended') {
+    const svc = createServiceClient();
+    const { data: rehiring } = await svc
+      .from('contract_versions')
+      .select('id')
+      .eq('worker_id', w.id)
+      .in('status', ['sent', 'signed'])
+      .limit(1)
+      .maybeSingle();
+    if (!rehiring && !(await hasPayOutstanding(svc, w.id))) {
+      return { worker: null, accessEnded: true };
+    }
   }
 
   // Legacy RLS helper: true once the contractor finished onboarding.

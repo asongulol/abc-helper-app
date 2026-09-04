@@ -3,8 +3,8 @@
 /**
  * Contracts tab — the contract of record and every version of it
  * (docs/CONTRACT-VERSIONS-PLAN.md §5). Self-contained like RateCard: owns its
- * data and its actions, so it sits outside the profile form. Sign (portal),
- * the frozen print view and countersign arrive with slices 3–4.
+ * data and its actions, so it sits outside the profile form. Sign lives in the
+ * portal; countersign arrives with slice 4.
  */
 
 import { useCallback, useEffect, useState, useTransition } from 'react';
@@ -243,6 +243,11 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                 ? ` · countersigned ${fmtDate(record.countersignedAt)}`
                 : ' · not countersigned'}
             </div>
+            {record.id && (
+              <a href={`/contracts/${record.id}/print`} target="_blank" rel="noopener">
+                Print
+              </a>
+            )}
           </div>
         )}
       </section>
@@ -318,6 +323,7 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                     <th>Sent</th>
                     <th>Signed</th>
                     <th>Countersigned</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
@@ -343,6 +349,13 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                         {v.countersignedAt
                           ? `${fmtDate(v.countersignedAt)}${v.countersignedName ? ` · ${v.countersignedName}` : ''}`
                           : '—'}
+                      </td>
+                      <td>
+                        {v.renderedBody && (
+                          <a href={`/contracts/${v.id}/print`} target="_blank" rel="noopener">
+                            Print
+                          </a>
+                        )}
                       </td>
                     </tr>
                   ))}

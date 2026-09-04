@@ -17,6 +17,8 @@ interface Props {
   email?: string;
   /** Count of documents needing the contractor's attention (nav badge). */
   docsBadge?: number;
+  /** Count of contract versions awaiting the contractor's signature (nav badge). */
+  contractsBadge?: number;
   children: ReactNode;
 }
 
@@ -34,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/portal/time', label: 'Time', icon: '⏱' },
   { href: '/portal/sessions', label: 'Sessions', icon: '🗓' },
   { href: '/portal/docs', label: 'Docs', icon: '📄' },
+  { href: '/portal/contracts', label: 'Contracts', icon: '📝' },
   { href: '/portal/profile', label: 'Profile', icon: '👤' },
 ];
 
@@ -43,6 +46,7 @@ export const PortalShell = ({
   onboardingOpen = false,
   email,
   docsBadge = 0,
+  contractsBadge = 0,
   children,
 }: Props) => {
   const pathname = usePathname();
@@ -154,7 +158,13 @@ export const PortalShell = ({
                 : !onboarded && item.href !== '/portal';
             if (hidden) return null;
             const active = isActive(item);
-            const showBadge = item.href === '/portal/docs' && docsBadge > 0;
+            const badge =
+              item.href === '/portal/docs'
+                ? docsBadge
+                : item.href === '/portal/contracts'
+                  ? contractsBadge
+                  : 0;
+            const showBadge = badge > 0;
             return (
               <Link
                 key={item.href}
@@ -168,7 +178,7 @@ export const PortalShell = ({
                       {item.icon}
                       <span
                         role="img"
-                        aria-label={`${docsBadge} to upload`}
+                        aria-label={`${badge} needing attention`}
                         style={{
                           position: 'absolute',
                           top: -6,
@@ -186,7 +196,7 @@ export const PortalShell = ({
                           boxShadow: '0 0 0 2px #fff',
                         }}
                       >
-                        {docsBadge}
+                        {badge}
                       </span>
                     </span>
                   ) : (
