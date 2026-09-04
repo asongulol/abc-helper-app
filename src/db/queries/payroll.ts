@@ -200,7 +200,7 @@ export type OffCycleItemRow = {
   id: string;
   workerId: string;
   payPeriodId: string;
-  basis: 'per_session' | 'per_hour' | 'salaried_hours';
+  basis: 'per_session' | 'per_hour' | 'salaried_hours' | 'backpay';
   sessionId: string | null;
   workDate: string | null;
   units: number | null;
@@ -236,7 +236,9 @@ const mapOffCycleRow = (r: RawOffCycleRow): OffCycleItemRow => ({
       ? 'per_hour'
       : r.basis === 'salaried_hours'
         ? 'salaried_hours'
-        : 'per_session',
+        : r.basis === 'backpay'
+          ? 'backpay'
+          : 'per_session',
   sessionId: r.session_id,
   workDate: r.work_date,
   units: r.units == null ? null : Number(r.units),
@@ -360,7 +362,7 @@ export type NewOffCycleItem = {
   companyId: string;
   workerId: string;
   payPeriodId: string;
-  basis: 'per_session' | 'per_hour' | 'salaried_hours';
+  basis: 'per_session' | 'per_hour' | 'salaried_hours' | 'backpay';
   sessionId: string | null;
   workDate: string | null;
   units: number | null;

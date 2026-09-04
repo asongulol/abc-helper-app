@@ -43,6 +43,11 @@ import { requireWorker } from '@/server/auth/worker';
 import { encryptIfConfigured } from '@/server/crypto';
 import { portalUrl, trySend } from '@/server/email/send';
 import { DEFAULT_HIRE_EMAILS, escapeHtml, mergeTemplate } from '@/server/email/templates';
+import {
+  addContractBackpayEntry,
+  type BackpayQuote,
+  quoteContractBackpay,
+} from '@/server/off-cycle';
 import { todayManila } from '@/types/schemas/contractors';
 import {
   ContractVersionRefSchema,
@@ -763,5 +768,45 @@ export async function countersignContractVersion(
       }
     }
     return { ok: false, error: humanizeError(err, 'Countersign failed.') };
+  }
+}
+
+/**
+ * What a countersigned version still owes for periods paid at the old rate
+ * (slice 4b). Read under RLS, then the usual gate — a scoped admin's read
+ * returns nothing for a company outside their scope, so nothing leaks first.
+ */
+export async function getContractBackpay(args: unknown): Promise<ActionResult<BackpayQuote>> {
+  const parsed = ContractVersionRefSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  try {
+    const quote = await quoteContractBackpay({ versionId: parsed.data.versionId });
+    const auth = await authorize(quote.companyId);
+    if ('error' in auth) return auth;
+    return { ok: true, data: quote };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not quote backpay.') };
+  }
+}
+
+/** Add the outstanding backpay to the next open period — see addContractBackpayEntry. */
+export async function addContractBackpay(
+  args: unknown,
+): Promise<ActionResult<{ amountPhp: number; count: number; netPhp: number | null }>> {
+  const parsed = ContractVersionRefSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  try {
+    const svc = createServiceClient();
+    const v = await fetchContractVersion(svc, parsed.data.versionId);
+    if (!v) return { ok: false, error: 'Contract version not found.' };
+    const auth = await authorize(v.companyId);
+    if ('error' in auth) return auth;
+    const data = await addContractBackpayEntry({ versionId: v.id });
+    revalidatePath('/', 'layout');
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not add backpay.') };
   }
 }

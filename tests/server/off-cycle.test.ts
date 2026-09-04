@@ -16,11 +16,13 @@ vi.mock('@/db/clients/service', () => ({
 vi.mock('@/server/audit', () => ({ logEvent: async () => {} }));
 
 const {
+  addContractBackpayEntry,
   addOffCycleEntry,
   addSalariedCatchUpEntry,
   paySessionsIntoOffCycleBatch,
   paySessionsIntoOpenDraft,
   paySessionsIntoPeriod,
+  quoteContractBackpay,
   removeOffCycleEntry,
 } = await import('@/server/off-cycle');
 type PayrollDeps = import('@/server/payroll').PayrollDeps;
@@ -526,5 +528,179 @@ describe('removeOffCycleEntry', () => {
       'Period is locked — unlock it to remove off-cycle pay.',
     );
     expect(tables.off_cycle_pay_items).toHaveLength(1);
+  });
+});
+
+/* ---------- Contract backpay (slice 4b) ---------- */
+
+describe('contract backpay', () => {
+  const V3 = 'v-3';
+  const TODAY = '2026-08-05';
+  /**
+   * Cara's raise to ₱12,000 took effect 2026-07-06 (a Monday) but was
+   * countersigned in August. Jul 1–15 was paid at ₱10,000 with ratio .8, plus a
+   * ₱2,000 catch-up for that period priced at the old rate; Jul 16–31 is locked
+   * but unpaid; Aug 1–15 is the open target.
+   */
+  const seedBackpay = (): Tables => {
+    const seed = seedBase();
+    seed.workers = [worker('w-cara')];
+    seed.worker_companies = [link('w-cara', 'FT')];
+    seed.rates = [
+      { ...rate('w-cara', 10000), effective_end: '2026-07-05' },
+      { ...rate('w-cara', 12000), effective_start: '2026-07-06' },
+    ];
+    seed.pay_periods = [
+      period({ id: 'pp-0', period_start: '2026-06-16', period_end: '2026-06-30', state: 'paid' }),
+      period({ state: 'paid' }),
+      nextPeriod({ state: 'locked' }),
+      period({ id: 'pp-3', period_start: '2026-08-01', period_end: '2026-08-15', state: 'open' }),
+    ];
+    seed.payments = [
+      {
+        id: 'pay-0',
+        company_id: COMPANY,
+        pay_period_id: 'pp-0',
+        worker_id: 'w-cara',
+        gross_php: 10000,
+        rate_php: 10000,
+        paid_at: '2026-07-01T00:00:00Z',
+      },
+      {
+        id: 'pay-1',
+        company_id: COMPANY,
+        pay_period_id: 'pp-1',
+        worker_id: 'w-cara',
+        gross_php: 8000,
+        rate_php: 10000,
+        paid_at: '2026-07-16T00:00:00Z',
+      },
+      {
+        id: 'pay-2',
+        company_id: COMPANY,
+        pay_period_id: 'pp-2',
+        worker_id: 'w-cara',
+        gross_php: 10000,
+        rate_php: 10000,
+        paid_at: null,
+      },
+      {
+        id: 'pay-3',
+        company_id: COMPANY,
+        pay_period_id: 'pp-3',
+        worker_id: 'w-cara',
+        gross_php: 1000,
+        net_php: 1000,
+      },
+    ];
+    seed.off_cycle_pay_items = [
+      {
+        id: 'oc-cu',
+        company_id: COMPANY,
+        worker_id: 'w-cara',
+        pay_period_id: 'pp-2',
+        basis: 'salaried_hours',
+        session_id: null,
+        work_date: END,
+        units: 16,
+        rate_php: 10000,
+        amount_php: 2000,
+      },
+    ];
+    seed.contract_versions = [
+      {
+        id: V3,
+        worker_id: 'w-cara',
+        company_id: COMPANY,
+        version: 3,
+        status: 'active',
+        rate_php: 12000,
+        period_basis: 'semi_monthly',
+        start_date: '2025-01-01',
+        effective_from: '2026-07-06',
+        countersigned_at: '2026-08-04T00:00:00Z',
+      },
+    ];
+    return seed;
+  };
+
+  it('quotes each paid period since the effective date, prorated, catch-ups included, unpaid ones warned', async () => {
+    const { deps } = mkDeps(seedBackpay());
+
+    const q = await quoteContractBackpay({ versionId: V3, today: TODAY }, deps);
+
+    // 8,000 × 0.2 × 8/11 = 1,163.64; catch-up 2,000 × 0.2 × 8/11 = 290.91
+    expect(q.lines).toEqual([
+      {
+        periodStart: START,
+        periodEnd: END,
+        paidPhp: 8000,
+        catchUpPhp: 2000,
+        oldRatePhp: 10000,
+        coveredDays: 8,
+        totalDays: 11,
+        owedPhp: 1454.55,
+        addedPhp: null,
+      },
+    ]);
+    expect(q.warnings).toEqual([
+      `${NEXT_START} – ${NEXT_END} is locked but not paid — unlock and recalculate it instead of adding backpay.`,
+    ]);
+    expect(q.totalPhp).toBe(1454.55);
+    expect(q.target).toEqual({ periodStart: '2026-08-01', periodEnd: '2026-08-15' });
+  });
+
+  it("skips to the next period when today's is already closed", async () => {
+    const seed = seedBackpay();
+    const aug = seed.pay_periods.find((p) => p.id === 'pp-3');
+    if (aug) aug.state = 'paid';
+    const { deps } = mkDeps(seed);
+
+    const q = await quoteContractBackpay({ versionId: V3, today: TODAY }, deps);
+
+    expect(q.target).toEqual({ periodStart: '2026-08-16', periodEnd: '2026-08-31' });
+  });
+
+  it('adds one backpay row per period on the target and updates only off_cycle/net in place', async () => {
+    const { deps, tables } = mkDeps(seedBackpay());
+
+    const res = await addContractBackpayEntry({ versionId: V3, today: TODAY }, deps);
+
+    expect(res).toEqual({ netPhp: 2454.55, amountPhp: 1454.55, count: 1 });
+    const added = tables.off_cycle_pay_items.filter((r) => r.basis === 'backpay');
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({
+      pay_period_id: 'pp-3',
+      session_id: null,
+      work_date: START, // keyed on the ORIGINAL period's start — never the catch-up's end
+      units: null,
+      rate_php: 12000,
+      amount_php: 1454.55,
+      description: 'Backpay v3 · 2026-07-01 – 2026-07-15 · 8/11 working days at ₱12,000.00',
+    });
+    expect(tables.payments.find((p) => p.id === 'pay-3')).toMatchObject({
+      gross_php: 1000,
+      off_cycle_php: 1454.55,
+      net_php: 2454.55,
+    });
+
+    // Idempotent: the row now reads as added, and a second add has nothing to do.
+    const again = await quoteContractBackpay({ versionId: V3, today: TODAY }, deps);
+    expect(again.lines[0]?.addedPhp).toBe(1454.55);
+    expect(again.totalPhp).toBe(0);
+    await expect(addContractBackpayEntry({ versionId: V3, today: TODAY }, deps)).rejects.toThrow(
+      /Nothing to add/,
+    );
+  });
+
+  it('quotes only a countersigned version', async () => {
+    const seed = seedBackpay();
+    const v = seed.contract_versions?.[0];
+    if (v) v.countersigned_at = null;
+    const { deps } = mkDeps(seed);
+
+    await expect(quoteContractBackpay({ versionId: V3, today: TODAY }, deps)).rejects.toThrow(
+      /countersigned/,
+    );
   });
 });

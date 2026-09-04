@@ -4,7 +4,9 @@
 > applied to prod 2026-09-04. Slice 2 (draft / send / void + admin UI, §6.2) merged 2026-09-04
 > (PR #154). Slice 3 (portal sign + frozen print + history, §6.3) merged 2026-09-04 (PR #155).
 > Slice 4 (countersign write-through + rate guard, §6.4) built 2026-09-04 on
-> `feat/contract-versions-4-countersign`. Slice 5 (docs) not started.
+> `feat/contract-versions-4-countersign` (PR #156). Slice 4b (backpay for a backdated
+> effective date, §4b below) built 2026-09-04 on `feat/contract-versions-4b-backpay`;
+> migration 45 (basis CHECK + 'backpay') needs the prod apply. Slice 5 (docs) not started.
 >
 > Slice 4 deviations from §4 below: the prior version is matched by status (whatever is
 > `active` for the engagement) rather than by `supersedes_id`, so the one-active index can never
@@ -172,6 +174,25 @@ Do **not** call `reactivateWorkerLink` — it reopens the old rate by `effective
 which would collide with step 1.
 
 ---
+
+## 4b. Backpay for a late review (owner decisions 2026-09-04)
+
+The effective date of a draft may be earlier than today (a review that should have taken
+effect months ago). Countersign writes the rate from that date; periods already PAID at the
+old rate are then owed the difference. Decisions: (1) the first period is **prorated by working
+days** on/after the effective date (the engine never prorates — this is deliberately different);
+(2) the money lands as an off-cycle ledger line on the **next open regular period**; (3) it is a
+**quote the admin confirms** on the Contracts tab, not automatic at countersign; (4) a locked but
+unpaid period is **excluded with a warning** — unlock + recalc is the fix there; (5) salaried
+**catch-up rows** for those periods, priced at the old rate, are included.
+
+Formula per paid row: `paid × (new − old) / old × fraction` — identical to the engine's
+`(new − old) × min(ratio, 1)` for a salaried row and `(new − old) × units` for a per-unit one,
+and it needs no ratio column, so legacy rows price too. Never negative. Ledger row:
+`basis='backpay'`, `work_date = original period_start` (dedup via the existing manual-date
+unique index; a catch-up on the same period is keyed on period_end so they never collide),
+`rate_php = new rate`, `amount_php = Σ`. Pure pricing: `src/lib/pay/backpay.ts`; service:
+`quoteContractBackpay` / `addContractBackpayEntry` in `src/server/off-cycle.ts`.
 
 ## 5. UI
 
