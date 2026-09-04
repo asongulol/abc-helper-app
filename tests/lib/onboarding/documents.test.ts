@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_REQUIRED_DOCS,
   deriveDocChecklist,
+  docKindSlug,
   isStage3Complete,
   outstandingSlots,
+  parseExtraDocs,
   type RequiredDoc,
   type Stage3DocRow,
   type UploadedDocLike,
+  withExtraDocs,
 } from '@/lib/onboarding/documents';
 
 const CFG: RequiredDoc[] = [
@@ -297,5 +300,37 @@ describe('isStage3Complete', () => {
       doc({ id: 'gb', kind: 'gov_id', side: 'back' }),
     ];
     expect(isStage3Complete(rows)).toBe(true);
+  });
+});
+
+describe('withExtraDocs — requested documents join the required list', () => {
+  it('appends extras not already configured, keeps the default fallback, ignores junk', () => {
+    const extra = [
+      { kind: 'tin_id', title: 'TIN ID', required: true },
+      { kind: 'resume', title: 'Resume again' }, // already configured → dropped
+      { title: 'no kind' },
+      null,
+      'x',
+    ];
+    expect(withExtraDocs(CFG, extra).map((d) => d.kind)).toEqual([
+      ...CFG.map((d) => d.kind),
+      'tin_id',
+    ]);
+    expect(withExtraDocs([], extra).map((d) => d.kind)).toEqual([
+      ...DEFAULT_REQUIRED_DOCS.map((d) => d.kind),
+      'tin_id',
+    ]);
+    expect(withExtraDocs(CFG, undefined)).toEqual(CFG);
+    expect(parseExtraDocs([{ kind: 'barangay_clearance' }])[0]?.title).toBe('Barangay Clearance');
+  });
+
+  it('a requested doc is an outstanding slot until uploaded', () => {
+    const slots = deriveDocChecklist(withExtraDocs(CFG, [{ kind: 'tin_id', title: 'TIN ID' }]), []);
+    expect(outstandingSlots(slots).map((s) => s.label)).toContain('TIN ID');
+  });
+
+  it('docKindSlug matches the legacy ocSlug', () => {
+    expect(docKindSlug('Tax ID (TIN)')).toBe('tax_id_tin');
+    expect(docKindSlug('   ')).toBe('item');
   });
 });

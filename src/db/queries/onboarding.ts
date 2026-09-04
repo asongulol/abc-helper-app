@@ -7,6 +7,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { deriveOpenItems, type OpenItem, type TeamDoc } from '@/lib/onboarding/current-team';
+import { parseExtraDocs } from '@/lib/onboarding/documents';
 import { decryptIfNeeded } from '@/server/crypto';
 import { uuid } from '@/types/schemas/uuid';
 
@@ -484,12 +485,12 @@ export const fetchCurrentTeam = async (
     svc
       .from('documents')
       .select(
-        'id, worker_id, kind, side, review_status, storage_path, expires_on, defer_until, created_at',
+        'id, worker_id, kind, side, title, review_status, storage_path, expires_on, defer_until, created_at',
       )
       .in('worker_id', ids),
     svc
       .from('onboarding_progress')
-      .select('worker_id, current_stage, completed_at')
+      .select('worker_id, current_stage, completed_at, extra_documents')
       .in('worker_id', ids),
   ]);
   for (const r of [versions, sigs, logins, docs, progress])
@@ -500,6 +501,9 @@ export const fetchCurrentTeam = async (
     (progress.data ?? [])
       .filter((p) => p.current_stage !== 'complete' || !p.completed_at)
       .map((p) => p.worker_id),
+  );
+  const requestedBy = new Map(
+    (progress.data ?? []).map((p) => [p.worker_id, parseExtraDocs(p.extra_documents)]),
   );
   // One in flight at most per engagement (partial unique index); it wins over active.
   const versionBy = new Map<string, { status: ContractVersionStatus; sentAt: string | null }>();
@@ -517,6 +521,7 @@ export const fetchCurrentTeam = async (
       id: d.id,
       kind: d.kind,
       side: d.side,
+      title: d.title,
       reviewStatus: d.review_status,
       storagePath: d.storage_path,
       expiresOn: d.expires_on,
@@ -541,6 +546,7 @@ export const fetchCurrentTeam = async (
           version: versionBy.get(l.worker_id) ?? null,
           hasIcSignature: signed.has(l.worker_id),
           docs: docsBy.get(l.worker_id) ?? [],
+          requested: requestedBy.get(l.worker_id) ?? [],
         },
         today,
       ),

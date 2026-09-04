@@ -10,8 +10,10 @@
 > [Data model](./data-model.md#contract-versions), [Contractor portal](./portal.md#contracts) and
 > the server-actions reference. Slice 7a (notice_days token + void-prefill, migration 46) merged
 > 2026-09-04 (PR #159); migration 46 applied to prod 2026-09-04. Slice 7b (Onboarding tabs +
-> Current team rows + Overview countersign duty) merged 2026-09-04. Slices 7c–7d (Request/Remind,
-> digest) pending. **§0–§6 complete; §7 in progress.**
+> Current team rows + Overview countersign duty) merged 2026-09-04. Slice 7c (Request a document /
+> Remind + `doc_request` / `owed_reminder` templates; requested extras now join the portal owed
+> list via `withExtraDocs`) merged 2026-09-04. Slice 7d (digest) pending. **§0–§6 complete; §7
+> in progress.**
 >
 > Slice 4 deviations from §4 below: the prior version is matched by status (whatever is
 > `active` for the engagement) rather than by `supersedes_id`, so the one-active index can never

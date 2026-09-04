@@ -26,10 +26,10 @@ import { fetchOwnDocuments } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
 import { parseDocUploadForm } from '@/lib/onboarding/doc-upload';
-import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
+import { deriveDocChecklist, outstandingSlots, withExtraDocs } from '@/lib/onboarding/documents';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
-import { type CurrentAdmin, getCurrentAdmin } from '@/server/auth/admin';
+import { adminInScopeForWorker, getCurrentAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
 
@@ -53,34 +53,28 @@ export async function fetchOutstandingDocSlots(): Promise<OutstandingDocSlot[]> 
   const worker = await requireWorker();
   const db = await createServerSupabase();
 
-  const [{ data: settings }, docs] = await Promise.all([
+  const [{ data: settings }, docs, { data: progress }] = await Promise.all([
     db.from('portal_settings').select('onboarding_config').eq('id', 1).maybeSingle(),
     fetchOwnDocuments(db, worker.workerId),
+    db
+      .from('onboarding_progress')
+      .select('extra_documents')
+      .eq('worker_id', worker.workerId)
+      .maybeSingle(),
   ]);
 
   const cfg = parseOnboardingConfig(settings?.onboarding_config);
-  const checklist = deriveDocChecklist(cfg.documents, docs);
+  // Requested extras (hire wizard / Request a document) join the owed list.
+  const checklist = deriveDocChecklist(
+    withExtraDocs(cfg.documents, progress?.extra_documents),
+    docs,
+  );
   return outstandingSlots(checklist).map((s) => ({
     kind: s.kind,
     side: s.side,
     label: s.label,
     freshnessMonths: s.freshnessMonths,
   }));
-}
-
-/**
- * Company-scope gate shared by the admin document actions (list / upload —
- * same pattern as sendToolsEmail): a non-owner admin must share a company
- * with the worker.
- */
-async function adminInScopeForWorker(admin: CurrentAdmin, workerId: string): Promise<boolean> {
-  if (admin.isOwner) return true;
-  const db = await createServerSupabase();
-  const { data: links } = await db
-    .from('worker_companies')
-    .select('company_id')
-    .eq('worker_id', workerId);
-  return (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
 }
 
 /**

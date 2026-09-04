@@ -23,6 +23,7 @@ import type {
 } from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
+import { remindContractor, requestDocument } from '@/server/actions/onboarding';
 import { resendHireEmails } from '@/server/actions/portal-admin';
 
 // Heavy wizards load on first open, not with the onboarding list.
@@ -81,6 +82,44 @@ export const OnboardingClient = ({
   /** Onboard Current wizard: null = closed, '' = open unselected, id = preselected. */
   const [onboardTarget, setOnboardTarget] = useState<string | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
+  /** Request-a-document modal: the Current team row it's for, or null. */
+  const [requestFor, setRequestFor] = useState<CurrentTeamRow | null>(null);
+  const [requestTitle, setRequestTitle] = useState('');
+
+  const handleRemind = (row: CurrentTeamRow) => {
+    startTransition(async () => {
+      const result = await remindContractor({ workerId: row.workerId });
+      if (result.ok)
+        notify(
+          `Reminder sent to ${row.workerName} (${result.data.lines} item${result.data.lines === 1 ? '' : 's'}).`,
+          {
+            type: 'success',
+          },
+        );
+      else notify(result.error, { type: 'error' });
+    });
+  };
+
+  const handleRequest = () => {
+    if (!requestFor) return;
+    const row = requestFor;
+    startTransition(async () => {
+      const result = await requestDocument({ workerId: row.workerId, title: requestTitle });
+      if (!result.ok) {
+        notify(result.error, { type: 'error' });
+        return;
+      }
+      setRequestFor(null);
+      setRequestTitle('');
+      notify(
+        result.data.emailSent
+          ? `Requested from ${row.workerName} — email sent.`
+          : `Added to ${row.workerName}'s list, but the email could not be sent — check the audit log.`,
+        { type: result.data.emailSent ? 'success' : 'error' },
+      );
+      router.refresh();
+    });
+  };
 
   const handleResendInvite = (row: OnboardingProgressRow) => {
     startTransition(async () => {
@@ -236,7 +275,34 @@ export const OnboardingClient = ({
       label: '',
       render: (row) => (
         <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-          {!row.hasLogin && (
+          {row.hasLogin ? (
+            <>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={isPending || consolidated}
+                title="Ask for one more document — it joins their owed list in the portal"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setRequestFor(row);
+                }}
+              >
+                Request doc
+              </button>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={isPending || consolidated}
+                title="Email them everything still owed"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleRemind(row);
+                }}
+              >
+                Remind
+              </button>
+            </>
+          ) : (
             <button
               type="button"
               className="btn ghost sm"
@@ -420,6 +486,46 @@ export const OnboardingClient = ({
             router.refresh();
           }}
         />
+      )}
+
+      {requestFor && (
+        <Modal
+          title={`Request a document from ${requestFor.workerName}`}
+          onClose={() => setRequestFor(null)}
+          maxWidth={480}
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleRequest();
+            }}
+            style={{ display: 'grid', gap: 12 }}
+          >
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span className="sub">Document</span>
+              <input
+                // biome-ignore lint/a11y/noAutofocus: single-field modal
+                autoFocus
+                required
+                maxLength={120}
+                placeholder="e.g. TIN ID, Barangay clearance…"
+                value={requestTitle}
+                onChange={(e) => setRequestTitle(e.target.value)}
+              />
+            </label>
+            <p className="sub" style={{ margin: 0 }}>
+              It joins their owed list in the portal and they get an email. No due date.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" className="btn ghost" onClick={() => setRequestFor(null)}>
+                Cancel
+              </button>
+              <button type="submit" className="btn" disabled={isPending || !requestTitle.trim()}>
+                Request &amp; email
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {showTemplates && (

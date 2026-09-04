@@ -27,6 +27,7 @@ import {
 } from '@/db/queries/workers';
 import type { Json } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
+import { docKindSlug } from '@/lib/onboarding/documents';
 import { saveRate } from '@/server/actions/payroll';
 import { type ActionResult, createPortalLogin } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
@@ -389,14 +390,6 @@ export async function endAssignment(args: unknown): Promise<ActionResult> {
   }
 }
 
-/** Slugify an extra-document title to a stable kind key (legacy ocSlug). */
-const docSlug = (s: string): string =>
-  String(s ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 40) || 'item';
-
 /** Dedupe extra-doc kinds, suffixing collisions (legacy ocUniq). */
 const uniqueDocs = (
   items: Array<{ kind: string; title: string; required: boolean }>,
@@ -708,7 +701,7 @@ export async function hireContractor(
         input.extraDocs
           .map((t) => t.trim())
           .filter(Boolean)
-          .map((t) => ({ kind: docSlug(t), title: t, required: true })),
+          .map((t) => ({ kind: docKindSlug(t), title: t, required: true })),
       );
       if (input.invite && xdocs.length > 0) {
         await db
