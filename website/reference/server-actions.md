@@ -44,7 +44,7 @@ event named `x` via `logEvent`. "revalidate: `/p`" = calls
 
 ## Contractors & onboarding
 
-Source: `contractors.ts`, `onboarding.ts`.
+Source: `contractors.ts`, `onboarding.ts`, `contracts.ts`.
 
 ### `contractors.ts`
 
@@ -60,6 +60,23 @@ Source: `contractors.ts`, `onboarding.ts`.
 | `getWorkerCompanies` | All company links for a worker (engagements editor) | `{ workerId }` | admin | read-only |
 | `saveWorkerCompanyLink` | Update one company link's role / rates / contract / status | `{ workerId, companyId, role, billRateUsd, sessionRateUsd, contract, payBasis, status }` | admin (scoped) | update `worker_companies` (service client); audit `edit_contractor`; revalidate `/contractors` |
 | `assignWorkerCompany` | Assign a contractor to another company (new link) | `{ workerId, companyId }` | admin (scoped) | insert `worker_companies`; audit `edit_contractor`; revalidate `/contractors` |
+
+### `contracts.ts`
+
+Contract versions — rehire / modify / re-issue the IC agreement
+(`docs/onboarding-documents.md#contract-versions`). Every admin action here requires
+`can_countersign` **and** company scope; `signContractVersion` is the one contractor action.
+
+| Action | Purpose | Input | Auth | Side effects |
+|---|---|---|---|---|
+| `listContractVersions` | Contract of record (active row, else the v1 read-through) + every versioned row for one engagement | `EngagementRefSchema` | admin (scoped) | read-only (RLS client) |
+| `draftContractVersion` | Create a draft prefilled from the contract of record, or edit the existing draft in place; refused while a version is sent/signed | `DraftContractVersionSchema` | admin (scoped, `can_countersign`) | insert/update `contract_versions` (`draft`); audit `contract.drafted` |
+| `sendContractVersion` | Freeze the rendered body + sha256, guarantee a portal login, email the notice, mark sent | `{ versionId }` | admin (scoped, `can_countersign`) | update `contract_versions` (`sent`, `rendered_body`, `doc_sha256`); `createPortalLogin` / `restorePortalLogin`; `contract_review` email (best-effort); audit `contract.sent`; revalidate `/contractors` |
+| `voidContractVersion` | Void a draft / sent / signed version (admin-only; no contractor decline) | `{ versionId, reason? }` | admin (scoped, `can_countersign`) | update `contract_versions` (`void`); a signature on it → `superseded`; `revokePortalLogin` when the worker is ended + fully paid; audit `contract.voided`; revalidate `/contractors` |
+| `signContractVersion` | Contractor signs a sent version (scroll-to-end + typed/drawn); a second sign errors | `SignContractVersionSchema` | worker | insert `onboarding_signatures` (`doc_version = N`, frozen `doc_sha256`, PHI encrypted); update `contract_versions` (`signed`); audit `contract.signed`; revalidate `/contractors` |
+| `countersignContractVersion` | Make a signed version the contract of record: rate + engagement + supersede, with undo-in-reverse rollback | `{ versionId }` | admin (scoped, `can_countersign`) | `executeRateUpsert` at `effective_from`; update `worker_companies` (rehire reopens link + `workers.status`); prior `active` → `superseded`; this row → `active` + `countersigned_*`; `contract_countersigned` email (best-effort); audit `contract.countersigned`; revalidate `/contractors` |
+| `getContractBackpay` | Quote what a countersigned version still owes for periods already paid at the old rate | `{ versionId }` | admin (scoped, `can_countersign`) | read-only (`quoteContractBackpay`) |
+| `addContractBackpay` | Add the quoted backpay to the next open regular period | `{ versionId }` | admin (scoped, `can_countersign`) | insert `off_cycle_pay_items` (`basis='backpay'`, one per original period); update `payments.off_cycle_php`/`net_php`; revalidate layout |
 
 ### `onboarding.ts`
 
@@ -122,7 +139,7 @@ Source: `payroll.ts`, `reconcile.ts`.
 
 | Action | Purpose | Input | Auth | Side effects |
 |---|---|---|---|---|
-| `saveRate` | Save an effective-dated rate (same-day replaces; earlier open rates close) | `RateSaveSchema` | admin (scoped) | upsert `rates`; audit `set_rate` |
+| `saveRate` | Save an effective-dated rate (same-day replaces; earlier open rates close). Under an `active` contract version it is a correction only: owner, and the amount must equal the contract's `rate_php` | `RateSaveSchema` | admin (scoped); owner when a contract version is active | upsert `rates`; audit `set_rate` |
 | `getRateHistory` | Rate history for a worker in a company (newest first) | `{ workerId, companyId }` | admin (scoped) | read-only |
 | `calculatePeriodDraft` | Recalculate a period from tracked hours and save as DRAFT | `CalculateDraftSchema` | admin (scoped) | writes draft `payments` (via service) |
 | `restorePaymentsSnapshot` | Undo the most recent recalc by restoring a snapshot (open periods only) | `RestoreSnapshotSchema` | admin (scoped) | restore `payments`; audit `restore_recalc` |
@@ -317,6 +334,7 @@ portal accounts. (This file also defines the shared `ActionResult` type.)
 | `createPortalLogin` | Create a portal login (temp password + welcome email) | `{ workerId, email }` | admin | `auth.admin.createUser`; insert `contractor_logins`; `seedOnboardingProgress`; welcome email (best-effort); audit `portal_login.created` |
 | `resetPortalPassword` | Re-issue a temp password (and optionally correct the email) | `{ workerId, email? }` | admin | `auth.admin.updateUserById`; update `contractor_logins.email`; credentials email (best-effort); audit `portal_login.reset_password` |
 | `revokePortalLogin` | Revoke a contractor's portal access | `{ workerId }` | admin | set `contractor_logins.status='revoked'`; audit `portal_login.revoked` |
+| `restorePortalLogin` | Restore a revoked login (no-op if already active); used by `sendContractVersion` for a rehire | `{ workerId }` | admin | set `contractor_logins.status='active'`; audit `portal_login.restored` |
 | `resendHireEmails` | Resend the welcome / credentials emails | `{ workerId, which?, password? }` | admin | send 1–2 emails (best-effort); audit `portal_login.resend_hire_emails` |
 | `sendToolsEmail` | Decrypt the worker's tools and email the credentials | `{ workerId }` | admin (scoped) | `decryptWorkerTools` RPC; tools email (best-effort); audit `portal_login.send_tools_email` |
 | `withdrawOffer` | Withdraw a pending offer (revoke login, ban auth user, end worker/links, notify) | `{ workerId }` | admin | blocks if payroll history; set `contractor_logins.status`; ban auth user; set `workers`/`worker_companies` status `ended`; withdrawal email (best-effort); audit `withdraw_offer` |

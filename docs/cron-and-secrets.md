@@ -140,5 +140,6 @@ configured' }`, so a missing credential is a no-op, not a cron failure. Both dig
 this as `emailed: false` (+ `emailError`) rather than a `500`.
 
 Templates / HTML escaping live in `src/server/email/templates.ts` (`escapeHtml`, `mergeTemplate`,
-the new-hire templates). Locally there are no Gmail creds, so SMTP is caught by **Inbucket** — see
+the new-hire templates plus `contract_review` / `contract_countersigned` for contract versions);
+`trySend` / `portalUrl` in `src/server/email/send.ts` wrap a best-effort send. Locally there are no Gmail creds, so SMTP is caught by **Inbucket** — see
 [Local development](./local-development.md).

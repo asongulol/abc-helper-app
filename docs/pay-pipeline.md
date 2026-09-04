@@ -40,6 +40,10 @@ linking the worker to the employer company) and an effective-dated **rate**.
   `src/db/queries/rates.ts`): a same-day rate replaces in place; otherwise the prior open rate
   is closed (`effective_end`) and a new row inserted. Resolution per period is
   `resolveRate()` (`src/lib/pay/rates.ts`) — see [Money core spec §5](./money-core-spec.md).
+  Once an engagement has a versioned contract, the rate is written by
+  `countersignContractVersion()` and `saveRate()` becomes an owner-only correction that must
+  match the contract's amount — see
+  [Contract versions](./onboarding-documents.md#contract-versions).
 
 **Contract types** (`src/lib/pay/expected-hours.ts`):
 

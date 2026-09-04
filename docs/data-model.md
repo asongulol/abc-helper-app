@@ -23,6 +23,8 @@ erDiagram
   workers   ||--o{ worker_companies : "links"
   workers   ||--o| contractor_logins : "portal auth"
   workers   ||--o{ rates : "effective-dated"
+  workers   ||--o{ contract_versions : "IC agreement v2+"
+  companies ||--o{ contract_versions : "per engagement"
   workers   ||--o{ time_entries : "tracked"
   workers   ||--o{ service_sessions : "per-session"
   pay_periods ||--o{ payments : "one per worker"
@@ -59,6 +61,26 @@ The `contract_type` enum is `FT`, `PT` (baseline), `PH`, `PS` (migration `000000
 For `PHS`, `worker_companies.pay_basis` (`hourly` / `per_session`) decides how pay is computed;
 an unset `pay_basis` is paid nothing (never guessed).
 
+### Contract versions
+
+| Table | Key columns | Purpose |
+|---|---|---|
+| `contract_versions` | `worker_id`, `company_id`, `version` (≥ 2), `status` (`contract_version_status`), terms (`rate_php`, `period_basis`, `position`, `employment_type`, `schedule`, `hours_per_week`, `start_date`, `effective_from`, `addendum_*`), lifecycle (`supersedes_id`, `ended_on`, `rendered_body`, `doc_sha256`, `sent_at`/`signed_at`/`countersigned_at`, `countersigned_by`/`_name`, `voided_at`/`void_reason`) | One row per re-issued IC agreement for an engagement (rehire, rate/terms change). The signed agreement, the `worker_companies` row and the effective-dated `rates` row move together: **countersign** is what writes the rate. Migration `00000000000044`. |
+
+`contract_version_status` is `draft → sent → signed → active → superseded | ended`, plus `void`
+(admin-only, for anything not yet of record). Three invariants live in partial unique indexes,
+not app code: one row per `(engagement, version)`, one version **in flight**
+(`draft`/`sent`/`signed`) per engagement, one version **of record** (`active`) per engagement.
+
+**Version 1 is a read-through, not a row.** Every current engagement's v1 is the existing
+`onboarding_agreements.ic_agreement` row + its `doc_version='1'` signature, with the rate taken
+from `rates` (money source of truth). `contractOfRecord()` (`src/db/queries/contracts.ts`)
+returns the `active` row when there is one, else that read-through with `source: 'legacy'`.
+Signatures on versions 2+ stay in `onboarding_signatures` with `doc_version = String(N)` and
+`doc_sha256 = sha256(rendered_body)`. No backfill; the legacy portal keeps rendering the v1 row.
+See [Onboarding & documents](./onboarding-documents.md#contract-versions) and the
+[Contract versions plan](./CONTRACT-VERSIONS-PLAN.md).
+
 ### Time & sessions
 
 | Table | Key columns | Purpose |
@@ -73,6 +95,7 @@ Only **approved** time/sessions count toward pay and billing.
 | Table | Key columns | Purpose |
 |---|---|---|
 | `pay_periods` | `company_id`, `period_start`, `period_end`, `pay_date`, `state` (`open`/`locked`/`paid`), `expected_hours_ft`/`_pt`, `locked_at` | Semi-monthly period. State machine: `open` → `locked` → `paid` (see [Pay pipeline](./pay-pipeline.md)). |
+| `off_cycle_pay_items` | `company_id`, `worker_id`, `pay_period_id`, `basis` (`per_session`/`per_hour`/`salaried_hours`/`backpay`), `session_id`, `work_date`, `units`, `rate_php`, `amount_php`, `description` | Ledger of extra pay lines on a period (off-cycle batches, salaried catch-ups, contract backpay). `basis='backpay'` rows (migration `00000000000045`) are keyed on the original paid period's `period_start`; the partial unique index on `(worker, basis, work_date)` dedups them. |
 | `payments` | `pay_period_id`, `worker_id`, `gross_php`, `computed_gross_php`, `health_allowance_php`, `thirteenth_month_php`, `pdd_lunch_php`, `bonus_php`, `misc_items` (jsonb), `deduction_php`, `net_php`, `units`, `pay_basis`, `contract`, `fx_rate`, `wise_transfer_id`, `wise_dates` (jsonb), `wise_locked_at`, `status` (`payment_status`), `payout_method` | One computed payment per `(pay_period_id, worker_id)`. Once `wise_locked_at` is set, a trigger blocks edits to the money columns. |
 
 `payments.deduction_php` is the **shared-prod column name for the informational performance
@@ -118,6 +141,10 @@ helpers scope contractor access:
   `contractor_logins` row, or NULL. Contractor read policies on `workers`, `payments`,
   `time_entries`, `service_sessions`, `documents`, `onboarding_*`, etc. require
   `worker_id = my_worker_id()`.
+- **`admin_can_see_worker(wid)`** pairs with `my_worker_id()` on tables both roles read
+  (`onboarding_signatures`, `contract_versions`): `worker_id = my_worker_id() OR
+  admin_can_see_worker(worker_id)`. `contract_versions` has **SELECT only** — every write is a
+  server action on the service client.
 - **`is_onboarded()`** — true once the worker's `onboarding_progress.completed_at` is set. The
   **financial** contractor reads (`payments`, `time_entries`, `service_sessions`, `pay_periods`)
   additionally require `is_onboarded()`, so an in-flight contractor sees no pay/time data.
