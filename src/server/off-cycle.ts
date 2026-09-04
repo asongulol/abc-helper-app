@@ -10,6 +10,7 @@
  */
 
 import 'server-only';
+import { fetchContractVersion } from '@/db/queries/contracts';
 import {
   clearSessionsPaid,
   composeNetCentavos,
@@ -30,8 +31,9 @@ import {
   setPaymentOffCycle,
 } from '@/db/queries/payroll';
 import { fetchSessionsByIds } from '@/db/queries/sessions';
-import { periodFor } from '@/lib/dates/periods';
-import { mulRatioMinor } from '@/lib/money';
+import { nextPeriod, periodFor } from '@/lib/dates/periods';
+import { type Centavos, centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
+import { backpayForPaid, prorationFor } from '@/lib/pay/backpay';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { payModelFor } from '@/lib/pay/expected-hours';
 import { resolveRate } from '@/lib/pay/rates';
@@ -588,4 +590,285 @@ export const removeOffCycleEntry = async (
   });
 
   return { netPhp };
+};
+
+/* ---------- Contract backpay (docs/CONTRACT-VERSIONS-PLAN.md slice 4b) ---------- */
+
+export type BackpayLine = {
+  periodStart: string;
+  periodEnd: string;
+  /** gross_php of the period's paid payment row (0 when only a catch-up exists). */
+  paidPhp: number;
+  /** Σ salaried catch-up rows for this period, priced at the old rate. */
+  catchUpPhp: number;
+  /** The rate that priced the payment row (falls back to the catch-up's). */
+  oldRatePhp: number;
+  coveredDays: number;
+  totalDays: number;
+  owedPhp: number;
+  /** amount_php of an existing backpay ledger row for this period, else null. */
+  addedPhp: number | null;
+};
+
+export type BackpayQuote = {
+  versionId: string;
+  version: number;
+  workerId: string;
+  companyId: string;
+  effectiveFrom: string;
+  newRatePhp: number;
+  /** The first not-yet-closed regular period from today forward (owner decision: "next open"). */
+  target: { periodStart: string; periodEnd: string } | null;
+  lines: BackpayLine[];
+  warnings: string[];
+  /** Σ owed over lines not yet added. */
+  totalPhp: number;
+};
+
+const php = (c: Centavos): number => centavosToPhp(c);
+const toCentavos = (major: number): Centavos => centavos(majorToMinor(major));
+
+/**
+ * What a countersigned version still owes for periods PAID at the old rate
+ * since its effective date (late reviews). One line per original regular
+ * period: the payment row's gross plus any salaried catch-up rows for that
+ * period (decision 5), each scaled by (new − old) / old and prorated by working
+ * days on/after the effective date (decision 1). Locked-but-unpaid periods are
+ * excluded with a warning — unlock + recalc is the right fix there (decision
+ * 4); an open period is priced by Calculate. Read with the RLS client: a scoped
+ * admin sees exactly the rows they can act on.
+ */
+export const quoteContractBackpay = async (
+  input: { versionId: string; today?: string },
+  deps?: PayrollDeps,
+): Promise<BackpayQuote> => {
+  const { db } = deps ?? (await realDeps());
+  const v = await fetchContractVersion(db, input.versionId);
+  if (!v) throw new Error('Contract version not found.');
+  if (!v.countersignedAt || !v.effectiveFrom || v.ratePhp == null)
+    throw new Error('Backpay is quoted from a countersigned version.');
+  const eff = v.effectiveFrom;
+  const newRate = toCentavos(v.ratePhp);
+  // Backpay rows are keyed on the original period's START, which for the
+  // prorated first period is before the effective date — hence this floor.
+  const floor = periodFor(eff).start;
+
+  const [periods, payments, ledger] = await Promise.all([
+    db
+      .from('pay_periods')
+      .select('id, period_start, period_end, state, kind')
+      .eq('company_id', v.companyId)
+      .gte('period_end', eff),
+    db
+      .from('payments')
+      .select('pay_period_id, gross_php, rate_php, paid_at')
+      .eq('company_id', v.companyId)
+      .eq('worker_id', v.workerId),
+    db
+      .from('off_cycle_pay_items')
+      .select('basis, work_date, rate_php, amount_php')
+      .eq('company_id', v.companyId)
+      .eq('worker_id', v.workerId)
+      .in('basis', ['salaried_hours', 'backpay'])
+      .gte('work_date', floor),
+  ]);
+  for (const r of [periods, payments, ledger])
+    if (r.error) throw new Error(`backpay quote: ${r.error.message}`);
+  const periodById = new Map((periods.data ?? []).map((p) => [p.id, p]));
+
+  const warnings: string[] = [];
+  const byStart = new Map<string, BackpayLine>();
+  const line = (start: string, end: string): BackpayLine => {
+    let l = byStart.get(start);
+    if (!l) {
+      const pr = prorationFor(start, end, eff);
+      l = {
+        periodStart: start,
+        periodEnd: end,
+        paidPhp: 0,
+        catchUpPhp: 0,
+        oldRatePhp: 0,
+        coveredDays: pr.coveredDays,
+        totalDays: pr.totalDays,
+        owedPhp: 0,
+        addedPhp: null,
+      };
+      byStart.set(start, l);
+    }
+    return l;
+  };
+  const owe = (l: BackpayLine, paid: number, oldRate: number): void => {
+    const owed = backpayForPaid({
+      paid: toCentavos(paid),
+      oldRate: toCentavos(oldRate),
+      newRate,
+      proration: prorationFor(l.periodStart, l.periodEnd, eff),
+    });
+    l.owedPhp = php(centavos(majorToMinor(l.owedPhp) + owed));
+    if (!l.oldRatePhp) l.oldRatePhp = oldRate;
+  };
+
+  for (const p of payments.data ?? []) {
+    const period = periodById.get(p.pay_period_id);
+    // Not since the effective date, or an off-cycle batch (its window is a label).
+    if (!period || period.kind === 'off_cycle') continue;
+    const label = `${period.period_start} – ${period.period_end}`;
+    if (!p.paid_at) {
+      // An open period is priced by Calculate; a closed-but-unpaid one is fixed
+      // by unlock + recalc, not by backpay (decision 4).
+      if (period.state !== 'open')
+        warnings.push(
+          `${label} is ${period.state} but not paid — unlock and recalculate it instead of adding backpay.`,
+        );
+      continue;
+    }
+    const oldRate = Number(p.rate_php ?? 0);
+    if (oldRate <= 0) {
+      warnings.push(`${label} was paid without a rate on the row — cannot price its backpay.`);
+      continue;
+    }
+    const l = line(period.period_start, period.period_end);
+    l.paidPhp = Number(p.gross_php ?? 0);
+    owe(l, l.paidPhp, oldRate);
+  }
+
+  for (const r of ledger.data ?? []) {
+    if (!r.work_date) continue;
+    if (r.basis === 'backpay') {
+      // Keyed on period start — an existing row means this period is done.
+      const l = byStart.get(r.work_date);
+      if (l) l.addedPhp = Number(r.amount_php) || 0;
+      else {
+        const orig = periodFor(r.work_date);
+        line(orig.start, orig.end).addedPhp = Number(r.amount_php) || 0;
+      }
+      continue;
+    }
+    // A catch-up is keyed on the ORIGINAL period's end and priced at that
+    // period's rate — the same uplift applies to it (decision 5).
+    const orig = periodFor(r.work_date);
+    if (orig.end < eff) continue;
+    const oldRate = Number(r.rate_php ?? 0);
+    if (oldRate <= 0) continue;
+    const l = line(orig.start, orig.end);
+    const amount = Number(r.amount_php) || 0;
+    l.catchUpPhp = php(centavos(majorToMinor(l.catchUpPhp) + majorToMinor(amount)));
+    owe(l, amount, oldRate);
+  }
+
+  // The first regular period from today forward that is not locked/paid:
+  // missing (Calculate will create it) or open. ponytail: three tries.
+  let target: BackpayQuote['target'] = null;
+  let cand = periodFor(input.today ?? officeToday());
+  for (let i = 0; i < 3 && !target; i++) {
+    const found = await findPeriod(db, v.companyId, cand.start, cand.end);
+    if (!found || found.state === 'open') target = { periodStart: cand.start, periodEnd: cand.end };
+    else cand = nextPeriod(cand.end);
+  }
+
+  const lines = [...byStart.values()].sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+  const totalPhp = php(
+    centavos(lines.reduce((s, l) => s + (l.addedPhp == null ? majorToMinor(l.owedPhp) : 0), 0)),
+  );
+  return {
+    versionId: v.id,
+    version: v.version,
+    workerId: v.workerId,
+    companyId: v.companyId,
+    effectiveFrom: eff,
+    newRatePhp: v.ratePhp,
+    target,
+    lines,
+    warnings,
+    totalPhp,
+  };
+};
+
+/**
+ * Add the quote's outstanding lines to the ledger on the target period — one
+ * basis='backpay' row per original period, amounts recomputed server-side,
+ * never taken from the client. The unique index makes a second add of the
+ * same period fail loudly rather than pay twice. Then the RP-20 surgical
+ * update, exactly like a catch-up: only off_cycle_php + net_php move.
+ */
+export const addContractBackpayEntry = async (
+  input: { versionId: string; today?: string },
+  deps?: PayrollDeps,
+): Promise<{ netPhp: number | null; amountPhp: number; count: number }> => {
+  const resolved = deps ?? (await realDeps());
+  const { db } = resolved;
+  const quote = await quoteContractBackpay(input, resolved);
+  const lines = quote.lines.filter((l) => l.addedPhp == null && l.owedPhp > 0);
+  if (lines.length === 0)
+    throw new Error('Nothing to add — every paid period since the effective date is covered.');
+  if (!quote.target)
+    throw new Error('No open period to add backpay to — open one on Payroll first.');
+
+  const period = await requireOpenPeriod(
+    db,
+    {
+      companyId: quote.companyId,
+      start: quote.target.periodStart,
+      end: quote.target.periodEnd,
+      create: 'missing',
+    },
+    'unlock it to add backpay',
+  );
+
+  const rate = quote.newRatePhp.toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const rows: NewOffCycleItem[] = lines.map((l) => ({
+    companyId: quote.companyId,
+    workerId: quote.workerId,
+    payPeriodId: period.id,
+    basis: 'backpay',
+    sessionId: null,
+    workDate: l.periodStart,
+    units: null,
+    ratePhp: quote.newRatePhp,
+    amountPhp: l.owedPhp,
+    description: `Backpay v${quote.version} · ${l.periodStart} – ${l.periodEnd} · ${l.coveredDays}/${l.totalDays} working days at ₱${rate}`,
+  }));
+  try {
+    await insertOffCycleItems(db, rows);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'ALREADY_PAID')
+      throw new Error('A ledger entry for one of these periods already exists — reload.');
+    throw e;
+  }
+
+  const existing = await fetchPaymentForWorker(db, period.id, quote.workerId);
+  let netPhp: number | null;
+  if (existing) {
+    const offCycleC = await fetchOffCycleTotalForWorker(db, period.id, quote.workerId);
+    netPhp = centavosToPhp(composeNetCentavos(existing, offCycleC));
+    await setPaymentOffCycle(db, existing.paymentId, centavosToPhp(offCycleC), netPhp);
+  } else {
+    ({ netPhp } = await recomputeWorkerDraft(
+      {
+        companyId: quote.companyId,
+        periodId: period.id,
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
+        workerId: quote.workerId,
+        offCycleOnly: period.kind === 'off_cycle',
+      },
+      resolved,
+    ));
+  }
+
+  const amountPhp = php(centavos(lines.reduce((s, l) => s + majorToMinor(l.owedPhp), 0)));
+  await logEvent({
+    companyId: quote.companyId,
+    action: 'contract.backpay',
+    entity: quote.workerId,
+    detail: {
+      version: quote.version,
+      version_id: quote.versionId,
+      effective_from: quote.effectiveFrom,
+      periods: lines.map((l) => `${l.periodStart} → ${l.periodEnd}`),
+      amount_php: amountPhp,
+      paid_on: `${period.periodStart} → ${period.periodEnd}`,
+    },
+  });
+  return { netPhp, amountPhp, count: rows.length };
 };

@@ -18,12 +18,15 @@ import type { RosterWorker } from '@/db/queries/workers';
 import { nextPeriod } from '@/lib/dates/periods';
 import { fmtDate, money } from '@/lib/format';
 import {
+  addContractBackpay,
   countersignContractVersion,
   draftContractVersion,
+  getContractBackpay,
   listContractVersions,
   sendContractVersion,
   voidContractVersion,
 } from '@/server/actions/contracts';
+import type { BackpayQuote } from '@/server/off-cycle';
 import { CONTRACT_OPTIONS, type ContractType, todayManila } from '@/types/schemas/contractors';
 import { Field } from './Field';
 import { SECTION_H4 } from './types';
@@ -97,12 +100,22 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [busy, startBusy] = useTransition();
   const [form, setForm] = useState<DraftForm | null>(null);
+  const [backpay, setBackpay] = useState<BackpayQuote | null>(null);
 
   const load = useCallback(async () => {
     const res = await listContractVersions({ workerId: worker.workerId, companyId });
     if (res.ok) setData(res.data);
     else notify(res.error, { type: 'error' });
     setLoaded(true);
+    // Backpay only exists for a versioned record (the v1 read-through has no
+    // effective date to be late against).
+    const id = res.ok && res.data.record?.source === 'versioned' ? res.data.record.id : null;
+    if (!id) {
+      setBackpay(null);
+      return;
+    }
+    const q = await getContractBackpay({ versionId: id });
+    setBackpay(q.ok ? q.data : null);
   }, [worker.workerId, companyId, notify]);
 
   useEffect(() => {
@@ -229,6 +242,32 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
     });
   };
 
+  const addBackpay = (q: BackpayQuote) => {
+    if (!q.target) return;
+    if (
+      !window.confirm(
+        `Add ${money(q.totalPhp)} backpay to the ${fmtDate(q.target.periodStart)} – ${fmtDate(
+          q.target.periodEnd,
+        )} period? It lands as an off-cycle line on their payroll row.`,
+      )
+    )
+      return;
+    startBusy(async () => {
+      const res = await addContractBackpay({ versionId: q.versionId });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(
+        `${money(res.data.amountPhp)} backpay added (${res.data.count} period${res.data.count === 1 ? '' : 's'}).`,
+        {
+          type: 'success',
+        },
+      );
+      await load();
+    });
+  };
+
   const update = <K extends keyof DraftForm>(key: K, value: DraftForm[K]) =>
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
@@ -277,6 +316,87 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
           </div>
         )}
       </section>
+
+      {backpay && (backpay.lines.length > 0 || backpay.warnings.length > 0) && (
+        <section style={{ marginTop: 24 }}>
+          <h4 style={SECTION_H4}>Backpay</h4>
+          <p className="sub" style={{ fontSize: 12, margin: '0 0 8px', maxWidth: 560 }}>
+            Version {backpay.version} took effect on {fmtDate(backpay.effectiveFrom)}. Periods paid
+            before it was countersigned were priced at the old rate; the first one is prorated by
+            working days on or after the effective date.
+          </p>
+          {backpay.lines.length > 0 && (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Paid</th>
+                    <th>Old rate</th>
+                    <th>Working days</th>
+                    <th>Owed</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {backpay.lines.map((l) => (
+                    <tr key={l.periodStart}>
+                      <td>
+                        {fmtDate(l.periodStart)} – {fmtDate(l.periodEnd)}
+                      </td>
+                      <td>
+                        {money(l.paidPhp)}
+                        {l.catchUpPhp > 0 && (
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            {' '}
+                            + {money(l.catchUpPhp)} catch-up
+                          </span>
+                        )}
+                      </td>
+                      <td>{money(l.oldRatePhp)}</td>
+                      <td>
+                        {l.coveredDays}/{l.totalDays}
+                      </td>
+                      <td>{money(l.owedPhp)}</td>
+                      <td>
+                        {l.addedPhp != null ? (
+                          <Badge tone="good">added {money(l.addedPhp)}</Badge>
+                        ) : l.owedPhp <= 0 ? (
+                          <span className="muted">nothing owed</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {backpay.warnings.map((w) => (
+            <p key={w} className="sub" style={{ fontSize: 12, margin: '6px 0 0' }}>
+              ⚠ {w}
+            </p>
+          ))}
+          {backpay.totalPhp > 0 && (
+            <div className="row" style={{ marginTop: 10, gap: 12, alignItems: 'center' }}>
+              <strong>Total {money(backpay.totalPhp)}</strong>
+              {backpay.target ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  disabled={busy}
+                  onClick={() => addBackpay(backpay)}
+                >
+                  Add to {fmtDate(backpay.target.periodStart)} – {fmtDate(backpay.target.periodEnd)}
+                </button>
+              ) : (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  No open period to add it to — open one on Payroll first.
+                </span>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <section style={{ marginTop: 24 }}>
         <div className="card-head">
