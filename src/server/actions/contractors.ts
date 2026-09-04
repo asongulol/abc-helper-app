@@ -484,9 +484,11 @@ export async function hireContractor(
       .limit(1);
     if (dupe && dupe.length > 0) {
       const who = [dupe[0]?.first_name, dupe[0]?.last_name].filter(Boolean).join(' ') || 'Someone';
+      // The wizard turns the id into a link: a returning contractor is rehired
+      // from their profile's Contracts tab, never re-added (decision 7).
       return {
         ok: false,
-        error: `${who} already uses ${input.email} — open their profile instead.`,
+        error: `DUPLICATE_EMAIL:${dupe[0]?.id}:${who} already uses ${input.email} — rehire them with a new contract from their profile instead.`,
       };
     }
     const { data: loginDupe } = await db

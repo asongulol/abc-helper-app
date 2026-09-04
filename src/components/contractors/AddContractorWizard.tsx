@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { type ReactNode, useEffect, useState } from 'react';
 import { ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import { hireContractor, listInvoiceClients } from '@/server/actions/contractors';
@@ -214,6 +215,19 @@ export function AddContractorWizard({
     if (!res.ok) {
       if (res.error.startsWith('DUPLICATE_NAME:')) {
         setDupConfirm(res.error.replace('DUPLICATE_NAME:', '').trim());
+        return;
+      }
+      const dupEmail = /^DUPLICATE_EMAIL:([^:]+):(.*)$/s.exec(res.error);
+      if (dupEmail) {
+        notify(
+          <>
+            {dupEmail[2]}{' '}
+            <Link href={`/contractors/${dupEmail[1]}`} onClick={onClose}>
+              Open their profile
+            </Link>
+          </>,
+          { type: 'error' },
+        );
         return;
       }
       notify(res.error, { type: 'error' });

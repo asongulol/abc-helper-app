@@ -24,10 +24,11 @@ import {
 } from '@/types/schemas/contractors';
 import type { FormState } from './types';
 
-type TabKey = 'profile' | 'pay' | 'personal' | 'portal' | 'docs';
+type TabKey = 'profile' | 'pay' | 'contracts' | 'personal' | 'portal' | 'docs';
 const TAB_KEYS = [
   'profile',
   'pay',
+  'contracts',
   'personal',
   'portal',
   'docs',
@@ -483,6 +484,7 @@ export function useContractorProfile(
   const tabs: ReadonlyArray<{ key: TabKey; label: string }> = [
     { key: 'profile', label: 'Profile' },
     { key: 'pay', label: 'Pay & payout' },
+    { key: 'contracts', label: 'Contracts' },
     { key: 'personal', label: 'Personal / HR' },
     { key: 'portal', label: 'Portal & login' },
     { key: 'docs', label: 'Documents' },
