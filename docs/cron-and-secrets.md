@@ -41,7 +41,10 @@ the Node runtime (`runtime = 'nodejs'`, for nodemailer + the service-role client
   reads the admin's `reminders` config (Configuration → Onboarding) and decides whether today
   actually emails: `enabled: false` → skipped (`disabled`); `frequency` not matching today →
   skipped (`frequency`); otherwise `runHiringReviewCheck` with `send_to` recipients (falling back
-  to `GMAIL_USER`) and `include_deferred`. See [Onboarding & documents](./onboarding-documents.md).
+  to `GMAIL_USER`) and `include_deferred`. Since 2026-09-04 the same email also lists contracts
+  awaiting signature/countersign and requested documents not yet uploaded (the Current team
+  queue across all companies); the response adds an `outstanding` line count. See
+  [Onboarding & documents](./onboarding-documents.md).
 
 Both service functions are **read-only** against the DB — they never write. Email is best-effort
 (see [Email delivery](#email-delivery)).

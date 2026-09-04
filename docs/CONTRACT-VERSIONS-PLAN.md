@@ -12,8 +12,9 @@
 > 2026-09-04 (PR #159); migration 46 applied to prod 2026-09-04. Slice 7b (Onboarding tabs +
 > Current team rows + Overview countersign duty) merged 2026-09-04. Slice 7c (Request a document /
 > Remind + `doc_request` / `owed_reminder` templates; requested extras now join the portal owed
-> list via `withExtraDocs`) merged 2026-09-04. Slice 7d (digest) pending. **§0–§6 complete; §7
-> in progress.**
+> list via `withExtraDocs`) merged 2026-09-04. Slice 7d (digest: the hiring-review email gains a
+> "contracts & requested documents to chase" section, no new cron) merged 2026-09-04.
+> **§0–§7 complete.**
 >
 > Slice 4 deviations from §4 below: the prior version is matched by status (whatever is
 > `active` for the engagement) rather than by `supersedes_id`, so the one-active index can never

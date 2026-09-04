@@ -4,7 +4,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { deriveOpenItems, owedLines, type TeamDoc } from '@/lib/onboarding/current-team';
+import {
+  deriveOpenItems,
+  digestLines,
+  owedLines,
+  type TeamDoc,
+} from '@/lib/onboarding/current-team';
 
 const TODAY = '2026-09-04';
 
@@ -169,5 +174,39 @@ describe('deriveOpenItems — requested documents and owed lines (§7 decision 5
       'Re-upload: Passport (front)',
       'Renew: Resume (expired 2026-08-01)',
     ]);
+  });
+});
+
+describe('digestLines — what the admin digest chases (§7 decision 6)', () => {
+  it('keeps contract in-flight labels and requested-doc lines, drops review/expiry items', () => {
+    const items = deriveOpenItems(
+      {
+        version: { status: 'sent', sentAt: '2026-09-01T10:00:00Z' },
+        hasIcSignature: true,
+        docs: [
+          doc({ id: 'a', kind: 'nbi_clearance', reviewStatus: 'pending' }),
+          doc({ id: 'b', kind: 'resume', expiresOn: '2026-08-01' }),
+        ],
+        requested: [{ kind: 'tin_id', title: 'TIN ID' }],
+      },
+      TODAY,
+    );
+    expect(digestLines(items)).toEqual(['Contract sent · 3 days', 'Upload: TIN ID']);
+    expect(
+      digestLines(
+        deriveOpenItems(
+          { version: { status: 'signed', sentAt: null }, hasIcSignature: true, docs: [] },
+          TODAY,
+        ),
+      ),
+    ).toEqual(['Signed, awaiting countersign']);
+    expect(
+      digestLines(
+        deriveOpenItems(
+          { version: { status: 'draft', sentAt: null }, hasIcSignature: true, docs: [] },
+          TODAY,
+        ),
+      ),
+    ).toEqual([]);
   });
 });

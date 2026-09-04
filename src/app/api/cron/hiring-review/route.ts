@@ -25,6 +25,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       ok: true,
       pendingDocs: r.result.pendingDocs,
       deferredDocs: r.result.deferredDocs,
+      outstanding: r.result.outstanding.reduce((n, e) => n + e.lines.length, 0),
       emailed: r.result.emailed,
       ...(r.result.emailError !== undefined ? { emailError: r.result.emailError } : {}),
     });

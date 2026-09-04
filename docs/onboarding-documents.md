@@ -213,7 +213,12 @@ digest to `GMAIL_USER`. Fileless waived/deferred placeholders can't expire.
 `send_to`). `shouldSendDigestToday()` (`src/lib/documents/digest-schedule.ts`) gates by frequency
 (`daily`/`weekdays`/`weekly`, fail-open). `classifyHiringReview()`
 (`src/lib/documents/hiring-review.ts`) groups onboarding docs (`resume`, `diploma`,
-`nbi_clearance`, `gov_id`) into **pending** and **deferred** per contractor for the digest.
+`nbi_clearance`, `gov_id`) into **pending** and **deferred** per contractor for the digest. The
+same email carries a third section, **contracts & requested documents to chase**: every company's
+Current team queue (`fetchCurrentTeam`) reduced by `digestLines()`
+(`src/lib/onboarding/current-team.ts`) to contracts `sent` / `signed`-awaiting-countersign and
+requested documents never uploaded, one entry per contractor. The digest sends when any section is
+non-empty; subject `Onboarding & contracts: N waiting, N follow-up, N to chase`.
 
 Email delivery is best-effort — a missing `GMAIL_USER`/`GMAIL_APP_PASSWORD` makes it a no-op,
 not an error (see [Local development](./local-development.md), where Inbucket catches mail).
