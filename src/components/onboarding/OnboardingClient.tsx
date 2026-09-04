@@ -12,10 +12,15 @@ import {
   Modal,
   type SortableColumn,
   SortableTable,
+  useTablist,
   useToast,
 } from '@/components/ui';
 import type { AgreementTemplateRow } from '@/db/queries/config';
-import type { OnboardingFollowup, OnboardingProgressRow } from '@/db/queries/onboarding';
+import type {
+  CurrentTeamRow,
+  OnboardingFollowup,
+  OnboardingProgressRow,
+} from '@/db/queries/onboarding';
 import { fmtDate } from '@/lib/format';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
 import { resendHireEmails } from '@/server/actions/portal-admin';
@@ -30,10 +35,16 @@ const OnboardCurrentWizard = dynamic(
   { ssr: false },
 );
 
+type Tab = 'hires' | 'team';
+const TABS: readonly Tab[] = ['hires', 'team'];
+
 interface Props {
   progress: OnboardingProgressRow[];
   /** Open document follow-ups (deferred docs) per workerId. */
   followups?: Record<string, OnboardingFollowup>;
+  /** Current team: active contractors with ≥1 open contract/document item. */
+  team: CurrentTeamRow[];
+  initialTab?: Tab;
   companyId: string;
   /** Standard agreement templates (edited here or in Config). */
   templates: AgreementTemplateRow[];
@@ -42,9 +53,18 @@ interface Props {
   consolidated?: boolean;
 }
 
+/**
+ * A REOPENED onboarding (admin reset: stages cleared, completed_at kept for
+ * is_onboarded RLS) is in progress, not complete — key on current_stage, not
+ * the timestamp.
+ */
+const inProgress = (r: OnboardingProgressRow) => r.currentStage !== 'complete' || !r.completedAt;
+
 export const OnboardingClient = ({
   progress,
   followups = {},
+  team,
+  initialTab = 'hires',
   companyId,
   templates,
   employerName,
@@ -54,9 +74,12 @@ export const OnboardingClient = ({
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [tab, setTab] = useState<Tab>(initialTab);
+  const tablist = useTablist(TABS, tab, setTab);
   const [showDone, setShowDone] = useState(false);
   const [showWizard, setShowWizard] = useState(false);
-  const [showOnboardCurrent, setShowOnboardCurrent] = useState(false);
+  /** Onboard Current wizard: null = closed, '' = open unselected, id = preselected. */
+  const [onboardTarget, setOnboardTarget] = useState<string | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
 
   const handleResendInvite = (row: OnboardingProgressRow) => {
@@ -67,19 +90,10 @@ export const OnboardingClient = ({
     });
   };
 
-  // Hide completed onboardings unless "Show completed" is on — BUT keep a
-  // completed contractor visible while they still have open follow-ups
-  // (deferred docs), matching the legacy default view. A REOPENED onboarding
-  // (admin reset: stages cleared, completed_at kept for is_onboarded RLS) is
-  // in progress, not complete — key on current_stage, not the timestamp.
-  const visible = showDone
-    ? progress
-    : progress.filter(
-        (r) =>
-          r.currentStage !== 'complete' ||
-          !r.completedAt ||
-          (followups[r.workerId]?.count ?? 0) > 0,
-      );
+  // Hide completed onboardings unless "Show completed" is on. A completed
+  // contractor with a document still owed is a Current team row now.
+  const openHires = progress.filter(inProgress);
+  const visible = showDone ? progress : openHires;
 
   const columns: ReadonlyArray<SortableColumn<OnboardingProgressRow>> = [
     {
@@ -194,14 +208,68 @@ export const OnboardingClient = ({
     },
   ];
 
+  const teamColumns: ReadonlyArray<SortableColumn<CurrentTeamRow>> = [
+    {
+      key: 'workerName',
+      label: 'Contractor',
+      sortable: true,
+      cardTitle: true,
+      accessor: (row) => row.workerName,
+    },
+    {
+      key: 'items',
+      label: 'Open items',
+      sortable: true,
+      render: (row) => (
+        <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {row.items.map((it) => (
+            <Badge key={it.kind} tone={it.tone}>
+              {it.label}
+            </Badge>
+          ))}
+        </span>
+      ),
+      accessor: (row) => row.items.length,
+    },
+    {
+      key: 'actions',
+      label: '',
+      render: (row) => (
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+          {!row.hasLogin && (
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={consolidated}
+              title="No portal login yet — invite them to sign in the app"
+              onClick={(e) => {
+                e.stopPropagation();
+                setOnboardTarget(row.workerId);
+              }}
+            >
+              Onboard current
+            </button>
+          )}
+          <Link
+            href={`/contractors/${row.workerId}`}
+            className="btn ghost sm"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Open
+          </Link>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="card">
       <div className="card-head">
         <div>
-          <h2>Hiring &amp; Onboarding</h2>
+          <h2>Onboarding &amp; contracts</h2>
           <p className="sub">
-            Hire a new contractor and track onboarding — agreements signed, profile completed,
-            documents reviewed.
+            One queue for signatures and documents — new hires working through onboarding, and the
+            current team&apos;s contracts and documents still owed.
           </p>
         </div>
         <div
@@ -230,18 +298,20 @@ export const OnboardingClient = ({
                 ? 'Pick a single company first'
                 : 'Invite an already-added contractor to the portal'
             }
-            onClick={() => setShowOnboardCurrent(true)}
+            onClick={() => setOnboardTarget('')}
           >
             Onboard current contractor
           </button>
-          <label className="sub" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-            <input
-              type="checkbox"
-              checked={showDone}
-              onChange={(e) => setShowDone(e.target.checked)}
-            />{' '}
-            Show completed
-          </label>
+          {tab === 'hires' && (
+            <label className="sub" style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input
+                type="checkbox"
+                checked={showDone}
+                onChange={(e) => setShowDone(e.target.checked)}
+              />{' '}
+              Show completed
+            </label>
+          )}
           <button
             type="button"
             className="btn ghost sm"
@@ -256,24 +326,74 @@ export const OnboardingClient = ({
         </div>
       </div>
 
-      {visible.length === 0 ? (
-        <EmptyState
-          icon="🧭"
-          message={
-            progress.length > 0 && !showDone
-              ? 'No onboarding in progress. (Completed are hidden — tick “Show completed”.)'
-              : 'No onboarding in progress.'
-          }
-        />
-      ) : (
-        <SortableTable
-          columns={columns}
-          rows={visible}
-          rowKey={(r) => r.workerId}
-          filterPlaceholder="Filter by name or email…"
-          defaultSort={{ key: 'workerName' }}
-          onRowClick={(row) => router.push(`/onboarding/${row.workerId}`)}
-        />
+      <div
+        role="tablist"
+        aria-label="Onboarding queue"
+        style={{
+          display: 'flex',
+          gap: 4,
+          marginBottom: 16,
+          borderBottom: '1px solid var(--border)',
+          overflowX: 'auto',
+        }}
+      >
+        <button
+          type="button"
+          {...tablist.tabProps('hires')}
+          className={tab === 'hires' ? 'btn sm' : 'btn ghost sm'}
+          style={{ borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0' }}
+        >
+          New hires ({openHires.length})
+        </button>
+        <button
+          type="button"
+          {...tablist.tabProps('team')}
+          className={tab === 'team' ? 'btn sm' : 'btn ghost sm'}
+          style={{ borderRadius: 'var(--radius-sm) var(--radius-sm) 0 0' }}
+        >
+          Current team ({team.length})
+        </button>
+      </div>
+
+      {tab === 'hires' && (
+        <div {...tablist.panelProps()}>
+          {visible.length === 0 ? (
+            <EmptyState
+              icon="🧭"
+              message={
+                progress.length > 0 && !showDone
+                  ? 'No onboarding in progress. (Completed are hidden — tick “Show completed”.)'
+                  : 'No onboarding in progress.'
+              }
+            />
+          ) : (
+            <SortableTable
+              columns={columns}
+              rows={visible}
+              rowKey={(r) => r.workerId}
+              filterPlaceholder="Filter by name or email…"
+              defaultSort={{ key: 'workerName' }}
+              onRowClick={(row) => router.push(`/onboarding/${row.workerId}`)}
+            />
+          )}
+        </div>
+      )}
+
+      {tab === 'team' && (
+        <div {...tablist.panelProps()}>
+          {team.length === 0 ? (
+            <EmptyState icon="✓" message="Nothing owed — every contract and document is in." />
+          ) : (
+            <SortableTable
+              columns={teamColumns}
+              rows={team}
+              rowKey={(r) => r.workerId}
+              filterPlaceholder="Filter by name…"
+              defaultSort={{ key: 'workerName' }}
+              onRowClick={(row) => router.push(`/contractors/${row.workerId}`)}
+            />
+          )}
+        </div>
       )}
 
       {showWizard && (
@@ -288,14 +408,15 @@ export const OnboardingClient = ({
         />
       )}
 
-      {showOnboardCurrent && (
+      {onboardTarget !== null && (
         <OnboardCurrentWizard
           companyId={companyId}
           companyName={employerName}
           countersigners={countersigners}
-          onClose={() => setShowOnboardCurrent(false)}
+          initialWorkerId={onboardTarget || undefined}
+          onClose={() => setOnboardTarget(null)}
           onCreated={() => {
-            setShowOnboardCurrent(false);
+            setOnboardTarget(null);
             router.refresh();
           }}
         />

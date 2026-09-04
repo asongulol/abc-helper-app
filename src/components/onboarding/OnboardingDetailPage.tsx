@@ -23,7 +23,7 @@ export const OnboardingDetailPage = ({ row, canCountersign, isOwner }: Props) =>
     <div className="card">
       <div style={{ marginBottom: 16 }}>
         <Link href="/onboarding" className="btn ghost sm" style={{ marginBottom: 8 }}>
-          ← Hiring &amp; Onboarding
+          ← Onboarding &amp; contracts
         </Link>
         <h2 style={{ margin: '4px 0 0' }}>Onboarding — {row.workerName}</h2>
       </div>

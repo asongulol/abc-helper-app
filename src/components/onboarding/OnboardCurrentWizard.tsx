@@ -67,6 +67,8 @@ interface Props {
   companyId: string;
   companyName?: string;
   countersigners: Countersigner[];
+  /** Preselect this contractor (a Current team row opened the wizard). */
+  initialWorkerId?: string | undefined;
   onClose: () => void;
   onCreated: () => void;
 }
@@ -77,6 +79,7 @@ export function OnboardCurrentWizard({
   companyId,
   companyName,
   countersigners,
+  initialWorkerId,
   onClose,
   onCreated,
 }: Props) {
@@ -120,6 +123,13 @@ export function OnboardCurrentWizard({
       );
     });
   };
+
+  // Preselect the contractor a Current team row opened this from, once the list is in.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on candidates arriving; pickContractor is a fresh closure each render
+  useEffect(() => {
+    if (initialWorkerId && candidates?.some((c) => c.workerId === initialWorkerId))
+      pickContractor(initialWorkerId);
+  }, [candidates]);
 
   const step1Valid = form.workerId !== '' && EMAIL_RE.test(form.email.trim());
 
