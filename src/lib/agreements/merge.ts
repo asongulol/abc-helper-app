@@ -39,8 +39,17 @@ export function monthlyFromPeriod(rate: unknown): string {
   return (Math.round(n * 2 * 100) / 100).toLocaleString('en-US');
 }
 
+/**
+ * Termination notice (Section 11.1) when a version carries none — the value the
+ * template stated in words before it became a token, so a version 1 agreement
+ * reads exactly as it always did.
+ */
+export const DEFAULT_NOTICE_DAYS = 15;
+
 /** Variables accepted by mergeAgreement (all optional; defaults applied). */
 export type AgreementVars = {
+  /** Termination notice in calendar days; defaults to DEFAULT_NOTICE_DAYS. */
+  notice_days?: string | number | null | undefined;
   contractor_name?: string | null | undefined;
   rate?: string | null | undefined;
   monthly_rate?: string | null | undefined;
@@ -94,6 +103,7 @@ export function mergeAgreement(body: string | null | undefined, vars?: Agreement
     hours_per_week: empHours || '________',
     schedule: sched || '________',
     addendum: v.addendum || '',
+    notice_days: String(v.notice_days || DEFAULT_NOTICE_DAYS),
   };
   const src = String(body || '');
   let out = src.replace(/\{\{\s*(\w+)\s*\}\}/g, (m, k: string) => s[k] ?? m);

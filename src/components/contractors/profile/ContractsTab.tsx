@@ -53,20 +53,25 @@ type DraftForm = {
   effectiveFrom: string;
   addendumType: AddendumType;
   addendumText: string;
+  noticeDays: string;
 };
 
 /**
- * Prefill: the draft being edited as it is, else the contract of record with
- * the effective date moved to the next pay period (§3). A rehire gets a fresh
- * start date too — the old engagement's is not the new one (decision 7).
+ * Prefill: the draft being edited as it is; else the version just voided, so a
+ * fix to something the contractor hasn't signed yet doesn't mean retyping it;
+ * else the contract of record with the effective date moved to the next pay
+ * period (§3). A rehire gets a fresh start date too — the old engagement's is
+ * not the new one (decision 7).
  */
 const formFrom = (
   record: ContractOfRecord | null,
   draft: ContractVersion | null,
+  latest: ContractVersion | null,
   worker: RosterWorker,
 ): DraftForm => {
   const next = nextPeriod(todayManila()).start;
-  const t = draft ?? record;
+  const resume = draft ?? (latest?.status === 'void' ? latest : null);
+  const t = resume ?? record;
   return {
     ratePhp: t?.ratePhp != null ? String(t.ratePhp) : '',
     position: t?.position ?? worker.role ?? '',
@@ -74,11 +79,12 @@ const formFrom = (
     schedule: t?.schedule ?? '',
     hoursPerWeek: t?.hoursPerWeek != null ? String(t.hoursPerWeek) : '',
     startDate:
-      draft?.startDate ??
+      resume?.startDate ??
       (worker.linkStatus === 'ended' ? next : (record?.startDate ?? worker.hireDate ?? '')),
-    effectiveFrom: draft?.effectiveFrom ?? next,
+    effectiveFrom: resume?.effectiveFrom ?? next,
     addendumType: (t?.addendumType as AddendumType | null) ?? '',
     addendumText: t?.addendumText ?? '',
+    noticeDays: String(t?.noticeDays ?? 15),
   };
 };
 
@@ -140,6 +146,11 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
       notify('Enter both dates.', { type: 'error' });
       return;
     }
+    const noticeDays = Number(form.noticeDays);
+    if (!Number.isInteger(noticeDays) || noticeDays < 1) {
+      notify('Enter the termination notice in whole days.', { type: 'error' });
+      return;
+    }
     startBusy(async () => {
       const res = await draftContractVersion({
         workerId: worker.workerId,
@@ -153,6 +164,7 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
         effectiveFrom: form.effectiveFrom,
         addendumType: form.addendumType,
         addendumText: form.addendumText.trim() || null,
+        noticeDays,
       });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
@@ -414,7 +426,7 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                 type="button"
                 className="btn sm"
                 disabled={busy}
-                onClick={() => setForm(formFrom(record, null, worker))}
+                onClick={() => setForm(formFrom(record, null, versions[0] ?? null, worker))}
               >
                 New contract
               </button>
@@ -425,7 +437,7 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                   type="button"
                   className="btn ghost sm"
                   disabled={busy}
-                  onClick={() => setForm(formFrom(record, draft, worker))}
+                  onClick={() => setForm(formFrom(record, draft, null, worker))}
                 >
                   Edit draft
                 </button>
@@ -581,6 +593,18 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                   value={form.schedule}
                   onChange={(e) => update('schedule', e.target.value)}
                   placeholder="e.g. 9:00 AM – 5:00 PM Eastern Time"
+                  disabled={busy}
+                />
+              </Field>
+              <Field id="cv-notice" label="Termination notice (days)" required>
+                <input
+                  id="cv-notice"
+                  type="number"
+                  min="1"
+                  max="365"
+                  step="1"
+                  value={form.noticeDays}
+                  onChange={(e) => update('noticeDays', e.target.value)}
                   disabled={busy}
                 />
               </Field>

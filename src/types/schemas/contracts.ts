@@ -23,6 +23,8 @@ export const DraftContractVersionSchema = z
     effectiveFrom: IsoDateSchema,
     addendumType: IcAddendumTypeSchema.default(''),
     addendumText: z.string().max(5000).nullable().default(null),
+    /** Section 11.1 termination notice — the {{notice_days}} token. */
+    noticeDays: z.number().int().min(1, 'Notice must be at least 1 day.').max(365).default(15),
   })
   // Mirrors the table CHECK, with a message a person can act on.
   .refine((v) => v.effectiveFrom >= v.startDate, {

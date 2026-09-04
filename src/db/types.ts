@@ -291,6 +291,7 @@ export type Database = {
           ended_on: string | null
           hours_per_week: number | null
           id: string
+          notice_days: number
           period_basis: string
           position: string | null
           rate_php: number
@@ -321,6 +322,7 @@ export type Database = {
           ended_on?: string | null
           hours_per_week?: number | null
           id?: string
+          notice_days?: number
           period_basis?: string
           position?: string | null
           rate_php: number
@@ -351,6 +353,7 @@ export type Database = {
           ended_on?: string | null
           hours_per_week?: number | null
           id?: string
+          notice_days?: number
           period_basis?: string
           position?: string | null
           rate_php?: number
