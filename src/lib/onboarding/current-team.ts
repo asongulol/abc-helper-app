@@ -180,3 +180,13 @@ export const deriveOpenItems = (
 
 /** Everything the contractor still has to do, across all items — the Remind email body. */
 export const owedLines = (items: readonly OpenItem[]): string[] => items.flatMap((i) => i.owed);
+
+/**
+ * What the admin digest chases (plan §7 decision 6): contracts awaiting the
+ * contractor's signature or the admin's countersign, and requested documents
+ * nobody has uploaded. Review and expiry items already have their own digests.
+ */
+export const digestLines = (items: readonly OpenItem[]): string[] =>
+  items.flatMap((i) =>
+    i.kind === 'sent' || i.kind === 'signed' ? [i.label] : i.kind === 'doc_requested' ? i.owed : [],
+  );

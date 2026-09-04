@@ -35,16 +35,18 @@ import 'server-only';
  */
 
 import { createServiceClient } from '@/db/clients/service';
-import { getPortalSettings, parseOnboardingConfig } from '@/db/queries/config';
+import { getPortalSettings, listCompaniesFull, parseOnboardingConfig } from '@/db/queries/config';
 import {
   fetchDocumentsForExpiryCheck,
   fetchDocumentsForHiringReview,
 } from '@/db/queries/documents';
+import { fetchCurrentTeam } from '@/db/queries/onboarding';
 import { shouldSendDigestToday } from '@/lib/documents/digest-schedule';
 import type { ExpiryResult } from '@/lib/documents/expiry';
 import { classifyExpiry } from '@/lib/documents/expiry';
 import type { HiringReviewResult } from '@/lib/documents/hiring-review';
 import { classifyHiringReview } from '@/lib/documents/hiring-review';
+import { digestLines } from '@/lib/onboarding/current-team';
 import { escapeHtml } from '@/server/email/templates';
 import { sendEmail } from '@/server/email/transport';
 import { env } from '@/server/env';
@@ -145,10 +147,58 @@ export interface HiringReviewCheckOptions {
   recipients?: string[];
 }
 
+/** One contractor's digest lines: what the admin is chasing, with the company they're engaged at. */
+export interface OutstandingEntry {
+  worker: string;
+  company: string;
+  lines: string[];
+}
+
 export interface HiringReviewCheckResult extends HiringReviewResult {
+  /**
+   * Contracts awaiting signature/countersign and requested documents never
+   * uploaded (plan §7 decision 6) — the Current team tab's chase items, across
+   * all companies, one entry per contractor.
+   */
+  outstanding: OutstandingEntry[];
   emailed: boolean;
   emailError?: string;
 }
+
+/**
+ * The Current team queue of every company, reduced to its digest lines. Reuses
+ * `fetchCurrentTeam` so the email and the tab can never disagree.
+ * ponytail: N companies × 6 queries once a day; a cross-company loader if the client list grows past a dozen.
+ */
+const fetchOutstanding = async (
+  db: ReturnType<typeof createServiceClient>,
+  today: string,
+): Promise<OutstandingEntry[]> => {
+  const companies = await listCompaniesFull(db);
+  const perCompany = await Promise.all(
+    companies.map(async (c) =>
+      (await fetchCurrentTeam(db, c.id, today))
+        .map((r) => ({
+          workerId: r.workerId,
+          worker: r.workerName,
+          company: c.name,
+          lines: digestLines(r.items),
+        }))
+        .filter((r) => r.lines.length > 0),
+    ),
+  );
+  // A contractor engaged at two companies owes the same documents once.
+  const byWorker = new Map<string, OutstandingEntry>();
+  for (const e of perCompany.flat()) {
+    const cur = byWorker.get(e.workerId);
+    if (!cur) byWorker.set(e.workerId, { worker: e.worker, company: e.company, lines: e.lines });
+    else {
+      cur.company += `, ${e.company}`;
+      for (const l of e.lines) if (!cur.lines.includes(l)) cur.lines.push(l);
+    }
+  }
+  return [...byWorker.values()].sort((a, b) => a.worker.localeCompare(b.worker));
+};
 
 /**
  * Fetch onboarding docs awaiting HR review, classify them, and optionally
@@ -162,50 +212,59 @@ export const runHiringReviewCheck = async (
   const includeDeferred = opts.includeDeferred !== false;
 
   const db = createServiceClient();
-  const rows = await fetchDocumentsForHiringReview(db);
+  const [rows, outstanding] = await Promise.all([
+    fetchDocumentsForHiringReview(db),
+    fetchOutstanding(db, new Date().toISOString().slice(0, 10)),
+  ]);
 
   const classification = classifyHiringReview(rows, { includeDeferred });
   const { pendingContractors, deferredContractors, pendingDocs, deferredDocs, contractors } =
     classification;
+  const outstandingLines = outstanding.reduce((n, e) => n + e.lines.length, 0);
 
   let emailed = false;
   let emailError: string | undefined;
 
-  if (!opts.skipEmail && (pendingDocs > 0 || deferredDocs > 0)) {
+  if (!opts.skipEmail && (pendingDocs > 0 || deferredDocs > 0 || outstandingLines > 0)) {
     const configured = (opts.recipients ?? []).map((r) => r.trim()).filter(Boolean);
     const to = configured.length ? configured.join(', ') : env.GMAIL_USER;
     if (to) {
       const liItems = (arr: string[]): string =>
         arr.map((x) => `<li>${escapeHtml(x)}</li>`).join('');
 
-      const section = (
-        title: string,
-        list: typeof pendingContractors,
-        key: 'pending' | 'deferred',
-        color: string,
-      ): string =>
+      const section = (title: string, list: OutstandingEntry[], color: string): string =>
         !list.length
           ? ''
           : `<h3 style="color:${color}">${title}</h3><ul style="margin:0 0 12px">${list
               .map(
                 (c) =>
                   `<li><b>${escapeHtml(c.worker)}</b>${c.company ? ` <span style="color:#666">(${escapeHtml(c.company)})</span>` : ''}` +
-                  `<ul>${liItems(c[key])}</ul></li>`,
+                  `<ul>${liItems(c.lines)}</ul></li>`,
               )
               .join('')}</ul>`;
+      const entries = (list: typeof pendingContractors, key: 'pending' | 'deferred') =>
+        list.map((c) => ({ worker: c.worker, company: c.company, lines: c[key] }));
 
-      const html = `<h2>Hiring documents need review</h2><p>${pendingDocs} document(s) from ${pendingContractors.length} contractor(s) are waiting for HR review.</p>${section(`Waiting for review (${pendingDocs})`, pendingContractors, 'pending', '#b45309')}${
+      const html = `<h2>Onboarding &amp; contracts</h2>${
+        pendingDocs
+          ? `<p>${pendingDocs} document(s) from ${pendingContractors.length} contractor(s) are waiting for HR review.</p>`
+          : ''
+      }${section(`Waiting for review (${pendingDocs})`, entries(pendingContractors, 'pending'), '#b45309')}${
         deferredDocs
           ? section(
               `Deferred — follow up (${deferredDocs})`,
-              deferredContractors,
-              'deferred',
+              entries(deferredContractors, 'deferred'),
               '#3730a3',
             )
           : ''
-      }<p style="color:#666;font-size:12px">Open the HR &amp; Payroll app → Onboarding &amp; contracts to review.</p>`;
+      }${section(`Contracts &amp; requested documents to chase (${outstandingLines})`, outstanding, '#9f1239')}<p style="color:#666;font-size:12px">Open the HR &amp; Payroll app → Onboarding &amp; contracts to review, countersign or remind.</p>`;
 
-      const subject = `Hiring docs to review: ${pendingDocs} waiting${deferredDocs ? `, ${deferredDocs} follow-up` : ''}`;
+      const parts = [
+        pendingDocs ? `${pendingDocs} waiting` : '',
+        deferredDocs ? `${deferredDocs} follow-up` : '',
+        outstandingLines ? `${outstandingLines} to chase` : '',
+      ].filter(Boolean);
+      const subject = `Onboarding & contracts: ${parts.join(', ')}`;
       const result = await sendEmail({ to, subject, html });
       emailed = result.ok;
       if (!result.ok) emailError = result.error;
@@ -218,6 +277,7 @@ export const runHiringReviewCheck = async (
     pendingDocs,
     deferredDocs,
     contractors,
+    outstanding,
     emailed,
     ...(emailError !== undefined ? { emailError } : {}),
   };
