@@ -94,18 +94,19 @@ const mapVersion = (r: Row): ContractVersion => ({
   createdAt: r.created_at,
 });
 
-/** Every version of one engagement, newest first. Never includes the v1 read-through. */
+/**
+ * Every version of one engagement, newest first — or, without a company, every
+ * version the worker has anywhere (the portal's history; a contractor cannot
+ * read worker_companies to name their company). Never includes the v1 read-through.
+ */
 export const fetchContractVersions = async (
   db: Db,
   workerId: string,
-  companyId: string,
+  companyId?: string,
 ): Promise<ContractVersion[]> => {
-  const { data, error } = await db
-    .from('contract_versions')
-    .select('*')
-    .eq('worker_id', workerId)
-    .eq('company_id', companyId)
-    .order('version', { ascending: false });
+  let q = db.from('contract_versions').select('*').eq('worker_id', workerId);
+  if (companyId) q = q.eq('company_id', companyId);
+  const { data, error } = await q.order('version', { ascending: false });
   if (error) throw new Error(`contract_versions: ${error.message}`);
   return (data ?? []).map(mapVersion);
 };

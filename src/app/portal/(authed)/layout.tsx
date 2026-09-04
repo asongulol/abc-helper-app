@@ -15,7 +15,7 @@ export default async function PortalAuthedLayout({ children }: { children: React
 
   // Docs needing the contractor's attention (HR bounced back), for the nav badge.
   const supabase = await createServerSupabase();
-  const [{ count }, { data: progress }] = await Promise.all([
+  const [{ count }, { data: progress }, { count: toSign }] = await Promise.all([
     supabase
       .from('documents')
       .select('id', { count: 'exact', head: true })
@@ -30,6 +30,12 @@ export default async function PortalAuthedLayout({ children }: { children: React
       .select('current_stage')
       .eq('worker_id', worker.workerId)
       .maybeSingle(),
+    // A contract version out for signature, for the Contracts tab badge.
+    supabase
+      .from('contract_versions')
+      .select('id', { count: 'exact', head: true })
+      .eq('worker_id', worker.workerId)
+      .eq('status', 'sent'),
   ]);
 
   return (
@@ -39,6 +45,7 @@ export default async function PortalAuthedLayout({ children }: { children: React
       onboardingOpen={!!progress && progress.current_stage !== 'complete'}
       {...(worker.email ? { email: worker.email } : {})}
       docsBadge={count ?? 0}
+      contractsBadge={toSign ?? 0}
     >
       {children}
     </PortalShell>

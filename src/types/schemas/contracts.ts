@@ -38,3 +38,12 @@ export const VoidContractVersionSchema = ContractVersionRefSchema.extend({
 });
 
 export const EngagementRefSchema = z.object({ workerId: uuid(), companyId: uuid() });
+
+/** The contractor's signature on a sent version (same evidence as SignAgreementSchema). */
+export const SignContractVersionSchema = ContractVersionRefSchema.extend({
+  /** Drawn data-URI, or '' when the contractor typed their name instead. */
+  signatureDataUrl: z.string().max(1_400_000).default(''),
+  typedName: z.string().trim().min(1, 'Signed legal name required.').max(200),
+  /** The portal gates the button on this; the action refuses without it. */
+  scrolledToEnd: z.boolean(),
+});

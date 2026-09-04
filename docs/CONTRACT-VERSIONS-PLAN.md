@@ -1,8 +1,17 @@
 # Contract versions — rehire, modify, re-issue
 
 > **Status:** slice 1 (schema + reads + stamps, §6.1) merged 2026-09-04 (PR #153); migration 44
-> applied to prod 2026-09-04. Slice 2 (draft / send / void + admin UI, §6.2) built 2026-09-04 on
-> `feat/contract-versions-2-actions-ui`. Slices 3–5 not started.
+> applied to prod 2026-09-04. Slice 2 (draft / send / void + admin UI, §6.2) merged 2026-09-04
+> (PR #154). Slice 3 (portal sign + frozen print + history, §6.3) built 2026-09-04 on
+> `feat/contract-versions-3-sign-print-history`. Slices 4–5 not started.
+>
+> Slice 3 deviations from the text below: `signContractVersion` lives in
+> `src/server/actions/contracts.ts` with the other status transitions, not in `portal.ts`; the
+> portal surfaces the pending version and the history on a new **Contracts** tab
+> (`/portal/contracts`) rather than on the onboarding page, because a rehire's onboarding is
+> already complete and that page hides itself. The portal resolver (`src/server/auth/worker.ts`)
+> now keeps access for a departed, fully-paid contractor while a version is sent/signed — the
+> same rule as the sunset sweep's skip, without which send's restored login was denied at the door.
 > Written 2026-09-04 after a decision interview with the owner. Every numbered decision below was put to the owner and confirmed.
 > **Covers:** rehiring a previous contractor, changing the terms of a current contractor,
 > sending a new contract to a current contractor. All three are the same feature.
