@@ -88,6 +88,7 @@ export function ProfileTabs({ p, worker, companyId, companyName, companies = [],
           assignTo={p.assignTo}
           setAssignTo={p.setAssignTo}
           handleAssign={p.handleAssign}
+          onNewContract={() => p.setActiveTab('contracts')}
           form={p.form}
           set={p.set}
           errors={p.errors}

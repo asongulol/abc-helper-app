@@ -1,11 +1,11 @@
 'use server';
 
 /**
- * Contract-version actions — draft / send / void / sign (docs/CONTRACT-VERSIONS-PLAN.md §3).
- * Pattern: verify admin (countersign permission + company scope) → Zod →
- * service client → audit. Sign is the one contractor action here (requireWorker),
- * kept with the other status transitions rather than in portal.ts; countersign,
- * the write-through that makes a version the contract of record, is slice 4.
+ * Contract-version actions — draft / send / void / sign / countersign
+ * (docs/CONTRACT-VERSIONS-PLAN.md §3–4). Pattern: verify admin (countersign
+ * permission + company scope) → Zod → service client → audit. Sign is the one
+ * contractor action here (requireWorker), kept with the other status
+ * transitions rather than in portal.ts.
  *
  * Service client for every read that feeds a write: contract_versions has no
  * write policies (every write is an action), and a scoped admin's RLS view
@@ -25,10 +25,12 @@ import {
   fetchContractVersions,
 } from '@/db/queries/contracts';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
+import { executeRateUpsert } from '@/db/queries/rates';
 import { hasPayOutstanding } from '@/db/queries/workers';
 import { mergeAgreement, monthlyFromPeriod, safeSigImg } from '@/lib/agreements/merge';
 import { humanizeError } from '@/lib/errors';
 import { fullName } from '@/lib/names';
+import { dayBefore } from '@/lib/pay/rates';
 import {
   type ActionResult,
   createPortalLogin,
@@ -531,5 +533,235 @@ export async function signContractVersion(args: unknown): Promise<ActionResult> 
     return { ok: true };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Sign failed.') };
+  }
+}
+
+/**
+ * Countersign a signed version — the "one unit" moment (§4). The signed IC
+ * agreement, the worker_companies row and the effective-dated rate move
+ * together, so this is sequential with hireContractor's rollback shape: each
+ * step registers its undo, and a failure runs them in reverse.
+ *
+ *   1. rates: the version's amount at effective_from. The planner closes the
+ *      open earlier rate the day before.
+ *   2. worker_companies: contract / weekly_hours / role from the version. A
+ *      rehire (link ended) reopens the link and the worker as of start_date —
+ *      NOT via reactivateWorkerLink, which would reopen the old closed rate
+ *      and collide with step 1. The workers trigger (migration 39) restores a
+ *      still-revoked login on the way back to active.
+ *   3. whatever version was active → superseded, ended the day before. An
+ *      `ended` prior (rehire) keeps its real last day — the termination date is
+ *      evidence, and the contractor was not under contract in between.
+ *   4. this version → active + countersigned_*. Filtered on signed, so two
+ *      admins clicking at once countersign once; the loser rolls back.
+ *   5. email with the portal print link, audit row.
+ *
+ * Not here: set_tools_requested for a rehire. clearWorkerTools only wipes the
+ * credentials (enc), never `requested`, so the old request is still on file
+ * for the admin to fill at completion — nothing to re-request.
+ */
+export async function countersignContractVersion(
+  args: unknown,
+): Promise<ActionResult<{ emailSent: boolean; rehired: boolean }>> {
+  const parsed = ContractVersionRefSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+
+  const undo: (() => Promise<void>)[] = [];
+  try {
+    const svc = createServiceClient();
+    const v = await fetchContractVersion(svc, parsed.data.versionId);
+    if (!v) return { ok: false, error: 'Contract version not found.' };
+    const auth = await authorize(v.companyId);
+    if ('error' in auth) return auth;
+    if (v.status !== 'signed')
+      return {
+        ok: false,
+        error: `Version ${v.version} is ${v.status} — only a signed version can be countersigned.`,
+      };
+    // NOT NULL on the table; the shared ContractTerms type is loose for the read-through.
+    const ratePhp = v.ratePhp;
+    const effectiveFrom = v.effectiveFrom;
+    if (ratePhp == null || !effectiveFrom || !v.startDate)
+      return { ok: false, error: `Version ${v.version} is missing its rate or dates.` };
+
+    // Everything the undo stack needs, read before the first write.
+    const [link, worker, rates, login] = await Promise.all([
+      svc
+        .from('worker_companies')
+        .select('status, started_on, ended_on, contract, weekly_hours, role')
+        .eq('worker_id', v.workerId)
+        .eq('company_id', v.companyId)
+        .maybeSingle(),
+      svc
+        .from('workers')
+        .select('first_name, middle_name, last_name, email, status')
+        .eq('id', v.workerId)
+        .maybeSingle(),
+      svc
+        .from('rates')
+        .select('id, amount_php, effective_end')
+        .eq('worker_id', v.workerId)
+        .eq('company_id', v.companyId),
+      svc.from('contractor_logins').select('email').eq('worker_id', v.workerId).maybeSingle(),
+    ]);
+    for (const r of [link, worker, rates, login])
+      if (r.error) throw new Error(`countersign read: ${r.error.message}`);
+    if (!link.data)
+      return { ok: false, error: 'This contractor has no engagement at this company.' };
+    if (!worker.data) return { ok: false, error: 'Contractor not found.' };
+    const before = { link: link.data, worker: worker.data, rates: rates.data ?? [] };
+    const rehire = before.link.status === 'ended';
+
+    // 1. The rate. Money source of truth; everything else follows it.
+    const rate = await executeRateUpsert(svc, {
+      workerId: v.workerId,
+      companyId: v.companyId,
+      amountPhp: ratePhp,
+      effectiveStart: effectiveFrom,
+    });
+    undo.push(async () => {
+      // Drop what the planner inserted, put every prior row back as it was.
+      const keep = new Set(before.rates.map((r) => r.id));
+      const { data: now } = await svc
+        .from('rates')
+        .select('id')
+        .eq('worker_id', v.workerId)
+        .eq('company_id', v.companyId);
+      for (const r of now ?? [])
+        if (!keep.has(r.id)) await svc.from('rates').delete().eq('id', r.id);
+      for (const r of before.rates)
+        await svc
+          .from('rates')
+          .update({ amount_php: r.amount_php, effective_end: r.effective_end })
+          .eq('id', r.id);
+    });
+
+    // 2. The engagement. The version is a full replacement (decision 12), so
+    //    its terms land as they are — including a blank hours field.
+    const { error: linkErr } = await svc
+      .from('worker_companies')
+      .update({
+        contract: v.employmentType ?? before.link.contract,
+        weekly_hours: v.hoursPerWeek,
+        role: v.position,
+        ...(rehire ? { status: 'active' as const, started_on: v.startDate, ended_on: null } : {}),
+      })
+      .eq('worker_id', v.workerId)
+      .eq('company_id', v.companyId);
+    if (linkErr) throw new Error(`worker_companies: ${linkErr.message}`);
+    undo.push(async () => {
+      await svc
+        .from('worker_companies')
+        .update({
+          contract: before.link.contract,
+          weekly_hours: before.link.weekly_hours,
+          role: before.link.role,
+          status: before.link.status,
+          started_on: before.link.started_on,
+          ended_on: before.link.ended_on,
+        })
+        .eq('worker_id', v.workerId)
+        .eq('company_id', v.companyId);
+    });
+    if (rehire && before.worker.status !== 'active') {
+      const { error: wErr } = await svc
+        .from('workers')
+        .update({ status: 'active' })
+        .eq('id', v.workerId);
+      if (wErr) throw new Error(`workers: ${wErr.message}`);
+      undo.push(async () => {
+        await svc.from('workers').update({ status: before.worker.status }).eq('id', v.workerId);
+      });
+    }
+
+    // 3. The prior version of record, if any. Matched by status rather than
+    //    supersedes_id so the one-active index can never fire at step 4.
+    const endedOn = dayBefore(effectiveFrom);
+    const { data: superseded, error: supErr } = await svc
+      .from('contract_versions')
+      .update({ status: 'superseded', ended_on: endedOn })
+      .eq('worker_id', v.workerId)
+      .eq('company_id', v.companyId)
+      .eq('status', 'active')
+      .select('id');
+    if (supErr) throw new Error(`contract_versions supersede: ${supErr.message}`);
+    const supersededIds = (superseded ?? []).map((r) => r.id);
+    if (supersededIds.length)
+      undo.push(async () => {
+        await svc
+          .from('contract_versions')
+          .update({ status: 'active', ended_on: null })
+          .in('id', supersededIds);
+      });
+
+    // 4. This version.
+    const countersignedName = auth.admin.name ?? auth.admin.email;
+    const { data: done, error: doneErr } = await svc
+      .from('contract_versions')
+      .update({
+        status: 'active',
+        countersigned_at: new Date().toISOString(),
+        countersigned_by: auth.admin.userId,
+        countersigned_name: countersignedName,
+      })
+      .eq('id', v.id)
+      .eq('status', 'signed')
+      .select('id');
+    if (doneErr) throw new Error(`contract_versions countersign: ${doneErr.message}`);
+    if (!done?.length) throw new Error(`Version ${v.version} changed — reload.`);
+
+    // 5. The notice, best-effort like every other hire email; the admin is told.
+    const w = before.worker;
+    const name = fullName({
+      firstName: w.first_name,
+      middleName: w.middle_name,
+      lastName: w.last_name,
+    });
+    const to = (login.data?.email ?? w.email ?? '').trim();
+    const tpl = DEFAULT_HIRE_EMAILS.contract_countersigned;
+    const vars = {
+      name: escapeHtml(name),
+      print_url: `${portalUrl()}/contracts/${v.id}/print`,
+      version: String(v.version),
+      effective_from: effectiveFrom,
+    };
+    const emailSent = to
+      ? await trySend(
+          to,
+          mergeTemplate(tpl.subject, vars),
+          mergeTemplate(tpl.html, vars),
+          'contract_countersigned',
+        )
+      : false;
+
+    await logEvent({
+      companyId: v.companyId,
+      action: 'contract.countersigned',
+      entity: v.workerId,
+      detail: {
+        version: v.version,
+        version_id: v.id,
+        rate_php: { from: rate.priorAmountPhp, to: ratePhp },
+        effective_from: effectiveFrom,
+        rate_kind: rate.kind,
+        rehired: rehire,
+        superseded: supersededIds,
+        email_sent: emailSent,
+        by: auth.admin.email,
+      },
+    });
+    revalidatePath('/contractors');
+    return { ok: true, data: { emailSent, rehired: rehire } };
+  } catch (err) {
+    // Reverse order, best-effort — the same shape as hireContractor's rollback.
+    for (const step of undo.reverse()) {
+      try {
+        await step();
+      } catch {
+        /* keep unwinding */
+      }
+    }
+    return { ok: false, error: humanizeError(err, 'Countersign failed.') };
   }
 }

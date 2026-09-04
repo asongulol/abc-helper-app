@@ -1,13 +1,16 @@
 /**
- * Contract versions, slices 2–3 (docs/CONTRACT-VERSIONS-PLAN.md §6): the
- * portal-login side effects of send and void, the draft bookkeeping, and the
- * contractor's signature.
+ * Contract versions, slices 2–4 (docs/CONTRACT-VERSIONS-PLAN.md §6): the
+ * portal-login side effects of send and void, the draft bookkeeping, the
+ * contractor's signature, and the countersign write-through.
  *
  * Send is what lets a departed contractor back in to sign — it restores the
  * login the sunset sweep revoked (or creates one) — so the two checks the plan
  * names are here: send restores a revoked login; void hands it back to the
  * sunset rule, and only then. Sign's checks: the signature row carries
  * doc_version=N and the sha256 of the frozen body; a second sign is rejected.
+ * Countersign's checks (the money path): the rate lands at effective_from and
+ * the prior one closes the day before; a rehire sets started_on and leaves the
+ * old rate closed; a failure mid-way puts the rate back.
  */
 
 import { createHash } from 'node:crypto';
@@ -59,8 +62,13 @@ vi.mock('@/db/queries/portal', () => ({
   }),
 }));
 
-const { draftContractVersion, sendContractVersion, signContractVersion, voidContractVersion } =
-  await import('@/server/actions/contracts');
+const {
+  countersignContractVersion,
+  draftContractVersion,
+  sendContractVersion,
+  signContractVersion,
+  voidContractVersion,
+} = await import('@/server/actions/contracts');
 
 const version = (over: Row = {}): Row => ({
   id: V2,
@@ -423,5 +431,196 @@ describe('signContractVersion', () => {
     expect(res).toMatchObject({ ok: false, error: /not found/ });
     expect(sigs(tables)).toHaveLength(1);
     expect(first(tables).status).toBe('sent');
+  });
+});
+
+describe('countersignContractVersion', () => {
+  const V3 = '55555555-5555-4555-8555-555555555555';
+  const signed = (over: Row = {}) =>
+    version({
+      id: V3,
+      version: 3,
+      status: 'signed',
+      supersedes_id: V2,
+      rate_php: 25000,
+      hours_per_week: 32,
+      start_date: '2025-01-01',
+      effective_from: '2026-09-16',
+      sent_at: '2026-09-01T00:00:00Z',
+      signed_at: '2026-09-02T00:00:00Z',
+      ...over,
+    });
+  const byId = (tables: Tables, id: string) =>
+    (tables.contract_versions ?? []).find((v) => v.id === id) as Row;
+  const rates = (tables: Tables) =>
+    [...(tables.rates ?? [])].sort((a, b) =>
+      String(a.effective_start).localeCompare(String(b.effective_start)),
+    );
+
+  /** A current contractor on version 2, being moved to version 3 (a raise). */
+  const current = () => {
+    const tables = boot(
+      seed({
+        worker: { status: 'active' },
+        login: { status: 'active' },
+        versions: [version({ status: 'active', effective_from: '2025-01-01' }), signed()],
+      }),
+    );
+    tables.worker_companies = [
+      {
+        worker_id: W,
+        company_id: CO,
+        contract: 'PT',
+        role: 'VA',
+        weekly_hours: 20,
+        status: 'active',
+        started_on: '2025-01-01',
+        ended_on: null,
+      },
+    ];
+    tables.rates = [
+      {
+        id: 'r-1',
+        worker_id: W,
+        company_id: CO,
+        amount_php: 22000,
+        effective_start: '2025-01-01',
+        effective_end: null,
+      },
+    ];
+    return tables;
+  };
+
+  /** A departed contractor whose version 2 termination ended, being rehired on version 3. */
+  const departed = () => {
+    const tables = boot(
+      seed({
+        versions: [
+          version({ status: 'ended', effective_from: '2025-01-01', ended_on: '2026-06-30' }),
+          signed({ start_date: '2026-09-16' }),
+        ],
+      }),
+    );
+    tables.worker_companies = [
+      {
+        worker_id: W,
+        company_id: CO,
+        contract: 'FT',
+        role: 'VA',
+        weekly_hours: 40,
+        status: 'ended',
+        started_on: '2025-01-01',
+        ended_on: '2026-06-30',
+      },
+    ];
+    tables.rates = [
+      {
+        id: 'r-1',
+        worker_id: W,
+        company_id: CO,
+        amount_php: 22000,
+        effective_start: '2025-01-01',
+        effective_end: '2026-06-30',
+      },
+    ];
+    return tables;
+  };
+
+  it('writes the rate at effective_from, closes the prior one the day before, and makes the version of record', async () => {
+    const tables = current();
+
+    const res = await countersignContractVersion({ versionId: V3 });
+
+    expect(res).toEqual({ ok: true, data: { emailSent: true, rehired: false } });
+    expect(rates(tables)).toEqual([
+      expect.objectContaining({ id: 'r-1', amount_php: 22000, effective_end: '2026-09-15' }),
+      expect.objectContaining({ amount_php: 25000, effective_start: '2026-09-16' }),
+    ]);
+    expect(rates(tables)[1]?.effective_end).toBeUndefined();
+    // The engagement carries the version's terms; nothing about its dates moved.
+    expect(tables.worker_companies?.[0]).toMatchObject({
+      contract: 'FT',
+      role: 'Senior VA',
+      weekly_hours: 32,
+      status: 'active',
+      started_on: '2025-01-01',
+      ended_on: null,
+    });
+    expect(byId(tables, V2)).toMatchObject({ status: 'superseded', ended_on: '2026-09-15' });
+    expect(byId(tables, V3)).toMatchObject({
+      status: 'active',
+      countersigned_by: 'admin-1',
+      countersigned_name: 'owner@abckidsny.com',
+    });
+    expect(byId(tables, V3).countersigned_at).toBeTruthy();
+
+    const [to, subject, html, context] = mail.trySend.mock.calls[0] as string[];
+    expect(to).toBe('ana@example.ph');
+    expect(subject).toMatch(/countersigned/);
+    expect(html).toContain(`http://localhost:3000/portal/contracts/${V3}/print`);
+    expect(html).toContain('2026-09-16');
+    expect(context).toBe('contract_countersigned');
+  });
+
+  it('rehire: reopens the engagement from the new start date and leaves the old rate closed', async () => {
+    const tables = departed();
+
+    const res = await countersignContractVersion({ versionId: V3 });
+
+    expect(res).toEqual({ ok: true, data: { emailSent: true, rehired: true } });
+    expect(tables.worker_companies?.[0]).toMatchObject({
+      status: 'active',
+      started_on: '2026-09-16',
+      ended_on: null,
+    });
+    expect(tables.workers?.[0]?.status).toBe('active');
+    // Decision 7: the old closed rate stays closed on its real last day; the
+    // new version writes its own. reactivateWorkerLink would have reopened it.
+    expect(rates(tables)).toEqual([
+      expect.objectContaining({ id: 'r-1', effective_end: '2026-06-30' }),
+      expect.objectContaining({ amount_php: 25000, effective_start: '2026-09-16' }),
+    ]);
+    // The ended version keeps the termination date — it is evidence, and the
+    // contractor was not under contract between the two.
+    expect(byId(tables, V2)).toMatchObject({ status: 'ended', ended_on: '2026-06-30' });
+    expect(byId(tables, V3).status).toBe('active');
+  });
+
+  it('countersigns only a signed version', async () => {
+    const tables = current();
+    byId(tables, V3).status = 'sent';
+
+    const res = await countersignContractVersion({ versionId: V3 });
+
+    expect(res).toMatchObject({ ok: false, error: /only a signed version/ });
+    expect(rates(tables)).toHaveLength(1);
+    expect(byId(tables, V2).status).toBe('active');
+  });
+
+  it('puts the rate back when a later step fails', async () => {
+    const tables = current();
+    // Fail the engagement write (step 2), after the rate (step 1) has landed.
+    const real = world.svc as { from: (t: string) => Record<string, unknown> };
+    world.svc = {
+      from: (t: string) => {
+        const q = real.from(t);
+        if (t === 'worker_companies')
+          q.update = () => {
+            throw new Error('worker_companies is on fire');
+          };
+        return q;
+      },
+    };
+
+    const res = await countersignContractVersion({ versionId: V3 });
+
+    expect(res).toMatchObject({ ok: false, error: /on fire/ });
+    expect(rates(tables)).toEqual([
+      expect.objectContaining({ id: 'r-1', amount_php: 22000, effective_end: null }),
+    ]);
+    expect(byId(tables, V2).status).toBe('active');
+    expect(byId(tables, V3).status).toBe('signed');
+    expect(byId(tables, V3).countersigned_at).toBeUndefined();
+    expect(mail.trySend).not.toHaveBeenCalled();
   });
 });

@@ -9,10 +9,15 @@ import { getRateHistory, saveRate } from '@/server/actions/payroll';
 type Props = {
   workerId: string;
   companyId: string;
+  /** Owner may still save a correction that matches the contract of record. */
+  isOwner?: boolean;
+  /** Jumps to the Contracts tab; shown instead of the editor once a versioned contract is of record. */
+  onNewContract?: () => void;
 };
 
-export function RateCard({ workerId, companyId }: Props) {
+export function RateCard({ workerId, companyId, isOwner = false, onNewContract }: Props) {
   const [history, setHistory] = useState<RateHistoryRow[] | null>(null);
+  const [contractVersion, setContractVersion] = useState<number | null>(null);
   const [loadError, setLoadError] = useState('');
   const [amountStr, setAmountStr] = useState('');
   const [effectiveStart, setEffectiveStart] = useState('');
@@ -29,6 +34,7 @@ export function RateCard({ workerId, companyId }: Props) {
         return;
       }
       setHistory(result.data?.history ?? []);
+      setContractVersion(result.data?.contractVersion ?? null);
     });
     // startLoad is stable (from useTransition); workerId/companyId drive the query.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,6 +82,11 @@ export function RateCard({ workerId, companyId }: Props) {
   }
 
   const today = new Date().toISOString().slice(0, 10);
+  // Decision 8: with a versioned contract the rate is written by countersign.
+  // The free editor stays only for legacy engagements; the owner keeps it as a
+  // correction tool (the server rejects an amount off the contract).
+  const versioned = contractVersion != null;
+  const showEditor = !versioned || isOwner;
 
   return (
     <div>
@@ -133,85 +144,106 @@ export function RateCard({ workerId, companyId }: Props) {
         </div>
       )}
 
-      <h4
-        style={{
-          margin: '0 0 12px',
-          fontSize: 13,
-          textTransform: 'uppercase',
-          letterSpacing: '.05em',
-          color: 'var(--muted)',
-        }}
-      >
-        Set new rate
-      </h4>
-      <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
-        Semi-monthly PHP amount. Same-day saves replace the existing row instead of stacking.
-      </p>
-      <form onSubmit={handleSave}>
-        <div className="grid-2">
-          <div className="field">
-            <label htmlFor="rc-amount">Amount (PHP)</label>
-            <input
-              id="rc-amount"
-              type="number"
-              min="0.01"
-              step="0.01"
-              placeholder="e.g. 12000.00"
-              value={amountStr}
-              onChange={(e) => {
-                setAmountStr(e.target.value);
-                setFormError('');
-                setSaveSuccess('');
-              }}
-              disabled={isSavePending}
-              aria-invalid={formError && !amountStr ? 'true' : undefined}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="rc-eff">Effective date</label>
-            <input
-              id="rc-eff"
-              type="date"
-              value={effectiveStart}
-              max={today}
-              onChange={(e) => {
-                setEffectiveStart(e.target.value);
-                setFormError('');
-                setSaveSuccess('');
-              }}
-              disabled={isSavePending}
-              aria-invalid={formError && !effectiveStart ? 'true' : undefined}
-            />
-          </div>
+      {versioned && (
+        <div className="row" style={{ gap: 12, alignItems: 'center', marginBottom: 20 }}>
+          <p className="muted" style={{ fontSize: 12, margin: 0, flex: '1 1 240px' }}>
+            Version {contractVersion} is the contract of record. A rate change is a new contract the
+            contractor signs and an admin countersigns.
+          </p>
+          {onNewContract && (
+            <button type="button" className="btn sm" onClick={onNewContract}>
+              New contract
+            </button>
+          )}
         </div>
-        {formError && (
-          <div className="field-err" style={{ marginBottom: 8 }}>
-            {formError}
-          </div>
-        )}
-        {saveSuccess && (
-          <div
-            className="banner"
+      )}
+      {showEditor && (
+        <>
+          <h4
             style={{
-              marginBottom: 8,
-              borderColor: 'var(--good)',
-              background: 'var(--good-soft)',
-              color: 'var(--good)',
+              margin: '0 0 12px',
+              fontSize: 13,
+              textTransform: 'uppercase',
+              letterSpacing: '.05em',
+              color: 'var(--muted)',
             }}
           >
-            {saveSuccess}
+            {versioned ? 'Correction (owner only)' : 'Set new rate'}
+          </h4>
+          <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+            {versioned
+              ? 'Must match the contract of record — use it to fix an effective date, not to change the amount.'
+              : 'Semi-monthly PHP amount. Same-day saves replace the existing row instead of stacking.'}
+          </p>
+        </>
+      )}
+      {showEditor && (
+        <form onSubmit={handleSave}>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="rc-amount">Amount (PHP)</label>
+              <input
+                id="rc-amount"
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="e.g. 12000.00"
+                value={amountStr}
+                onChange={(e) => {
+                  setAmountStr(e.target.value);
+                  setFormError('');
+                  setSaveSuccess('');
+                }}
+                disabled={isSavePending}
+                aria-invalid={formError && !amountStr ? 'true' : undefined}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="rc-eff">Effective date</label>
+              <input
+                id="rc-eff"
+                type="date"
+                value={effectiveStart}
+                max={today}
+                onChange={(e) => {
+                  setEffectiveStart(e.target.value);
+                  setFormError('');
+                  setSaveSuccess('');
+                }}
+                disabled={isSavePending}
+                aria-invalid={formError && !effectiveStart ? 'true' : undefined}
+              />
+            </div>
           </div>
-        )}
-        <button type="submit" className="btn" disabled={isSavePending}>
-          {isSavePending ? (
-            <>
-              <Spinner /> Saving…
-            </>
-          ) : (
-            'Save rate'
+          {formError && (
+            <div className="field-err" style={{ marginBottom: 8 }}>
+              {formError}
+            </div>
           )}
-        </button>
-      </form>
+          {saveSuccess && (
+            <div
+              className="banner"
+              style={{
+                marginBottom: 8,
+                borderColor: 'var(--good)',
+                background: 'var(--good-soft)',
+                color: 'var(--good)',
+              }}
+            >
+              {saveSuccess}
+            </div>
+          )}
+          <button type="submit" className="btn" disabled={isSavePending}>
+            {isSavePending ? (
+              <>
+                <Spinner /> Saving…
+              </>
+            ) : (
+              'Save rate'
+            )}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

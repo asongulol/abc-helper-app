@@ -24,6 +24,8 @@ interface Props extends ProfileTabProps {
   assignTo: string;
   setAssignTo: (v: string) => void;
   handleAssign: () => void;
+  /** Rate card's "New contract" → the Contracts tab (decision 8). */
+  onNewContract: () => void;
 }
 
 /** Pay & payout tab — per-company engagement, PHP rate card, and client engagements. */
@@ -41,6 +43,7 @@ export function PayTab({
   assignTo,
   setAssignTo,
   handleAssign,
+  onNewContract,
   form,
   set,
   errors,
@@ -125,7 +128,12 @@ export function PayTab({
       </form>
       <section style={{ marginTop: 24 }}>
         <h4 style={SECTION_H4}>Pay rate (PHP, semi-monthly)</h4>
-        <RateCard workerId={worker.workerId} companyId={companyId} />
+        <RateCard
+          workerId={worker.workerId}
+          companyId={companyId}
+          isOwner={isOwner}
+          onNewContract={onNewContract}
+        />
       </section>
       <WisePayoutPanel workerId={worker.workerId} isOwner={isOwner} />
       <section style={{ marginTop: 24 }}>

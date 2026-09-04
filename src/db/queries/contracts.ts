@@ -195,6 +195,27 @@ export const contractOfRecord = async (
   };
 };
 
+/**
+ * The ACTIVE version of one engagement, or null — the cheap "has a versioned
+ * contract" test (decision 8): while one exists the rate is written by
+ * countersign and a direct rate edit is a correction toward it.
+ */
+export const fetchActiveContractVersion = async (
+  db: Db,
+  workerId: string,
+  companyId: string,
+): Promise<ContractVersion | null> => {
+  const { data, error } = await db
+    .from('contract_versions')
+    .select('*')
+    .eq('worker_id', workerId)
+    .eq('company_id', companyId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (error) throw new Error(`contract_versions: ${error.message}`);
+  return data ? mapVersion(data) : null;
+};
+
 /** One version by id, whatever engagement it belongs to. Null when it doesn't exist. */
 export const fetchContractVersion = async (db: Db, id: string): Promise<ContractVersion | null> => {
   const { data, error } = await db.from('contract_versions').select('*').eq('id', id).maybeSingle();

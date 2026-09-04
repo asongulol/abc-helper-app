@@ -10,6 +10,7 @@
 import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchActiveContractVersion } from '@/db/queries/contracts';
 import type {
   OffCycleItemRow,
   PeriodSummaryRow,
@@ -137,6 +138,23 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
 
   try {
     const db = await createServerSupabase();
+    // Decision 8 (docs/CONTRACT-VERSIONS-PLAN.md): once a versioned contract is
+    // of record, countersign writes the rate. A direct save is a correction
+    // only — owner-only, and it must land ON the contract's amount, so fixing
+    // an effective date passes and a new amount does not.
+    const contract = await fetchActiveContractVersion(db, input.workerId, input.companyId);
+    if (contract) {
+      if (!admin.isOwner)
+        return {
+          ok: false,
+          error: `Version ${contract.version} is the contract of record — change the rate by issuing a new contract.`,
+        };
+      if (contract.ratePhp !== input.amountPhp)
+        return {
+          ok: false,
+          error: `The contract of record (version ${contract.version}) says ₱${(contract.ratePhp ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}. A correction must match it — issue a new contract to change the rate.`,
+        };
+    }
     const result = await executeRateUpsert(db, {
       workerId: input.workerId,
       companyId: input.companyId,
@@ -151,6 +169,7 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
         amount_php: { from: result.priorAmountPhp, to: input.amountPhp },
         effective_start: input.effectiveStart,
         kind: result.kind,
+        correction_of_version: contract?.version ?? null,
       },
     });
     return { ok: true, data: { kind: result.kind } };
@@ -162,17 +181,24 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
   }
 }
 
-/** Rate history for a worker in a company (newest first). */
+/**
+ * Rate history for a worker in a company (newest first), plus the number of
+ * the versioned contract of record when there is one — the rate card then
+ * offers "New contract" instead of the free editor (decision 8).
+ */
 export async function getRateHistory(args: {
   workerId: string;
   companyId: string;
-}): Promise<ActionResult<{ history: RateHistoryRow[] }>> {
+}): Promise<ActionResult<{ history: RateHistoryRow[]; contractVersion: number | null }>> {
   const admin = await getCurrentAdmin();
   if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
   try {
     const db = await createServerSupabase();
-    const history = await fetchRateHistory(db, args.workerId, args.companyId);
-    return { ok: true, data: { history } };
+    const [history, contract] = await Promise.all([
+      fetchRateHistory(db, args.workerId, args.companyId),
+      fetchActiveContractVersion(db, args.workerId, args.companyId),
+    ]);
+    return { ok: true, data: { history, contractVersion: contract?.version ?? null } };
   } catch (err) {
     return {
       ok: false,

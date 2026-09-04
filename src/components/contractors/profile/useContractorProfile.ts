@@ -497,6 +497,7 @@ export function useContractorProfile(
     serverError,
     isPending,
     activeTab,
+    setActiveTab,
     tablist,
     photoUrl,
     photoBusy,
