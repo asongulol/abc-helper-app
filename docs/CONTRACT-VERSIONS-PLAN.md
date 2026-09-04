@@ -244,3 +244,38 @@ so no conflict expected). Edge functions untouched.
 - Termination letters or separation agreements.
 - Mirroring current terms into the legacy portal's row.
 - Multiple engagements at the same company (engagement history lives in versions instead).
+
+---
+
+## 7. Follow-up decisions (2026-09-04, evening interview)
+
+Trigger: a sent version needed a clause change (termination notice), not a rate change. Confirmed
+with the owner, one question at a time:
+
+1. **No "Amend" on a sent version.** Void → redraft → send stays the path; the redraft now
+   prefills from the **latest version when it is `void`** (else the contract of record), so an
+   unsigned document is fixed, not retyped. The void reason remains the audit trail.
+2. **Clause values that vary by position are merge tokens** on the version — never a free-text
+   body per version (the words and the structured terms would drift, which is what versions
+   exist to stop) and never per-position templates. First token: `{{notice_days}}` for Section
+   11.1, column `contract_versions.notice_days` (default 15, migration 46, which also swaps the
+   template's hard-coded "fifteen (15)" for the token). More tokens only when a real contract
+   needs a different value.
+3. **Legacy portal confirmed retired for signing** — 301 to the app since 2026-08-29; last
+   legacy-written signature 2026-08-21. It still merges the same template and would print an
+   unknown token raw, which no longer matters. Left untouched.
+4. **The Onboarding page becomes the one queue** for signatures and documents: tabs **New hires**
+   / **Current team**, each counting contractors with ≥1 open item. Current team lists contracts
+   sent / signed-awaiting-countersign / drafted-never-sent, contractors with no IC agreement in
+   the app (the Onboard Current wizard is their action), and documents pending review / deferred
+   and due / expiring within 30 days / needing replacement. One row per contractor.
+5. **Request a document** (joins the owed list in the portal + email, no due date) and **Remind**
+   (one email listing everything still owed). No-login contractors get Onboard Current instead.
+6. **The hiring-review digest gains** contracts awaiting signature/countersign and outstanding
+   requested documents. No new cron.
+
+Assumed: permissions unchanged (countersign gate on draft/send/void/countersign; any admin can
+request/remind); the Overview "Countersign N" duty counts signed contract versions too.
+
+Slices: (7a) token + void-prefill + migration 46 · (7b) Onboarding tabs + Current team rows ·
+(7c) Request/Remind + two email templates · (7d) digest extension.

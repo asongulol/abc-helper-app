@@ -138,6 +138,7 @@ export async function draftContractVersion(
       effective_from: input.effectiveFrom,
       addendum_type: input.addendumType || null,
       addendum_text: input.addendumText?.trim() || null,
+      notice_days: input.noticeDays,
     };
 
     let versionId: string;
@@ -273,6 +274,7 @@ export async function sendContractVersion(
         v.employmentType === 'PT' ? 'part_time' : v.employmentType ? 'full_time' : '',
       hours_per_week: v.hoursPerWeek,
       schedule: v.schedule,
+      notice_days: v.noticeDays,
       today: todayManila(),
       addendum: [v.addendumText, mergeLine].filter(Boolean).join('\n\n'),
     });

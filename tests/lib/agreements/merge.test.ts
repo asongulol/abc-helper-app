@@ -26,6 +26,21 @@ describe('escapeHtml', () => {
   });
 });
 
+describe('mergeAgreement notice_days token', () => {
+  const body = "upon {{notice_days}} calendar days' prior written notice";
+  it('renders the version value', () => {
+    expect(mergeAgreement(body, { notice_days: 30 })).toBe(
+      "upon 30 calendar days' prior written notice",
+    );
+  });
+  it('defaults to 15 — what the template said in words before the token', () => {
+    expect(mergeAgreement(body, {})).toBe("upon 15 calendar days' prior written notice");
+    expect(mergeAgreement(body, { notice_days: null })).toBe(
+      "upon 15 calendar days' prior written notice",
+    );
+  });
+});
+
 describe('monthlyFromPeriod (semi-monthly rate × 2)', () => {
   it('doubles a numeric per-period rate and locale-formats it', () => {
     expect(monthlyFromPeriod('25000')).toBe('50,000');

@@ -65,7 +65,7 @@ an unset `pay_basis` is paid nothing (never guessed).
 
 | Table | Key columns | Purpose |
 |---|---|---|
-| `contract_versions` | `worker_id`, `company_id`, `version` (≥ 2), `status` (`contract_version_status`), terms (`rate_php`, `period_basis`, `position`, `employment_type`, `schedule`, `hours_per_week`, `start_date`, `effective_from`, `addendum_*`), lifecycle (`supersedes_id`, `ended_on`, `rendered_body`, `doc_sha256`, `sent_at`/`signed_at`/`countersigned_at`, `countersigned_by`/`_name`, `voided_at`/`void_reason`) | One row per re-issued IC agreement for an engagement (rehire, rate/terms change). The signed agreement, the `worker_companies` row and the effective-dated `rates` row move together: **countersign** is what writes the rate. Migration `00000000000044`. |
+| `contract_versions` | `worker_id`, `company_id`, `version` (≥ 2), `status` (`contract_version_status`), terms (`rate_php`, `period_basis`, `position`, `employment_type`, `schedule`, `hours_per_week`, `start_date`, `effective_from`, `addendum_*`, `notice_days`), lifecycle (`supersedes_id`, `ended_on`, `rendered_body`, `doc_sha256`, `sent_at`/`signed_at`/`countersigned_at`, `countersigned_by`/`_name`, `voided_at`/`void_reason`) | One row per re-issued IC agreement for an engagement (rehire, rate/terms change). The signed agreement, the `worker_companies` row and the effective-dated `rates` row move together: **countersign** is what writes the rate. Migration `00000000000044`. |
 
 `contract_version_status` is `draft → sent → signed → active → superseded | ended`, plus `void`
 (admin-only, for anything not yet of record). Three invariants live in partial unique indexes,

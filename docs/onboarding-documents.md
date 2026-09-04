@@ -82,11 +82,18 @@ current engagement's **version 1 is a read-through** of the legacy `ic_agreement
 
 | Step | Action | What happens |
 |---|---|---|
-| Draft | `draftContractVersion()` | Insert prefilled from `contractOfRecord()`; `effective_from` defaults to the next period start. A draft is edited in place (drafts are free). Refused while a version is `sent`/`signed`. |
+| Draft | `draftContractVersion()` | Insert prefilled from `contractOfRecord()` — or from the version just **voided**, so a fix to an unsigned document isn't retyped; `effective_from` defaults to the next period start. A draft is edited in place (drafts are free). Refused while a version is `sent`/`signed`. |
 | Send | `sendContractVersion()` | Freezes the document: `renderAgreementParts`-style merge of **today's** template + the version's terms + one merge line ("takes effect on X and supersedes the agreement dated Y") → `rendered_body`, `doc_sha256`. Guarantees a portal login (`createPortalLogin` if none, `restorePortalLogin` if revoked), emails `contract_review`. The engagement stays `ended` on a rehire until countersign. |
 | Sign | `signContractVersion()` (contractor, `requireWorker`) | Same scroll-to-end + typed/drawn contract as `signAgreement()`. Inserts an `onboarding_signatures` row with `doc_version=String(N)` and the frozen `doc_sha256`; PHI encrypted as usual. A second sign **errors** (plain insert, not an ignore-duplicates upsert). |
 | Countersign | `countersignContractVersion()` | The "one unit" write, sequential with `hireContractor`-style undo-in-reverse rollback: (1) `executeRateUpsert` at `effective_from` (the planner closes the prior open rate the day before), (2) `worker_companies` contract/hours/role — a rehire reopens the link and the worker from `start_date` (**not** `reactivateWorkerLink`, which would reopen the old rate), (3) the `active` prior → `superseded`, `ended_on = effective_from − 1` (an `ended` prior keeps its termination date), (4) this version → `active` + `countersigned_*`, (5) `contract_countersigned` email with the portal print link. |
 | Void | `voidContractVersion()` | Any in-flight version. A signature on it becomes `superseded`. Re-revokes the login when the worker is `ended` and fully paid — the same predicate as the nightly sunset sweep. |
+
+**Clause values that vary by position** are merge tokens on the version, never edits to the
+document and never per-position templates. The first is the Section 11.1 termination notice:
+`contract_versions.notice_days` renders as `{{notice_days}}` (migration `00000000000046` swapped
+the template's hard-coded "fifteen (15)" for the token). `mergeAgreement()` defaults it to
+`DEFAULT_NOTICE_DAYS` (15), so the version 1 read-through and the onboarding sign page read
+exactly as before. Add another token only when a real contract needs a different value.
 
 **What else moves with a version**
 

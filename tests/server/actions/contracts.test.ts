@@ -290,6 +290,7 @@ describe('draftContractVersion', () => {
     effectiveFrom: '2026-10-01',
     addendumType: '',
     addendumText: null,
+    noticeDays: 30,
   };
 
   it('numbers a new draft after the latest version and points it at the version of record', async () => {
@@ -311,6 +312,7 @@ describe('draftContractVersion', () => {
       supersedes_id: 'v-2',
       rate_php: 30000,
       position: 'Lead VA',
+      notice_days: 30,
       created_by: 'admin-1',
     });
   });

@@ -10,6 +10,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
+import { DEFAULT_NOTICE_DAYS } from '@/lib/agreements/merge';
 
 type Db = SupabaseClient<Database>;
 type Row = Database['public']['Tables']['contract_versions']['Row'];
@@ -28,6 +29,8 @@ export type ContractTerms = {
   effectiveFrom: string | null;
   addendumType: string | null;
   addendumText: string | null;
+  /** Section 11.1 termination notice, calendar days — the {{notice_days}} token. */
+  noticeDays: number;
 };
 
 export type ContractVersion = ContractTerms & {
@@ -79,6 +82,7 @@ const mapVersion = (r: Row): ContractVersion => ({
   effectiveFrom: r.effective_from,
   addendumType: r.addendum_type,
   addendumText: r.addendum_text,
+  noticeDays: r.notice_days,
   supersedesId: r.supersedes_id,
   endedOn: r.ended_on,
   renderedBody: r.rendered_body,
@@ -188,6 +192,8 @@ export const contractOfRecord = async (
     effectiveFrom: rate.data?.effective_start ?? null,
     addendumType: a?.addendum_type ?? null,
     addendumText: a?.addendum_text ?? null,
+    // The v1 document said "fifteen (15)" in words before the token existed.
+    noticeDays: DEFAULT_NOTICE_DAYS,
     signedAt: signature.data?.signed_at ?? null,
     countersignedAt: a?.countersigned_at ?? null,
     countersignedName: a?.countersigned_name ?? null,
