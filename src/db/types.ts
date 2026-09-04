@@ -275,6 +275,121 @@ export type Database = {
         }
         Relationships: []
       }
+      contract_versions: {
+        Row: {
+          addendum_text: string | null
+          addendum_type: string | null
+          company_id: string
+          countersigned_at: string | null
+          countersigned_by: string | null
+          countersigned_name: string | null
+          created_at: string
+          created_by: string | null
+          doc_sha256: string | null
+          effective_from: string
+          employment_type: Database["public"]["Enums"]["contract_type"] | null
+          ended_on: string | null
+          hours_per_week: number | null
+          id: string
+          period_basis: string
+          position: string | null
+          rate_php: number
+          rendered_body: string | null
+          schedule: string | null
+          sent_at: string | null
+          signed_at: string | null
+          start_date: string
+          status: Database["public"]["Enums"]["contract_version_status"]
+          supersedes_id: string | null
+          version: number
+          void_reason: string | null
+          voided_at: string | null
+          worker_id: string
+        }
+        Insert: {
+          addendum_text?: string | null
+          addendum_type?: string | null
+          company_id: string
+          countersigned_at?: string | null
+          countersigned_by?: string | null
+          countersigned_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          doc_sha256?: string | null
+          effective_from: string
+          employment_type?: Database["public"]["Enums"]["contract_type"] | null
+          ended_on?: string | null
+          hours_per_week?: number | null
+          id?: string
+          period_basis?: string
+          position?: string | null
+          rate_php: number
+          rendered_body?: string | null
+          schedule?: string | null
+          sent_at?: string | null
+          signed_at?: string | null
+          start_date: string
+          status?: Database["public"]["Enums"]["contract_version_status"]
+          supersedes_id?: string | null
+          version: number
+          void_reason?: string | null
+          voided_at?: string | null
+          worker_id: string
+        }
+        Update: {
+          addendum_text?: string | null
+          addendum_type?: string | null
+          company_id?: string
+          countersigned_at?: string | null
+          countersigned_by?: string | null
+          countersigned_name?: string | null
+          created_at?: string
+          created_by?: string | null
+          doc_sha256?: string | null
+          effective_from?: string
+          employment_type?: Database["public"]["Enums"]["contract_type"] | null
+          ended_on?: string | null
+          hours_per_week?: number | null
+          id?: string
+          period_basis?: string
+          position?: string | null
+          rate_php?: number
+          rendered_body?: string | null
+          schedule?: string | null
+          sent_at?: string | null
+          signed_at?: string | null
+          start_date?: string
+          status?: Database["public"]["Enums"]["contract_version_status"]
+          supersedes_id?: string | null
+          version?: number
+          void_reason?: string | null
+          voided_at?: string | null
+          worker_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contract_versions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contract_versions_supersedes_id_fkey"
+            columns: ["supersedes_id"]
+            isOneToOne: false
+            referencedRelation: "contract_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contract_versions_worker_id_fkey"
+            columns: ["worker_id"]
+            isOneToOne: false
+            referencedRelation: "workers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contractor_logins: {
         Row: {
           auth_user_id: string | null
@@ -1806,6 +1921,13 @@ export type Database = {
       is_onboarded: { Args: never; Returns: boolean }
       is_owner: { Args: never; Returns: boolean }
       my_admin_company_ids: { Args: never; Returns: string[] }
+      my_clients: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
       my_tools_pending: { Args: never; Returns: boolean }
       my_worker_id: { Args: never; Returns: string }
       payments_misc_items_ok: { Args: { items: Json }; Returns: boolean }
@@ -1829,6 +1951,14 @@ export type Database = {
       approval_status: "pending" | "approved" | "rejected"
       company_status: "active" | "inactive"
       contract_type: "FT" | "PT" | "PH" | "PS" | "PHS"
+      contract_version_status:
+        | "draft"
+        | "sent"
+        | "signed"
+        | "active"
+        | "superseded"
+        | "ended"
+        | "void"
       document_kind:
         | "ic_agreement"
         | "w8ben"
@@ -2000,6 +2130,15 @@ export const Constants = {
       approval_status: ["pending", "approved", "rejected"],
       company_status: ["active", "inactive"],
       contract_type: ["FT", "PT", "PH", "PS", "PHS"],
+      contract_version_status: [
+        "draft",
+        "sent",
+        "signed",
+        "active",
+        "superseded",
+        "ended",
+        "void",
+      ],
       document_kind: [
         "ic_agreement",
         "w8ben",
