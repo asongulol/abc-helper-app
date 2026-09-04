@@ -2,19 +2,37 @@
 
 /**
  * Onboarding admin detail — fetches a single contractor's signed-agreement
- * ledger and uploaded documents for the onboarding review panel (manifest 28).
- * Admin-only; read-only (review mutations use `reviewDocument` in portal.ts).
+ * ledger and uploaded documents for the onboarding review panel (manifest 28),
+ * plus the stage overrides and the Current team chasers (Request a document /
+ * Remind, docs/CONTRACT-VERSIONS-PLAN.md §7 decision 5). Admin-only; document
+ * review mutations live in portal.ts (`reviewDocument`).
  */
 
 import { revalidatePath } from 'next/cache';
 import { createServiceClient } from '@/db/clients/service';
 import { parseOnboardingConfig } from '@/db/queries/config';
-import { AGREEMENT_KINDS, fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
+import {
+  AGREEMENT_KINDS,
+  fetchAgreements,
+  fetchCurrentTeam,
+  fetchSignatures,
+} from '@/db/queries/onboarding';
 import type { Database } from '@/db/types';
 import { humanizeError } from '@/lib/errors';
-import { type DocSlotStatus, deriveDocChecklist } from '@/lib/onboarding/documents';
+import { owedLines } from '@/lib/onboarding/current-team';
+import {
+  type DocSlotStatus,
+  deriveDocChecklist,
+  docKindSlug,
+  parseExtraDocs,
+  withExtraDocs,
+} from '@/lib/onboarding/documents';
+import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent } from '@/server/audit';
-import { requireAdmin } from '@/server/auth/admin';
+import { adminInScopeForWorker, requireAdmin } from '@/server/auth/admin';
+import { getSelectedCompanyId } from '@/server/company';
+import { portalUrl, trySend } from '@/server/email/send';
+import { DEFAULT_HIRE_EMAILS, escapeHtml, mergeTemplate } from '@/server/email/templates';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 type OnboardingStage = Database['public']['Enums']['onboarding_stage'];
@@ -102,7 +120,7 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
     // One parallel wave (the six reads are independent), and no signature
     // blobs/decryption — the modal shows only signature metadata; the drawn
     // image is print-route-only.
-    const [sigs, agrs, settingsRes, docsRes, profRes, loginRes] = await Promise.all([
+    const [sigs, agrs, settingsRes, docsRes, profRes, loginRes, progRes] = await Promise.all([
       fetchSignatures(db, workerId, { withData: false }),
       fetchAgreements(db, workerId),
       db.from('portal_settings').select('onboarding_config').eq('id', 1).maybeSingle(),
@@ -121,6 +139,11 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
         .eq('id', workerId)
         .maybeSingle(),
       db.from('contractor_logins').select('email').eq('worker_id', workerId).maybeSingle(),
+      db
+        .from('onboarding_progress')
+        .select('extra_documents')
+        .eq('worker_id', workerId)
+        .maybeSingle(),
     ]);
     const docs = docsRes.data;
     if (docsRes.error) return { ok: false, error: docsRes.error.message };
@@ -140,7 +163,10 @@ export async function getOnboardingDetail(workerId: string): Promise<OnboardingD
     // Resolve the configured required docs against the uploads so the review
     // panel can show what's still MISSING (not just what was uploaded).
     const cfg = parseOnboardingConfig(settingsRes.data?.onboarding_config);
-    const documentChecklist = deriveDocChecklist(cfg.documents, documents);
+    const documentChecklist = deriveDocChecklist(
+      withExtraDocs(cfg.documents, progRes.data?.extra_documents),
+      documents,
+    );
 
     const prof = profRes.data;
     const loginRow = loginRes.data;
@@ -505,6 +531,149 @@ export async function editAgreementPrefill(args: {
     });
     revalidatePath('/onboarding');
     return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+// ─── Current team chasers (§7 decision 5: Request a document · Remind) ──────────
+
+/**
+ * The contractor's portal login email, or the reason there is none. Both
+ * chasers land in the portal, so a contractor without an active login gets the
+ * Onboard Current wizard instead (the queue hides the buttons; this is the gate).
+ */
+async function portalRecipient(
+  workerId: string,
+): Promise<{ ok: true; email: string; name: string } | { ok: false; error: string }> {
+  const db = createServiceClient();
+  const [{ data: login }, { data: w }] = await Promise.all([
+    db.from('contractor_logins').select('email, status').eq('worker_id', workerId).maybeSingle(),
+    db.from('workers').select('first_name').eq('id', workerId).maybeSingle(),
+  ]);
+  if (!login?.email || login.status !== 'active')
+    return { ok: false, error: 'No active portal login — use Onboard current instead.' };
+  return { ok: true, email: login.email, name: (w?.first_name ?? '').trim() || 'there' };
+}
+
+/**
+ * Request one more document: it joins `onboarding_progress.extra_documents`
+ * (so it is owed in the portal, the admin checklist and the Current team
+ * queue) and the contractor is emailed. No due date (owner decision). The
+ * request is recorded even when the email fails — the admin is told.
+ */
+export async function requestDocument(args: {
+  workerId: string;
+  title: string;
+}): Promise<ActionResult<{ emailSent: boolean }>> {
+  try {
+    const admin = await requireAdmin();
+    if (!(await adminInScopeForWorker(admin, args.workerId)))
+      return fail('Not authorized for this contractor.');
+    const title = args.title.trim().slice(0, 120);
+    if (!title) return fail('Name the document.');
+    const kind = docKindSlug(title);
+
+    const to = await portalRecipient(args.workerId);
+    if (!to.ok) return to;
+
+    const db = createServiceClient();
+    const { data: row, error } = await db
+      .from('onboarding_progress')
+      .select('extra_documents')
+      .eq('worker_id', args.workerId)
+      .maybeSingle();
+    if (error) return fail(error.message);
+    // Update, never upsert: a login always comes with a progress row
+    // (createPortalLogin seeds it), and inserting one here would open a fresh
+    // stage-1 onboarding for a current contractor.
+    if (!row) return fail('No onboarding record for this contractor.');
+    const extra = parseExtraDocs(row.extra_documents);
+    if (extra.some((d) => d.kind === kind))
+      return fail(`"${title}" is already on their list — use Remind.`);
+    const { error: upErr } = await db
+      .from('onboarding_progress')
+      .update({
+        extra_documents: [...extra, { kind, title, required: true }].map((d) => ({
+          kind: d.kind,
+          title: d.title,
+          required: true,
+        })),
+        updated_at: ISO_NOW(),
+      })
+      .eq('worker_id', args.workerId);
+    if (upErr) return fail(upErr.message);
+
+    const tpl = DEFAULT_HIRE_EMAILS.doc_request;
+    const vars = {
+      name: escapeHtml(to.name),
+      doc_title: escapeHtml(title),
+      portal_url: portalUrl(),
+    };
+    const emailSent = await trySend(
+      to.email,
+      mergeTemplate(tpl.subject, { ...vars, doc_title: title }), // subject is plain text
+      mergeTemplate(tpl.html, vars),
+      'doc_request',
+    );
+    await logEvent({
+      action: 'document.requested',
+      entity: args.workerId,
+      detail: { kind, title, email_sent: emailSent, by: admin.email },
+    });
+    revalidatePath('/onboarding');
+    return { ok: true, data: { emailSent } };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Remind: one email listing everything the contractor still owes — the same
+ * `owed` lines the Current team row is built from, recomputed server-side.
+ */
+export async function remindContractor(args: {
+  workerId: string;
+}): Promise<ActionResult<{ lines: number }>> {
+  try {
+    const admin = await requireAdmin();
+    if (!(await adminInScopeForWorker(admin, args.workerId)))
+      return fail('Not authorized for this contractor.');
+    const companyId = await getSelectedCompanyId();
+    if (!companyId) return fail('Pick a single company first.');
+
+    // ponytail: recomputes the whole company queue to reuse the row's exact
+    // rule; a per-worker loader if the roster outgrows a few dozen.
+    const today = new Date().toISOString().slice(0, 10);
+    const row = (await fetchCurrentTeam(createServiceClient(), companyId, today)).find(
+      (r) => r.workerId === args.workerId,
+    );
+    const owed = owedLines(row?.items ?? []);
+    if (owed.length === 0) return fail('Nothing is owed by the contractor right now.');
+
+    const to = await portalRecipient(args.workerId);
+    if (!to.ok) return to;
+
+    const tpl = DEFAULT_HIRE_EMAILS.owed_reminder;
+    const vars = {
+      name: escapeHtml(to.name),
+      portal_url: portalUrl(),
+      owed_list: `<ul>${owed.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
+    };
+    const sent = await trySend(
+      to.email,
+      mergeTemplate(tpl.subject, vars),
+      mergeTemplate(tpl.html, vars),
+      'owed_reminder',
+    );
+    if (!sent) return fail('The email could not be sent — check the audit log for details.');
+    await logEvent({
+      companyId,
+      action: 'onboarding.reminded',
+      entity: args.workerId,
+      detail: { owed, by: admin.email },
+    });
+    return { ok: true, data: { lines: owed.length } };
   } catch (e) {
     return fail(e);
   }

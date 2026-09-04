@@ -53,6 +53,48 @@ export interface DocSlotStatus {
   outstanding: boolean;
 }
 
+/** Slugify a requested document's title to a stable kind key (legacy ocSlug). */
+export const docKindSlug = (s: string): string =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || 'item';
+
+/**
+ * Admin-requested documents (`onboarding_progress.extra_documents` jsonb —
+ * written by the hire wizard and by `requestDocument`), parsed defensively.
+ */
+export const parseExtraDocs = (raw: unknown): RequiredDoc[] =>
+  Array.isArray(raw)
+    ? raw
+        .filter(
+          (d): d is { kind: string; title?: unknown } =>
+            !!d && typeof d === 'object' && typeof (d as { kind?: unknown }).kind === 'string',
+        )
+        .map((d) => ({
+          kind: d.kind,
+          title: typeof d.title === 'string' && d.title ? d.title : humanizeKind(d.kind),
+          required: true,
+        }))
+    : [];
+
+/**
+ * The required-document list a contractor is held to: the configured docs
+ * (defaults when none are configured) plus any requested extras whose kind is
+ * not already configured. Every owed-list reader goes through here so a
+ * requested document shows up in the portal, the admin checklist and the
+ * Current team queue alike.
+ */
+export const withExtraDocs = (
+  configured: readonly RequiredDoc[],
+  extraRaw: unknown,
+): RequiredDoc[] => {
+  const base = configured.length > 0 ? configured : DEFAULT_REQUIRED_DOCS;
+  const kinds = new Set(base.map((d) => d.kind));
+  return [...base, ...parseExtraDocs(extraRaw).filter((d) => !kinds.has(d.kind))];
+};
+
 /** Legacy DEFAULT_DOCS (portal/index.html ~1113) — used when config has none. */
 export const DEFAULT_REQUIRED_DOCS: readonly RequiredDoc[] = [
   { kind: 'resume', title: 'Resume / CV', required: true },
@@ -147,7 +189,7 @@ export function deriveDocChecklist(
 }
 
 /** Human-readable fallback label for a doc kind that has no configured title. */
-function humanizeKind(kind: string): string {
+export function humanizeKind(kind: string): string {
   return kind.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { deriveOpenItems, type TeamDoc } from '@/lib/onboarding/current-team';
+import { deriveOpenItems, owedLines, type TeamDoc } from '@/lib/onboarding/current-team';
 
 const TODAY = '2026-09-04';
 
@@ -118,5 +118,56 @@ describe('deriveOpenItems — documents', () => {
     const items = deriveOpenItems({ ...base, docs: [expired, soon, far, fileless] }, TODAY);
     expect(kinds(items)).toEqual(['doc_expired', 'doc_expiring']);
     expect(items[1]?.label).toBe('Document expires in 16 days');
+  });
+});
+
+describe('deriveOpenItems — requested documents and owed lines (§7 decision 5)', () => {
+  it('a requested doc is outstanding until something is uploaded for its kind', () => {
+    const input = {
+      version: null,
+      hasIcSignature: true,
+      docs: [] as TeamDoc[],
+      requested: [{ kind: 'tin_id', title: 'TIN ID' }],
+    };
+    const items = deriveOpenItems(input, TODAY);
+    expect(kinds(items)).toEqual(['doc_requested']);
+    expect(items[0]?.label).toBe('1 requested document outstanding');
+    expect(owedLines(items)).toEqual(['Upload: TIN ID']);
+    // Uploaded (even still pending review) → no longer "requested"; it's a review item.
+    expect(
+      kinds(
+        deriveOpenItems(
+          { ...input, docs: [doc({ id: 'a', kind: 'tin_id', reviewStatus: 'pending' })] },
+          TODAY,
+        ),
+      ),
+    ).toEqual(['doc_review']);
+  });
+
+  it('owed lines name the document and skip the admin-side items', () => {
+    const items = deriveOpenItems(
+      {
+        version: { status: 'sent', sentAt: '2026-09-01T10:00:00Z' },
+        hasIcSignature: true,
+        docs: [
+          doc({
+            id: 'a',
+            kind: 'gov_id',
+            side: 'front',
+            title: 'Passport',
+            reviewStatus: 'needs_replacement',
+          }),
+          doc({ id: 'b', kind: 'nbi_clearance', reviewStatus: 'pending' }),
+          doc({ id: 'c', kind: 'resume', expiresOn: '2026-08-01' }),
+        ],
+      },
+      TODAY,
+    );
+    expect(kinds(items)).toEqual(['sent', 'doc_review', 'doc_replacement', 'doc_expired']);
+    expect(owedLines(items)).toEqual([
+      'Sign your updated contractor agreement in the portal',
+      'Re-upload: Passport (front)',
+      'Renew: Resume (expired 2026-08-01)',
+    ]);
   });
 });

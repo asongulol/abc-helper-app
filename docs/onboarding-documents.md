@@ -41,8 +41,23 @@ each count the contractors with at least one open item:
   owes something: a contract drafted / sent / signed-awaiting-countersign, no IC agreement in the
   app (the **Onboard current** wizard is their action when they have no portal login), or a
   document pending review / needing replacement / deferred and due / expired or expiring within
-  30 days. One row per contractor; the row opens the contractor profile. `deriveOpenItems()`
-  (`src/lib/onboarding/current-team.ts`) is the pure rule, fed by `fetchCurrentTeam()`.
+  30 days, or a requested document not yet uploaded. One row per contractor; the row opens the
+  contractor profile. `deriveOpenItems()` (`src/lib/onboarding/current-team.ts`) is the pure
+  rule, fed by `fetchCurrentTeam()`; each item also carries the contractor-facing `owed` lines.
+
+Two chasers sit on each Current team row that has an active portal login (`src/server/actions/onboarding.ts`):
+
+- **Request doc** — `requestDocument()` appends `{kind, title, required}` to
+  `onboarding_progress.extra_documents` (deduped on the slugged kind) and emails the
+  `doc_request` template. No due date. The request is recorded even if the email fails.
+- **Remind** — `remindContractor()` emails the `owed_reminder` template: one `<ul>` of everything
+  the contractor still has to do (sign the sent contract, re-upload / upload / renew named
+  documents, upload requested ones), recomputed server-side from the same `deriveOpenItems()`
+  rule. Admin-side items (draft, awaiting countersign, pending review) are never listed.
+
+A contractor without an active login gets **Onboard current** instead. Both actions are open to
+any admin in company scope (`adminInScopeForWorker`) and are audited as `document.requested` /
+`onboarding.reminded`.
 
 The Overview "Countersign N" duty counts contractor-signed contract versions alongside signed
 agreements. `/onboarding?tab=team` deep-links to the second tab.
@@ -163,7 +178,10 @@ storage bucket at `{userId}/{kind}/{timestamp}-{side?}-{name}`, and inserts a `d
 `review_status='pending'`. NBI clearance requires an `issuedOn` date.
 `fetchOutstandingDocSlots()` tells the contractor what's still owed, built from
 `portal_settings.onboarding_config.documents` (falling back to a default required-doc list when
-none are configured).
+none are configured) plus the contractor's **requested extras** — `withExtraDocs()` merges
+`onboarding_progress.extra_documents` (written by the hire wizard's "extra documents" and by
+**Request doc**) into that list, and the admin checklist and Current team queue read through the
+same helper, so a requested document is owed everywhere or nowhere.
 
 **Review (admin)** (`src/server/actions/portal.ts`) — `reviewDocument()` approves or flags
 `needs_replacement` (with a reason); `resolveMissingDocument()` waives/defers a doc that was never

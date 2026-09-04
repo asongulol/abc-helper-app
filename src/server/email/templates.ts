@@ -11,6 +11,8 @@
  *   withdraw     → {{name}}
  *   contract_review        → {{name}} {{portal_url}} {{version}} {{effective_from}}
  *   contract_countersigned → {{name}} {{print_url}} {{version}} {{effective_from}}
+ *   doc_request    → {{name}} {{doc_title}} {{portal_url}}
+ *   owed_reminder  → {{name}} {{owed_list}} {{portal_url}}
  */
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,10 @@ export interface HireEmailConfig {
   contract_review: EmailTemplate;
   /** A version was countersigned and is now the contract of record (§4 step 6). */
   contract_countersigned: EmailTemplate;
+  /** An admin requested one more document (§7 decision 5). */
+  doc_request: EmailTemplate;
+  /** Everything a current contractor still owes, in one email (§7 decision 5). */
+  owed_reminder: EmailTemplate;
 }
 
 export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
@@ -168,6 +174,32 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
       '<p>Hi {{name}},</p>',
       '<p>Version {{version}} of your Independent Contractor Agreement has been countersigned and is now your agreement of record, effective <b>{{effective_from}}</b>.</p>',
       '<p>You can view or print your signed copy anytime: <a href="{{print_url}}">{{print_url}}</a></p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
+    ].join('\n'),
+  },
+  // Sent by requestDocument: one more document joins the portal's owed list.
+  doc_request: {
+    subject: 'Document requested: {{doc_title}}',
+    html: [
+      '<p>Hi {{name}},</p>',
+      '<p>We need one more document from you: <b>{{doc_title}}</b>.</p>',
+      '<p>Please upload it in the contractor portal under Documents:</p>',
+      '<p><a href="{{portal_url}}/docs" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Upload document</a></p>',
+      '<p>Questions? Just reply to this email.</p>',
+      '<p>— Aaron Anderson E.H.S. LLC</p>',
+    ].join('\n'),
+  },
+  // Sent by remindContractor: {{owed_list}} is a rendered <ul> of everything
+  // still owed (contract to sign, documents to upload / renew).
+  owed_reminder: {
+    subject: 'Reminder: items still needed for your contractor file',
+    html: [
+      '<p>Hi {{name}},</p>',
+      '<p>A quick reminder — we are still waiting on the following:</p>',
+      '{{owed_list}}',
+      '<p>Everything can be done in the contractor portal:</p>',
+      '<p><a href="{{portal_url}}" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Open the portal</a></p>',
+      '<p>Questions? Just reply to this email.</p>',
       '<p>— Aaron Anderson E.H.S. LLC</p>',
     ].join('\n'),
   },

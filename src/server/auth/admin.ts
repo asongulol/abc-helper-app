@@ -72,3 +72,20 @@ export const requireOwner = async (): Promise<CurrentAdmin> => {
   if (!admin.isOwner) throw new Error('Not authorized — owner role required.');
   return admin;
 };
+
+/**
+ * Company-scope gate for per-worker admin actions: a non-owner admin must
+ * share a company with the worker (the owner sees all).
+ */
+export const adminInScopeForWorker = async (
+  admin: CurrentAdmin,
+  workerId: string,
+): Promise<boolean> => {
+  if (admin.isOwner) return true;
+  const db = await createServerSupabase();
+  const { data: links } = await db
+    .from('worker_companies')
+    .select('company_id')
+    .eq('worker_id', workerId);
+  return (links ?? []).some((l) => admin.companyIds.includes(l.company_id));
+};
