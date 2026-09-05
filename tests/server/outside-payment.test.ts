@@ -184,6 +184,40 @@ describe('recordOutsidePayment', () => {
     expect(tables.payments?.find((r) => r.id === 'pay-1')?.pay_period_id).toBe('pp-1');
   });
 
+  // 2026-08-28: a ₱5,000 one-off recorded against Aug 16–31 — no period yet, pay
+  // date Sep 15 still ahead — created the REGULAR period born locked with that one
+  // row, the sync closed it as paid, and the run for 23 contractors could never be
+  // calculated ("Period is paid"). The regular slot is Calculate's until its pay
+  // date has passed; before that the record lands on its own paid-day batch.
+  it('no period yet + pay date still ahead → paid-day batch, regular slot left free', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-28T18:46:00Z'));
+    try {
+      const { deps, tables } = mkDeps(seedBase());
+
+      const res = await recordOutsidePayment(
+        input({ periodStart: '2026-08-16', periodEnd: '2026-08-31', paidOn: '2026-08-28' }),
+        deps,
+      );
+
+      expect(tables.pay_periods).toHaveLength(1);
+      expect(tables.pay_periods?.[0]).toMatchObject({
+        id: res.periodId,
+        period_start: '2026-08-28',
+        period_end: '2026-08-28',
+        pay_date: '2026-08-28',
+        kind: 'off_cycle',
+        state: 'paid',
+      });
+      expect(tables.payments?.[0]).toMatchObject({
+        pay_period_id: res.periodId,
+        note: 'Outside payment (recorded manually) — covers 2026-08-16 → 2026-08-31 — BPI 000123',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('slot taken by an UNPAID row → refuses with the Mark-paid pointer', async () => {
     const seed = seedBase();
     seed.pay_periods = [period({ state: 'locked' })];
