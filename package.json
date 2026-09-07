@@ -33,32 +33,32 @@
     "prepare": "lefthook install || true"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
+    "@biomejs/biome": "^2.5.12",
     "@tailwindcss/postcss": "^4.3.3",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.4.1",
     "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.5",
-    "lefthook": "^2.1.10",
+    "@types/react-dom": "^19.2.7",
+    "lefthook": "^2.1.12",
     "playwright": "^1.62.1",
-    "postcss": "^8.5.26",
+    "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.11"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",
-    "@supabase/supabase-js": "^2.112.4",
+    "@supabase/supabase-js": "^2.115.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
-    "next": "^16.3.3",
-    "nodemailer": "^9.0.6",
+    "next": "^16.3.4",
+    "nodemailer": "^9.1.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.6.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "volta": {
     "node": "24.16.0"
