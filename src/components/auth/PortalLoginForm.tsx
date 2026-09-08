@@ -3,6 +3,7 @@
 import { type FormEvent, useId, useState } from 'react';
 import { createBrowserSupabase } from '@/db/clients/browser';
 import { safeNext } from '@/lib/auth/safe-next';
+import { recordPortalSignIn } from '@/server/actions/portal';
 import { TurnstileWidget, useTurnstileToken } from './Turnstile';
 
 /** Post-login destination from `?next=`, constrained to a portal path (#045). */
@@ -43,6 +44,8 @@ export const PortalLoginForm = ({ accessEnded }: { accessEnded: boolean }) => {
       setBusy(false);
       return;
     }
+    // Best-effort: last sign-in + audit row for the admin's Portal & login tab.
+    await recordPortalSignIn().catch(() => undefined);
     // Fresh login → Milo redraws his NYC fact (FromNewYork keeps it per session).
     try {
       sessionStorage.removeItem('nyc_fact');

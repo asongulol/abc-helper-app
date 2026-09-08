@@ -121,6 +121,12 @@ no exchange rate appears anywhere on it. Full lifecycle:
   correcting the email in both auth and `contractor_logins`.
 - `revokePortalLogin()` — sets `contractor_logins.status = 'revoked'` (login stops working
   immediately via the `getCurrentWorker` gate).
+- `getPortalAccess()` — feeds the **Portal & login** tab's access panel: login status, granted
+  date, last sign-in (`auth.users.last_sign_in_at`, else `contractor_logins.last_login_at`) and an
+  **Access history** read from `audit_log`. Contractor-side rows come from `logWorkerEvent()`
+  (service client; actor = login email, entity = worker id): `portal.signed_in` (login form →
+  `recordPortalSignIn()`), `document.viewed` / `document.downloaded` (`getDocumentSignedUrl()`),
+  `agreement.viewed` (both portal print routes).
 - `restorePortalLogin()` — sets it back to `active`. `sendContractVersion()` calls this (or
   `createPortalLogin()`) so a departed contractor can sign a rehire; `voidContractVersion()`
   hands a fully-paid departure's login straight back to the sunset rule.
