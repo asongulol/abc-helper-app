@@ -19,10 +19,16 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     const r = await runScheduledHiringReviewDigest();
     if (!r.ran || !r.result) {
-      return NextResponse.json({ ok: true, skipped: true, reason: r.skippedReason });
+      return NextResponse.json({
+        ok: true,
+        skipped: true,
+        reason: r.skippedReason,
+        packageReminders: r.packageReminders,
+      });
     }
     return NextResponse.json({
       ok: true,
+      packageReminders: r.packageReminders,
       pendingDocs: r.result.pendingDocs,
       deferredDocs: r.result.deferredDocs,
       outstanding: r.result.outstanding.reduce((n, e) => n + e.lines.length, 0),

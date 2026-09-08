@@ -15,6 +15,8 @@
 
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resignDueOn } from '@/lib/contracts/package';
+import { todayManila } from '@/types/schemas/contractors';
 import { fakeSupabase, type Row, type Tables } from '../../fixtures/supabase-fake';
 
 const W = '33333333-3333-4333-8333-333333333333';
@@ -62,12 +64,16 @@ vi.mock('@/db/queries/portal', () => ({
   }),
 }));
 
-// Early pricing's rebuild of open drafts (wizard decision 5) is the payroll
-// service's; here only the hand-off is checked.
-const payroll = vi.hoisted(() => ({ repriceOpenDrafts: vi.fn(async () => [] as string[]) }));
+// Early pricing's rebuild of open drafts (wizard decision 5) and the pay-hold
+// sync (decision 9) are the payroll service's; here only the hand-offs are checked.
+const payroll = vi.hoisted(() => ({
+  repriceOpenDrafts: vi.fn(async () => [] as string[]),
+  syncPackageHolds: vi.fn(async () => ({ held: 0, lifted: 0 })),
+}));
 vi.mock('@/server/payroll', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/server/payroll')>()),
   repriceOpenDrafts: payroll.repriceOpenDrafts,
+  syncPackageHolds: payroll.syncPackageHolds,
 }));
 
 const {
@@ -232,10 +238,76 @@ describe('sendContractVersion', () => {
     expect(portal.restorePortalLogin).not.toHaveBeenCalled();
     expect(mail.trySend).not.toHaveBeenCalled();
   });
+
+  it('re-sign package (wizard decisions 8–10): supersedes the ticked signatures, stamps the due date, warns, syncs holds', async () => {
+    const tables = boot(
+      seed({ versions: [version({ resign_kinds: ['confidentiality_nda', 'baa'] })] }),
+    );
+    tables.onboarding_signatures?.push(
+      {
+        id: 'sig-nc',
+        worker_id: W,
+        agreement_kind: 'non_compete',
+        doc_version: '1',
+        status: 'signed',
+      },
+      {
+        id: 'sig-nda',
+        worker_id: W,
+        agreement_kind: 'confidentiality_nda',
+        doc_version: '1',
+        status: 'signed',
+      },
+      { id: 'sig-baa', worker_id: W, agreement_kind: 'baa', doc_version: '1', status: 'signed' },
+    );
+
+    const res = await sendContractVersion({ versionId: V2 });
+
+    expect(res.ok).toBe(true);
+    expect(first(tables).resign_due_on).toBe(resignDueOn(todayManila()));
+    const byId = Object.fromEntries(
+      (tables.onboarding_signatures ?? []).map((s) => [s.id, s.status]),
+    );
+    // The IC agreement and the untouched non-compete stay signed.
+    expect(byId).toEqual({
+      'sig-1': 'signed',
+      'sig-nc': 'signed',
+      'sig-nda': 'superseded',
+      'sig-baa': 'superseded',
+    });
+    const html = mail.trySend.mock.calls[0]?.[2] as string;
+    expect(html).toContain('NDA, BAA');
+    expect(html).toMatch(
+      /Sign by .*If it is not done, your pay for .* will be delayed until it is\./,
+    );
+    expect(payroll.syncPackageHolds).toHaveBeenCalledWith(
+      { companyId: CO, workerIds: [W] },
+      expect.anything(),
+    );
+  });
+
+  it('no package: nothing superseded, no due date, no warning', async () => {
+    const tables = boot(seed());
+    tables.onboarding_signatures?.push({
+      id: 'sig-nda',
+      worker_id: W,
+      agreement_kind: 'confidentiality_nda',
+      doc_version: '1',
+      status: 'signed',
+    });
+
+    const res = await sendContractVersion({ versionId: V2 });
+
+    expect(res.ok).toBe(true);
+    expect(first(tables).resign_due_on).toBeNull();
+    expect((tables.onboarding_signatures ?? []).every((s) => s.status === 'signed')).toBe(true);
+    expect(mail.trySend.mock.calls[0]?.[2]).not.toContain('will be delayed');
+  });
 });
 
 describe('voidContractVersion', () => {
-  const sent = () => version({ status: 'sent', sent_at: '2026-09-01T00:00:00Z' });
+  const sent = (over: Row = {}) =>
+    version({ status: 'sent', sent_at: '2026-09-01T00:00:00Z', ...over });
 
   it('re-revokes the login send restored when the departure is fully paid', async () => {
     const tables = boot(seed({ login: { status: 'active' }, versions: [sent()] }));
@@ -352,6 +424,54 @@ describe('voidContractVersion', () => {
     expect(res).toMatchObject({ ok: true, data: { overpaymentPhp: null, lockedAtNewRate: [] } });
     expect(first(tables).change_detail).toBeUndefined();
     expect(payroll.repriceOpenDrafts).not.toHaveBeenCalled();
+  });
+
+  it('restores a superseded agreement nobody re-signed, keeps one they did (decision 8 undone)', async () => {
+    const tables = boot(
+      seed({ versions: [sent({ resign_kinds: ['confidentiality_nda', 'baa'] })] }),
+    );
+    tables.onboarding_signatures?.push(
+      {
+        id: 'nda-old',
+        worker_id: W,
+        agreement_kind: 'confidentiality_nda',
+        doc_version: '1',
+        status: 'superseded',
+        signed_at: '2024-01-10T09:00:00Z',
+      },
+      {
+        id: 'baa-old',
+        worker_id: W,
+        agreement_kind: 'baa',
+        doc_version: '1',
+        status: 'superseded',
+        signed_at: '2024-01-10T09:00:00Z',
+      },
+      {
+        id: 'baa-new',
+        worker_id: W,
+        agreement_kind: 'baa',
+        doc_version: '2',
+        status: 'signed',
+        signed_at: '2026-09-09T09:00:00Z',
+      },
+    );
+
+    const res = await voidContractVersion({ versionId: V2 });
+
+    expect(res.ok).toBe(true);
+    const byId = Object.fromEntries(
+      (tables.onboarding_signatures ?? []).map((s) => [s.id, s.status]),
+    );
+    expect(byId).toMatchObject({
+      'nda-old': 'signed',
+      'baa-old': 'superseded',
+      'baa-new': 'signed',
+    });
+    expect(payroll.syncPackageHolds).toHaveBeenCalledWith(
+      { companyId: CO, workerIds: [W] },
+      expect.anything(),
+    );
   });
 
   it('cannot void the contract of record', async () => {
@@ -550,6 +670,44 @@ describe('signContractVersion', () => {
     expect(res).toMatchObject({ ok: false, error: /not found/ });
     expect(sigs(tables)).toHaveLength(1);
     expect(first(tables).status).toBe('sent');
+  });
+});
+
+describe('countersignContractVersion — rehire package (wizard decision 11)', () => {
+  const signedRehire = (over: Row = {}) =>
+    version({
+      status: 'signed',
+      change_reason: 'rehire',
+      resign_kinds: ['baa'],
+      resign_due_on: '2026-09-30',
+      sent_at: '2026-09-08T00:00:00Z',
+      ...over,
+    });
+
+  it('refuses while anything in the package is unsigned', async () => {
+    const tables = boot(seed({ versions: [signedRehire()] }));
+
+    const res = await countersignContractVersion({ versionId: V2 });
+
+    expect(res).toMatchObject({ ok: false, error: /still unsigned: BAA/ });
+    expect(first(tables).status).toBe('signed');
+    expect(tables.rates).toHaveLength(1);
+  });
+
+  it('proceeds once the package is signed', async () => {
+    const tables = boot(seed({ versions: [signedRehire()] }));
+    tables.onboarding_signatures?.push({
+      id: 'baa-2',
+      worker_id: W,
+      agreement_kind: 'baa',
+      doc_version: '2',
+      status: 'signed',
+    });
+
+    const res = await countersignContractVersion({ versionId: V2 });
+
+    expect(res).toMatchObject({ ok: true, data: { rehired: true } });
+    expect(first(tables).status).toBe('active');
   });
 });
 

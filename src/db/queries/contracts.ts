@@ -11,6 +11,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { DEFAULT_NOTICE_DAYS } from '@/lib/agreements/merge';
+import { type AgreementKind, type PackageStatus, packageStatusOf } from '@/lib/contracts/package';
 import type { ContractChangeDetail, ContractChangeReason } from '@/types/schemas/contracts';
 
 type Db = SupabaseClient<Database>;
@@ -46,6 +47,9 @@ export type ContractVersion = ContractTerms & {
   changeNote: string | null;
   /** How the rate was arrived at, and an overpayment note once voided after pay. */
   changeDetail: ContractChangeDetail | null;
+  /** The re-sign package (decision 8) and, once sent, its due date (decision 9). */
+  resignKinds: AgreementKind[];
+  resignDueOn: string | null;
   supersedesId: string | null;
   endedOn: string | null;
   renderedBody: string | null;
@@ -88,6 +92,8 @@ const mapVersion = (r: Row): ContractVersion => ({
   changeReason: r.change_reason as ContractChangeReason | null,
   changeNote: r.change_note,
   changeDetail: r.change_detail as ContractChangeDetail | null,
+  resignKinds: r.resign_kinds ?? [],
+  resignDueOn: r.resign_due_on,
   ratePhp: Number(r.rate_php),
   periodBasis: r.period_basis,
   position: r.position,
@@ -303,5 +309,55 @@ export const fetchAwaitingSignature = async (
   if (error) throw new Error(`contract_versions: ${error.message}`);
   const out: Record<string, string> = {};
   for (const r of data ?? []) if (r.sent_at) out[r.worker_id] = r.sent_at;
+  return out;
+};
+
+/**
+ * worker_id → the re-sign package they are working through (decisions 8–9):
+ * the newest sent / signed / active version that asked for one, judged against
+ * the signatures currently `signed`. Scope by company, by workers, or both;
+ * workers with no package are absent. What Calculate's hold, the portal's
+ * signing card, the Current team row and the reminder all read.
+ */
+export const fetchOutstandingPackages = async (
+  db: Db,
+  scope: { companyId?: string | undefined; workerIds?: readonly string[] | undefined },
+): Promise<Map<string, PackageStatus>> => {
+  let q = db
+    .from('contract_versions')
+    .select('worker_id, version, status, resign_kinds, resign_due_on, sent_at')
+    .in('status', ['sent', 'signed', 'active']);
+  if (scope.companyId) q = q.eq('company_id', scope.companyId);
+  if (scope.workerIds) q = q.in('worker_id', [...scope.workerIds]);
+  const { data, error } = await q;
+  if (error) throw new Error(`contract_versions: ${error.message}`);
+  const byWorker = new Map<string, Parameters<typeof packageStatusOf>[0][number][]>();
+  for (const r of data ?? []) {
+    if (!r.resign_kinds?.length) continue;
+    const list = byWorker.get(r.worker_id) ?? [];
+    list.push({
+      version: r.version,
+      status: r.status,
+      resignKinds: r.resign_kinds,
+      resignDueOn: r.resign_due_on,
+      sentAt: r.sent_at,
+    });
+    byWorker.set(r.worker_id, list);
+  }
+  const out = new Map<string, PackageStatus>();
+  if (byWorker.size === 0) return out;
+  const { data: sigs, error: sigErr } = await db
+    .from('onboarding_signatures')
+    .select('worker_id, agreement_kind')
+    .eq('status', 'signed')
+    .in('worker_id', [...byWorker.keys()]);
+  if (sigErr) throw new Error(`onboarding_signatures: ${sigErr.message}`);
+  const signedBy = new Map<string, Set<AgreementKind>>();
+  for (const s of sigs ?? [])
+    signedBy.set(s.worker_id, (signedBy.get(s.worker_id) ?? new Set()).add(s.agreement_kind));
+  for (const [workerId, versions] of byWorker) {
+    const pkg = packageStatusOf(versions, signedBy.get(workerId) ?? new Set());
+    if (pkg) out.set(workerId, pkg);
+  }
   return out;
 };

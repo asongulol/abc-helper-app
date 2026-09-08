@@ -6,7 +6,8 @@
  * draft or Send for signature from Review. The reason sets defaults and never
  * skips a step (decision 2); reopening a draft lands on Review with everything
  * editable (decision 3). The Increase step owns the rate (decision 4). The
- * Benefits / Package / Access steps slot in before Review in later slices.
+ * Package step is the re-sign package (decision 8); Benefits and Access slot
+ * in before Review in later slices.
  */
 
 import { useState, useTransition } from 'react';
@@ -21,9 +22,18 @@ import {
   type IncreaseMethod,
   increaseHow,
 } from '@/lib/contracts/increase';
+import {
+  PACKAGE_KINDS,
+  PACKAGE_TITLE,
+  type PackageKind,
+  packageLabels,
+  packageWarning,
+  resignDueOn,
+} from '@/lib/contracts/package';
 import { nextPeriod } from '@/lib/dates/periods';
 import { fmtDate, money } from '@/lib/format';
 import { draftContractVersion } from '@/server/actions/contracts';
+import { requestDocument } from '@/server/actions/onboarding';
 import { CONTRACT_OPTIONS, type ContractType, todayManila } from '@/types/schemas/contractors';
 import {
   CONTRACT_CHANGE_REASON_LABEL,
@@ -49,9 +59,13 @@ type Form = {
   addendumType: AddendumType;
   addendumText: string;
   noticeDays: string;
+  /** Package step: agreements the contractor re-signs after the contract (decision 8). */
+  resignKinds: PackageKind[];
 };
 
-const STEPS = ['Reason', 'Terms', 'Increase', 'Review'] as const;
+const STEPS = ['Reason', 'Terms', 'Increase', 'Package', 'Review'] as const;
+const isPackageKind = (k: string): k is PackageKind =>
+  (PACKAGE_KINDS as readonly string[]).includes(k);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ADDENDUM_LABEL: Record<AddendumType, string> = {
   '': 'None',
@@ -100,6 +114,12 @@ const formFrom = (
     addendumType: (t.addendumType as AddendumType | null) ?? '',
     addendumText: t.addendumText ?? '',
     noticeDays: String(t.noticeDays ?? 15),
+    // Rehire pre-ticks the whole package; anything else starts blank (decision 8).
+    resignKinds: resume
+      ? resume.resignKinds.filter(isPackageKind)
+      : rehire
+        ? [...PACKAGE_KINDS]
+        : [],
   };
 };
 
@@ -170,6 +190,8 @@ export function ContractWizard({
   const [form, setForm] = useState<Form>(() => formFrom(record, draft, latest, worker));
   const [step, setStep] = useState(draft ? STEPS.length - 1 : 0);
   const [busy, startBusy] = useTransition();
+  const [docTitle, setDocTitle] = useState('');
+  const [requesting, startRequesting] = useTransition();
   const rehire = worker.linkStatus === 'ended';
   const liveDiffers =
     record.liveRatePhp != null && record.ratePhp != null && record.liveRatePhp !== record.ratePhp;
@@ -187,8 +209,36 @@ export function ContractWizard({
         changeReason: r,
         method,
         value: method === 'exact' && from != null ? String(from) : '',
+        ...(r === 'rehire' ? { resignKinds: [...PACKAGE_KINDS] } : {}),
       };
     });
+  const toggleKind = (k: PackageKind) =>
+    setForm((f) => ({
+      ...f,
+      resignKinds: f.resignKinds.includes(k)
+        ? f.resignKinds.filter((x) => x !== k)
+        : PACKAGE_KINDS.filter((x) => x === k || f.resignKinds.includes(x)),
+    }));
+  // Uploads use the existing Request a document (decision 8): it lands on their
+  // owed list and emails them now, whether or not this version is ever sent.
+  const requestDoc = () => {
+    const title = docTitle.trim();
+    if (!title) return;
+    startRequesting(async () => {
+      const res = await requestDocument({ workerId: worker.workerId, title });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      notify(
+        res.data.emailSent
+          ? `${title} requested — they have been emailed.`
+          : `${title} added to their owed list, but the email could not be sent.`,
+        { type: res.data.emailSent ? 'success' : 'warn' },
+      );
+      setDocTitle('');
+    });
+  };
   const pickMethod = (method: IncreaseMethod) =>
     setForm((f) => {
       const from = baseRate(f, record);
@@ -196,7 +246,7 @@ export function ContractWizard({
     });
 
   const inc = increaseOf(form, record);
-  const valid = [reasonValid(form), termsError(form) === null, inc !== null, true];
+  const valid = [reasonValid(form), termsError(form) === null, inc !== null, true, true];
   // A step is reachable once every step before it is valid.
   const reachable = (i: number) => valid.slice(0, i).every(Boolean);
 
@@ -223,6 +273,7 @@ export function ContractWizard({
         addendumType: form.addendumType,
         addendumText: form.addendumText.trim() || null,
         noticeDays: Number(form.noticeDays),
+        resignKinds: form.resignKinds,
       });
       if (!res.ok) {
         notify(res.error, { type: 'error' });
@@ -239,6 +290,9 @@ export function ContractWizard({
   };
 
   const how = inc ? increaseHow(inc) : null;
+  // Decision 9: due at the end of the period after the send period — quoted as
+  // of today; the real date is stamped at send.
+  const dueIfSentToday = resignDueOn(todayManila());
   // Old vs new, side by side; a row whose text differs is the change.
   const rows: [string, string, string][] = [
     [
@@ -269,6 +323,13 @@ export function ContractWizard({
       'Addendum',
       addendumLabel(record.addendumType, record.addendumText),
       addendumLabel(form.addendumType, form.addendumText),
+    ],
+    [
+      'Re-sign package',
+      'None',
+      form.resignKinds.length
+        ? `${packageLabels(form.resignKinds)} · due ${fmtDate(dueIfSentToday)} if sent today`
+        : 'None',
     ],
   ];
 
@@ -526,6 +587,57 @@ export function ContractWizard({
 
       {step === 3 && (
         <div>
+          <fieldset style={{ border: 0, padding: 0, margin: '0 0 10px' }}>
+            <legend className="sub" style={{ fontSize: 12, padding: 0, marginBottom: 8 }}>
+              Agreements to re-sign after the contract, in this order. Their current signatures are
+              superseded when the version is sent.
+            </legend>
+            {PACKAGE_KINDS.map((k) => (
+              <label
+                key={k}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={form.resignKinds.includes(k)}
+                  onChange={() => toggleKind(k)}
+                  disabled={busy}
+                />
+                {PACKAGE_TITLE[k]}
+              </label>
+            ))}
+          </fieldset>
+          <p className="sub" style={{ fontSize: 12, margin: '0 0 12px' }}>
+            {form.resignKinds.length === 0
+              ? 'Nothing to re-sign — the contractor signs the contract only.'
+              : rehire
+                ? 'A rehire’s package blocks countersign until everything is signed.'
+                : `${packageWarning(dueIfSentToday)} The pay period that contains the send date is never held. The contractor is told in the send email, on the portal, and in a reminder three days before.`}
+          </p>
+          <Field id="cv-doc" label="Also request a document (emails them now)">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                id="cv-doc"
+                value={docTitle}
+                onChange={(e) => setDocTitle(e.target.value)}
+                placeholder="e.g. Updated NBI clearance"
+                disabled={busy || requesting}
+              />
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={busy || requesting || !docTitle.trim()}
+                onClick={requestDoc}
+              >
+                {requesting ? <Spinner /> : 'Request'}
+              </button>
+            </div>
+          </Field>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div>
           <p style={{ margin: '0 0 10px' }}>
             <strong>
               {form.changeReason ? CONTRACT_CHANGE_REASON_LABEL[form.changeReason] : '—'}
@@ -575,6 +687,10 @@ export function ContractWizard({
             {rehire ? ' and restores their portal login so they can sign' : ''}. Pay from{' '}
             {fmtDate(form.effectiveFrom)} is priced at the new rate as soon as it is sent; the
             current contract of record stays in force until the new version is countersigned.
+            {form.resignKinds.length > 0 &&
+              (rehire
+                ? ' Countersign waits until the whole package is signed.'
+                : ` ${packageWarning(dueIfSentToday)}`)}
           </p>
         </div>
       )}

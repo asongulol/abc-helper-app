@@ -11,6 +11,7 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchOutstandingPackages } from '@/db/queries/contracts';
 import {
   clearFilelessDocumentSlot,
   fetchApprovedDocumentsForWorker,
@@ -26,6 +27,7 @@ import {
   insertMoodCheckin,
 } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import type { PackageKind } from '@/lib/contracts/package';
 import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
 import { validateProfileFields } from '@/lib/profile/validate';
@@ -35,6 +37,7 @@ import { requireAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
 import { encryptIfConfigured } from '@/server/crypto';
+import { syncPackageHolds } from '@/server/payroll';
 
 /* ---------- SAFE_FIELDS mirror of portal-self edge fn ---------- */
 
@@ -446,6 +449,19 @@ export async function signAgreement(args: {
       .eq('worker_id', worker.workerId)
       .eq('status', 'signed');
     const preSigned = new Set((preSigs ?? []).map((s) => s.agreement_kind));
+
+    // A re-sign (wizard decision 8): send superseded this kind's signature and
+    // the version that asked for it is what the fresh one is filed under. The
+    // contract comes first; the order loop below keeps the package in order
+    // because the superseded kinds before it are no longer "signed".
+    const pkg =
+      (await fetchOutstandingPackages(svc, { workerIds: [worker.workerId] })).get(
+        worker.workerId,
+      ) ?? null;
+    const resign = pkg?.outstanding.includes(agreementKey as PackageKind) ? pkg : null;
+    if (resign && !resign.contractSigned)
+      return { ok: false, error: 'Sign your updated contractor agreement first.' };
+
     const order = AGREEMENT_ORDER;
     const idx = order.indexOf(agreementKey);
     for (let i = 0; i < idx; i++) {
@@ -474,7 +490,7 @@ export async function signAgreement(args: {
       {
         worker_id: worker.workerId,
         agreement_kind: agreementKey,
-        doc_version: '1',
+        doc_version: resign ? String(resign.version) : '1',
         signed_legal_name: args.typedName.trim(),
         signature_method: signatureMethod,
         signature_data: signatureStored,
@@ -527,11 +543,27 @@ export async function signAgreement(args: {
       .from('onboarding_progress')
       .update({
         stage1_last_kind: agreementKey,
-        stage1_complete: stage1Complete,
+        // A re-sign in progress must not reopen a finished onboarding's stage 1.
+        stage1_complete: stage1Complete || !!cur?.completed_at,
         current_stage: nextStage,
         updated_at: now,
       })
       .eq('worker_id', worker.workerId);
+
+    // Decision 9: the last re-signed item lifts the pay hold on its own.
+    // Best-effort — the signature is recorded either way, and the next
+    // Calculate build syncs the same way.
+    let holds: { held: number; lifted: number } | string | null = null;
+    if (resign) {
+      try {
+        holds = await syncPackageHolds(
+          { workerIds: [worker.workerId] },
+          { db: svc, serviceDb: svc },
+        );
+      } catch (err) {
+        holds = `skipped: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
 
     await logEvent({
       action: 'agreement.signed',
@@ -540,6 +572,8 @@ export async function signAgreement(args: {
         worker_id: worker.workerId,
         agreement_kind: args.agreementKey,
         stage1_complete: stage1Complete,
+        doc_version: resign ? String(resign.version) : '1',
+        holds,
       },
     });
 

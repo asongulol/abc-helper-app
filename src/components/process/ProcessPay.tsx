@@ -101,13 +101,16 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const wiseFile = useMemo(
     () =>
       buildWiseBatch(
-        payments.map((p) => ({
-          name: p.name,
-          email: p.workerEmail,
-          netPhp: p.netPhp ?? 0,
-          payoutMethod: p.payoutMethod,
-          wiseRecipientUuid: p.wiseRecipientUuid,
-        })),
+        // Wizard decision 9: a held row never goes on the Wise batch.
+        payments
+          .filter((p) => !p.holdReason)
+          .map((p) => ({
+            name: p.name,
+            email: p.workerEmail,
+            netPhp: p.netPhp ?? 0,
+            payoutMethod: p.payoutMethod,
+            wiseRecipientUuid: p.wiseRecipientUuid,
+          })),
         {
           periodStart: period.periodStart,
           periodEnd: period.periodEnd,
@@ -126,7 +129,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const shownSorted = [...shown].sort((a, b) => a.name.localeCompare(b.name));
   // Only draft/queued/failed rows are payable. `sent` and `reconciled` already
   // moved money — re-marking them overwrites their true send date (RP-08).
-  const unpaid = payments.filter((p) => isUnpaidStatus(p.status));
+  const unpaid = payments.filter((p) => isUnpaidStatus(p.status) && !p.holdReason);
   const unpaidIds = unpaid.map((p) => p.paymentId);
   // Of those, the ones whose Wise draft is still sitting unfunded (RP-58).
   const unfundedDrafts = unpaid.filter(isUnfundedWiseDraft).length;
@@ -478,12 +481,21 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
                       <Badge tone={paymentStatusTone(p.status)}>
                         {paymentStatusLabel(p.status)}
                       </Badge>
+                      {p.holdReason && (
+                        <Badge tone="bad" style={{ marginLeft: 6 }} title={p.holdReason}>
+                          ✋ Held
+                        </Badge>
+                      )}
                     </td>
                     <td data-label="Wise transfer">{p.wiseTransferId ?? '—'}</td>
                     <td className="card-action no-print" style={{ textAlign: 'right' }}>
                       {!isUnpaidStatus(p.status) ? (
                         <span className="muted" style={{ fontSize: 12 }}>
                           ✓ {paymentStatusLabel(p.status)}
+                        </span>
+                      ) : p.holdReason ? (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          Held — lift it on Calculate
                         </span>
                       ) : dateFor?.id === p.paymentId ? (
                         <span

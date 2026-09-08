@@ -21,6 +21,7 @@ const {
   recomputeWorkerDraft,
   reconcileApprovedTime,
   salariedCatchUpCandidates,
+  syncPackageHolds,
   unlockRun,
 } = await import('@/server/payroll');
 type PayrollDeps = import('@/server/payroll').PayrollDeps;
@@ -331,6 +332,101 @@ describe('calculateDraft', () => {
       ['w-ana', 1000],
       ['w-ben', 1000],
     ]);
+  });
+
+  it('pay hold (wizard decision 9): the period ending on the due date is held while the package is unsigned; the send period is not', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana'), worker('w-ben')];
+    seed.worker_companies = [link('w-ana', 'PH'), link('w-ben', 'PH')];
+    seed.rates = [rate('w-ana', 100), rate('w-ben', 100)];
+    seed.time_entries = [entry(1, 'w-ana', '2026-07-06', 10), entry(2, 'w-ben', '2026-07-06', 10)];
+    const pkg = (id: string, workerId: string, sentOn: string, dueOn: string) => ({
+      id,
+      worker_id: workerId,
+      company_id: COMPANY,
+      version: 2,
+      status: 'sent',
+      rate_php: 100,
+      effective_from: '2026-08-01',
+      resign_kinds: ['confidentiality_nda', 'baa'],
+      resign_due_on: dueOn,
+      sent_at: `${sentOn}T10:00:00Z`,
+    });
+    seed.contract_versions = [
+      pkg('cv-a', 'w-ana', '2026-06-20', '2026-07-15'), // sent in 16–30 Jun → 1–15 Jul held
+      pkg('cv-b', 'w-ben', '2026-07-03', '2026-07-31'), // sent in 1–15 Jul → this period pays
+    ];
+    seed.onboarding_signatures = [
+      { worker_id: 'w-ana', agreement_kind: 'baa', doc_version: '2', status: 'signed' },
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await calculateDraft(draftInput(), deps);
+
+    const byWorker = Object.fromEntries(tables.payments.map((p) => [p.worker_id, p]));
+    expect(byWorker['w-ana']).toMatchObject({
+      net_php: 1000, // priced and built as usual — only the payout waits
+      hold_reason: 'Re-sign NDA · due 2026-07-15',
+    });
+    expect(byWorker['w-ana']?.held_at).toBeTruthy();
+    expect(byWorker['w-ben']?.hold_reason ?? null).toBeNull();
+  });
+
+  it('pay hold lifts on its own once the package is signed, and a hand lift sticks', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana'), worker('w-ben')];
+    seed.worker_companies = [link('w-ana', 'PH'), link('w-ben', 'PH')];
+    seed.pay_periods = [period()];
+    seed.payments = [
+      payRow('p-ana', 'w-ana', {
+        status: 'draft',
+        hold_reason: 'Re-sign NDA · due 2026-07-15',
+        held_at: 'x',
+      }),
+      payRow('p-ben', 'w-ben', {
+        status: 'draft',
+        hold_reason: 'Re-sign NDA · due 2026-07-15',
+        held_at: 'x',
+        hold_lifted_at: 'y',
+        hold_lifted_by: 'owner@abckidsny.com',
+        hold_lifted_note: 'paid by hand',
+      }),
+    ];
+    const version = (id: string, workerId: string) => ({
+      id,
+      worker_id: workerId,
+      company_id: COMPANY,
+      version: 2,
+      status: 'signed',
+      resign_kinds: ['confidentiality_nda'],
+      resign_due_on: '2026-07-15',
+      sent_at: '2026-06-20T10:00:00Z',
+    });
+    seed.contract_versions = [version('cv-a', 'w-ana'), version('cv-b', 'w-ben')];
+    // Ana re-signed; Ben has not, but an admin lifted his by hand.
+    seed.onboarding_signatures = [
+      {
+        worker_id: 'w-ana',
+        agreement_kind: 'confidentiality_nda',
+        doc_version: '2',
+        status: 'signed',
+      },
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    const res = await syncPackageHolds({ companyId: COMPANY }, deps);
+
+    expect(res).toEqual({ held: 0, lifted: 1 });
+    const byId = Object.fromEntries(tables.payments.map((p) => [p.id, p]));
+    expect(byId['p-ana']).toMatchObject({
+      hold_lifted_by: null,
+      hold_lifted_note: 'Package signed',
+    });
+    expect(byId['p-ana']?.hold_lifted_at).toBeTruthy();
+    expect(byId['p-ben']).toMatchObject({
+      hold_lifted_at: 'y',
+      hold_lifted_by: 'owner@abckidsny.com',
+    });
   });
 
   it('RP-29: warns about the other period this year that already accrued the 13th', async () => {

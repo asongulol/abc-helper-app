@@ -38,6 +38,7 @@ import {
   findOrCreateOffCycleBatch,
   findPeriod,
   hasInAppRecalc,
+  heldPaymentReason,
   markPaymentsPaid,
   markPaymentsUnpaid,
   officeToday,
@@ -93,6 +94,7 @@ import {
   CalculateDraftSchema,
   DeleteAllStatementsSchema,
   DeleteStatementSchema,
+  LiftPaymentHoldSchema,
   LockPeriodSchema,
   MarkAllUnpaidSchema,
   MarkPaidSchema,
@@ -778,7 +780,11 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
     // RP-52: /process only ROUTES to the pay panel for a locked/paid batch —
     // this action is an HTTP endpoint, so the state must be checked here too or
     // an open period's rows flip to 'sent' mid-calculation.
-    const blocked = unpayablePeriodReason(await fetchPeriodStatesForPayments(db, input.paymentIds));
+    const blocked =
+      unpayablePeriodReason(await fetchPeriodStatesForPayments(db, input.paymentIds)) ??
+      // Wizard decision 9: a row held for an unsigned re-sign package is not
+      // paid by any route until they sign or an admin lifts it.
+      (await heldPaymentReason(db, input.paymentIds));
     if (blocked) return { ok: false, error: blocked };
 
     const paidAt = input.paidAt ?? new Date().toISOString();
@@ -805,6 +811,58 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
       ok: false,
       error: humanizeError(err, 'Mark paid failed.'),
     };
+  }
+}
+
+/**
+ * Lift a re-sign-package pay hold by hand (wizard decision 9), with a logged
+ * reason. Countersign-gated like the contract actions — the hold exists
+ * because a contract is unsigned. Any period state: hours were approved all
+ * along, nothing recomputes.
+ */
+export async function liftPaymentHold(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  if (!admin.canCountersign)
+    return { ok: false, error: 'Your admin account does not have countersign permission.' };
+  const parsed = LiftPaymentHoldSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId))
+    return { ok: false, error: 'No access to this company.' };
+
+  try {
+    const db = await createServerSupabase();
+    const { data, error } = await db
+      .from('payments')
+      .update({
+        hold_lifted_at: new Date().toISOString(),
+        hold_lifted_by: admin.email,
+        hold_lifted_note: input.note,
+      })
+      .eq('id', input.paymentId)
+      .eq('company_id', input.companyId)
+      .not('hold_reason', 'is', null)
+      .is('hold_lifted_at', null)
+      .select('worker_id, hold_reason');
+    if (error) return { ok: false, error: error.message };
+    if (!data?.length) return { ok: false, error: 'That row is not on hold.' };
+    await logEvent({
+      companyId: input.companyId,
+      action: 'payment.hold_lifted',
+      entity: data[0]?.worker_id ?? input.paymentId,
+      detail: {
+        payment_id: input.paymentId,
+        hold_reason: data[0]?.hold_reason ?? null,
+        note: input.note,
+        by: admin.email,
+      },
+    });
+    revalidatePeriodViews();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not lift the hold.') };
   }
 }
 
