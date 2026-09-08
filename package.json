@@ -1,7 +1,7 @@
 {
   "name": "abc-helper-app",
   "version": "0.1.0",
-  "description": "ABC payroll — Hubstaff time → PHP payouts via Wise. Next.js rewrite of abc-work-app (parallel build; cutover per docs/money-core-spec.md).",
+  "description": "ABC payroll \u2014 Hubstaff time \u2192 PHP payouts via Wise. Next.js rewrite of abc-work-app (parallel build; cutover per docs/money-core-spec.md).",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@9.12.0",
@@ -30,7 +30,8 @@
     "docs": "pnpm -C website start",
     "docs:build": "pnpm -C website build",
     "docs:serve": "pnpm -C website serve",
-    "prepare": "lefthook install || true"
+    "prepare": "lefthook install || true",
+    "e2e:contract-wizard": "node e2e/contract-wizard.e2e.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
