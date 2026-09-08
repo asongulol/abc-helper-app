@@ -8,6 +8,7 @@ import type { ContractVersion, ContractVersionStatus } from '@/db/queries/contra
 import type { Database } from '@/db/types';
 import { fmtDate } from '@/lib/format';
 import { signContractVersion } from '@/server/actions/contracts';
+import { DocButtons } from './PortalDocs';
 import { type SignInput, SignModal } from './SignModal';
 
 /** The original (version 1) agreement, read from the legacy rows. */
@@ -22,10 +23,19 @@ export type SignedAgreement = LegacyContract & {
   kind: Database['public']['Enums']['agreement_kind'];
 };
 
+/** A signed copy uploaded as a file (Docs tab kind "IC Agreement"), not signed in-app. */
+export type UploadedAgreement = {
+  id: string;
+  title: string | null;
+  signedOn: string | null;
+  createdAt: string;
+};
+
 interface Props {
   versions: ContractVersion[];
   legacy: LegacyContract | null;
   agreements: SignedAgreement[];
+  uploads: UploadedAgreement[];
 }
 
 const LABEL: Record<ContractVersionStatus, string> = {
@@ -52,14 +62,17 @@ const TONE: Record<ContractVersionStatus, BadgeTone> = {
  * then every version they have seen, the original agreement last. Read-only
  * apart from signing. Owner rule: nothing here ever shows an exchange rate.
  */
-export const PortalContracts = ({ versions, legacy, agreements }: Props) => {
+export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [signing, setSigning] = useState<ContractVersion | null>(null);
+  const [showVoid, setShowVoid] = useState(false);
 
-  // Drafts are the admin's business until they are sent.
-  const shown = versions.filter((v) => v.status !== 'draft');
+  // Drafts are the admin's business until they are sent; withdrawn versions
+  // stay out of the way unless asked for.
+  const voided = versions.filter((v) => v.status === 'void').length;
+  const shown = versions.filter((v) => v.status !== 'draft' && (showVoid || v.status !== 'void'));
   const pending = shown.find((v) => v.status === 'sent') ?? null;
   const hasActive = shown.some((v) => v.status === 'active');
 
@@ -103,7 +116,7 @@ export const PortalContracts = ({ versions, legacy, agreements }: Props) => {
 
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Contracts</h2>
-        {shown.length === 0 && !legacy ? (
+        {shown.length === 0 && !legacy && uploads.length === 0 ? (
           <p className="sub">No signed agreement on file yet.</p>
         ) : (
           <div className="table-scroll">
@@ -175,9 +188,38 @@ export const PortalContracts = ({ versions, legacy, agreements }: Props) => {
                     </td>
                   </tr>
                 )}
+                {uploads.map((u) => (
+                  <tr key={u.id}>
+                    <td>File</td>
+                    <td>
+                      <Badge tone="neutral">Uploaded</Badge>
+                      {u.title && (
+                        <span className="sub" style={{ fontSize: 11, marginLeft: 6 }}>
+                          {u.title}
+                        </span>
+                      )}
+                    </td>
+                    <td>—</td>
+                    <td>{u.signedOn ? fmtDate(u.signedOn) : '—'}</td>
+                    <td>—</td>
+                    <td>
+                      <DocButtons id={u.id} />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
+        )}
+        {voided > 0 && (
+          <button
+            type="button"
+            className="btn link"
+            style={{ padding: '8px 0 0' }}
+            onClick={() => setShowVoid((s) => !s)}
+          >
+            {showVoid ? 'Hide withdrawn versions' : `Show withdrawn versions (${voided})`}
+          </button>
         )}
       </div>
 

@@ -83,8 +83,10 @@ Via `src/db/queries/portal.ts`, all RLS-scoped to the worker:
 ## Contracts {#contracts}
 
 `/portal/contracts` (`PortalContracts`) lists every IC agreement version — version 1 is the
-onboarding row, versions 2+ come from `contract_versions` under RLS — with the current one
-highlighted and a **Sign** card for a `sent` version. Signing reuses the onboarding
+onboarding row, versions 2+ come from `contract_versions` under RLS, plus any signed copy
+uploaded as a file (Docs tab kind "IC Agreement") — with the current one highlighted and a
+**Sign** card for a `sent` version. Withdrawn (`void`) versions stay hidden behind a
+**Show withdrawn versions** checkbox, on this tab and on the admin Contracts tab alike. Signing reuses the onboarding
 `SignModal` (`src/components/portal/SignModal.tsx`: scroll-to-end, typed name or drawn
 signature) and calls `signContractVersion()` in `src/server/actions/contracts.ts`. It lives on
 its own tab rather than the onboarding page because a rehire's onboarding is already complete
