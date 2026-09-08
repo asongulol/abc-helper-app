@@ -17,6 +17,7 @@ import {
 const EVENT_LABEL: Record<string, string> = {
   'portal_login.created': 'Login created',
   'portal_login.reset_password': 'Password reset',
+  'portal_login.email_changed': 'Login email changed',
   'portal_login.revoked': 'Login revoked',
   'portal_login.restored': 'Login restored',
   'portal_login.resend_hire_emails': 'Hire emails re-sent',
