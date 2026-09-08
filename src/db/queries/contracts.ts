@@ -2,7 +2,7 @@
  * contract_versions reads (docs/CONTRACT-VERSIONS-PLAN.md §2).
  *
  * Rows here start at version 2. Version 1 of every current engagement is the
- * existing onboarding_agreements.ic_agreement row + its doc_version='1'
+ * existing onboarding_agreements.ic_agreement row + its doc_version '1' / '1.0'
  * signature, read through here as `source: 'legacy'` — no backfill, and the
  * legacy portal keeps rendering that row untouched.
  */
@@ -124,6 +124,15 @@ export const fetchContractVersions = async (
  * truth), not the agreement's `f_rate` text; the latest row by start wins so
  * that a rehire still sees the closed rate the engagement ended on.
  */
+/**
+ * Version-1 signatures predate contract_versions: the legacy portal stamped the
+ * template's version string ('1.0' on every prod row) and the app stamps '1'.
+ * Versioned signatures carry the integer version (2, 3, …), so anything else
+ * is the original agreement.
+ */
+export const isLegacySignatureVersion = (docVersion: string): boolean =>
+  !(/^\d+$/.test(docVersion) && Number(docVersion) >= 2);
+
 export const contractOfRecord = async (
   db: Db,
   workerId: string,
@@ -161,15 +170,14 @@ export const contractOfRecord = async (
       .maybeSingle(),
     db
       .from('onboarding_signatures')
-      .select('signed_at, doc_sha256')
+      .select('signed_at, doc_sha256, doc_version')
       .eq('worker_id', workerId)
       .eq('agreement_kind', 'ic_agreement')
-      .eq('doc_version', '1')
-      .eq('status', 'signed')
-      .maybeSingle(),
+      .eq('status', 'signed'),
   ]);
   for (const r of [active, link, agreement, rate, signature])
     if (r.error) throw new Error(`contract of record: ${r.error.message}`);
+  const v1 = (signature.data ?? []).find((s) => isLegacySignatureVersion(s.doc_version)) ?? null;
 
   if (active.data) {
     const v = mapVersion(active.data);
@@ -194,10 +202,10 @@ export const contractOfRecord = async (
     addendumText: a?.addendum_text ?? null,
     // The v1 document said "fifteen (15)" in words before the token existed.
     noticeDays: DEFAULT_NOTICE_DAYS,
-    signedAt: signature.data?.signed_at ?? null,
+    signedAt: v1?.signed_at ?? null,
     countersignedAt: a?.countersigned_at ?? null,
     countersignedName: a?.countersigned_name ?? null,
-    docSha256: signature.data?.doc_sha256 ?? null,
+    docSha256: v1?.doc_sha256 ?? null,
   };
 };
 

@@ -178,21 +178,35 @@ export const fetchExistingDays = async (
   }));
 };
 
-/** work_date for a set of entry ids, scoped to the company (edit-total bounds
- *  check — also means an id from another company simply isn't found). */
+/** work_date (+ approval timing, for isEntryUnpaid) for a set of entry ids,
+ *  scoped to the company — an id from another company simply isn't found. */
 export const fetchEntryDates = async (
   db: Db,
   companyId: string,
   ids: string[],
-): Promise<Array<{ id: string; workDate: string }>> => {
+): Promise<
+  Array<{
+    id: string;
+    workerId: string | null;
+    workDate: string;
+    approval: string;
+    approvedAt: string | null;
+  }>
+> => {
   if (ids.length === 0) return [];
   const { data, error } = await db
     .from('time_entries')
-    .select('id, work_date')
+    .select('id, worker_id, work_date, approval, approved_at')
     .eq('company_id', companyId)
     .in('id', ids);
   if (error) throw new Error(`entry dates: ${error.message}`);
-  return (data ?? []).map((r) => ({ id: r.id, workDate: r.work_date }));
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    workerId: r.worker_id,
+    workDate: r.work_date,
+    approval: r.approval,
+    approvedAt: r.approved_at,
+  }));
 };
 
 /** Latest day that has any imported time — null on a company with none yet.

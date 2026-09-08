@@ -73,7 +73,7 @@ not app code: one row per `(engagement, version)`, one version **in flight**
 (`draft`/`sent`/`signed`) per engagement, one version **of record** (`active`) per engagement.
 
 **Version 1 is a read-through, not a row.** Every current engagement's v1 is the existing
-`onboarding_agreements.ic_agreement` row + its `doc_version='1'` signature, with the rate taken
+`onboarding_agreements.ic_agreement` row + its `doc_version` `'1'` (app) or `'1.0'` (legacy portal) signature — see `isLegacySignatureVersion`, with the rate taken
 from `rates` (money source of truth). `contractOfRecord()` (`src/db/queries/contracts.ts`)
 returns the `active` row when there is one, else that read-through with `source: 'legacy'`.
 Signatures on versions 2+ stay in `onboarding_signatures` with `doc_version = String(N)` and

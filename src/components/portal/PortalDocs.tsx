@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { PortalDocumentRow } from '@/db/queries/portal';
+import { EXPIRY_KIND_LABEL } from '@/lib/documents/expiry';
 import { getDocumentSignedUrl } from '@/server/actions/portal';
 import { type OutstandingDocSlot, uploadOwnDocument } from '@/server/actions/portal-docs';
 
@@ -14,12 +15,7 @@ const DOC_TYPES = [
   { value: 'gov_id', label: 'Government ID' },
 ] as const;
 
-const KIND_LABELS: Record<string, string> = {
-  ic_agreement: 'IC Agreement',
-  w8ben: 'W-8BEN',
-  gov_id: 'Government ID',
-};
-const labelKind = (k: string) => KIND_LABELS[k] ?? k;
+const labelKind = (k: string) => EXPIRY_KIND_LABEL[k] ?? k;
 
 /**
  * One outstanding required-document uploader (legacy `UploadSlot`,
@@ -102,23 +98,15 @@ export const UploadSlot = ({
   );
 };
 
-export const PortalDocs = ({
-  documents,
-  outstanding,
-}: {
-  documents: PortalDocumentRow[];
-  outstanding: OutstandingDocSlot[];
-}) => {
+/**
+ * View (new tab) + Download (attachment) for one of the contractor's own files.
+ * Shared by the Docs tab and the uploaded-agreement rows on the Contracts tab.
+ */
+export const DocButtons = ({ id }: { id: string }) => {
   const { notify } = useToast();
-  const router = useRouter();
-  const [kind, setKind] = useState<string>('ic_agreement');
-  const [file, setFile] = useState<File | null>(null);
   const [busy, startTransition] = useTransition();
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  const refresh = () => router.refresh();
-
-  const view = (id: string) => {
+  const view = () => {
     // Open synchronously on the click so user-activation is still live when the
     // tab navigates — opening after the `await` below left it stuck on about:blank.
     const win = window.open('', '_blank');
@@ -134,6 +122,55 @@ export const PortalDocs = ({
       }
     });
   };
+
+  const download = () => {
+    startTransition(async () => {
+      const res = await getDocumentSignedUrl({ documentId: id, download: true });
+      // Attachment disposition: the browser saves the file and stays on this page.
+      if (res.ok) window.location.assign(res.data.url);
+      else notify(res.error, { type: 'error' });
+    });
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="btn link"
+        style={{ padding: '4px 8px' }}
+        disabled={busy}
+        onClick={view}
+      >
+        View
+      </button>
+      <button
+        type="button"
+        className="btn link"
+        style={{ padding: '4px 8px' }}
+        disabled={busy}
+        onClick={download}
+      >
+        Download
+      </button>
+    </>
+  );
+};
+
+export const PortalDocs = ({
+  documents,
+  outstanding,
+}: {
+  documents: PortalDocumentRow[];
+  outstanding: OutstandingDocSlot[];
+}) => {
+  const { notify } = useToast();
+  const router = useRouter();
+  const [kind, setKind] = useState<string>('ic_agreement');
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, startTransition] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const refresh = () => router.refresh();
 
   const upload = () => {
     if (!file) {
@@ -250,17 +287,7 @@ export const PortalDocs = ({
                   </div>
                 )}
               </div>
-              {d.storagePath && (
-                <button
-                  type="button"
-                  className="btn link"
-                  style={{ padding: '4px 8px' }}
-                  disabled={busy}
-                  onClick={() => view(d.id)}
-                >
-                  View
-                </button>
-              )}
+              {d.storagePath && <DocButtons id={d.id} />}
             </div>
           </div>
         ))

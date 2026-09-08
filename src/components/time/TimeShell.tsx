@@ -8,12 +8,13 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useCallback, useState, useTransition } from 'react';
+import { Fragment, useCallback, useState, useTransition } from 'react';
 import { AddSessionForm } from '@/components/sessions/AddSessionForm';
 import type { PayPeriod } from '@/lib/dates/periods';
 import type { RosterLink } from '@/lib/time/attribution';
 import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { CsvImportCard } from './CsvImportCard';
+import { DayHoursPanel } from './DayHoursPanel';
 import { OffCycleCatchUpCard } from './OffCycleCatchUpCard';
 import { PeriodPicker } from './PeriodPicker';
 import { TimeApprovalTable } from './TimeApprovalTable';
@@ -79,6 +80,7 @@ export const TimeShell = ({
   // The Review & Approve grid is collapsed by default so it isn't distracting
   // and you can't accidentally act on the wrong period — expand to review.
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [fixDaysName, setFixDaysName] = useState<string | null>(null);
   // Bumped on every refresh so client-fetching children re-run their effect —
   // router.refresh() only re-renders server components (RP-47).
   const [refreshKey, setRefreshKey] = useState(0);
@@ -273,10 +275,67 @@ export const TimeShell = ({
                   {period.end} approved.{' '}
                   <Link href={`/payroll?period=${period.start}`}>Pay them on Calculate →</Link> To
                   change someone&rsquo;s hours, remove them from the batch there — that sends their
-                  time back here.
+                  time back here — or fix a single day below.
                 </>
               )}
             </p>
+            {/* A wrong number on one day (a mistaken Add hours) shouldn't need a
+                retraction: the day-by-day editor stays reachable here, and the
+                write rebuilds the contractor's Calculate draft. */}
+            {status !== 'empty' && !unpaidMode && rows.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <b style={{ fontSize: 13 }}>Fix a day</b>
+                <div className="table-scroll" style={{ marginTop: 6 }}>
+                  <table>
+                    <tbody>
+                      {[...rows]
+                        .sort((a, b) => a.sourceName.localeCompare(b.sourceName))
+                        .map((row) => {
+                          const open = fixDaysName === row.sourceName;
+                          return (
+                            <Fragment key={row.sourceName}>
+                              <tr>
+                                <td>{row.sourceName}</td>
+                                <td>
+                                  {(row.trackedSeconds / 3600).toFixed(2)}h · {row.daysWorked} day
+                                  {row.daysWorked === 1 ? '' : 's'}
+                                </td>
+                                <td style={{ textAlign: 'right' }}>
+                                  <button
+                                    type="button"
+                                    className="btn ghost sm"
+                                    onClick={() => setFixDaysName(open ? null : row.sourceName)}
+                                  >
+                                    {open ? 'Close days' : 'Days'}
+                                  </button>
+                                </td>
+                              </tr>
+                              {open && (
+                                <tr style={{ background: '#f8fafc' }}>
+                                  <td colSpan={3}>
+                                    <DayHoursPanel
+                                      companyId={companyId}
+                                      sourceName={row.sourceName}
+                                      entries={row.entries}
+                                      periodStart={period.start}
+                                      periodEnd={period.end}
+                                      onDone={() => {
+                                        setFixDaysName(null);
+                                        handleRefresh();
+                                      }}
+                                      onCancel={() => setFixDaysName(null)}
+                                    />
+                                  </td>
+                                </tr>
+                              )}
+                            </Fragment>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

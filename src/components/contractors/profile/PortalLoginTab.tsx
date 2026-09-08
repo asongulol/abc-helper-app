@@ -1,11 +1,44 @@
-import { Spinner } from '@/components/ui';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { AGREEMENT_TITLE } from '@/components/print/AgreementPrint';
+import { Badge, Spinner } from '@/components/ui';
 import type { RosterWorker } from '@/db/queries/workers';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   createPortalLogin,
+  getPortalAccess,
+  type PortalAccess,
   resetPortalPassword,
   restorePortalLogin,
   revokePortalLogin,
 } from '@/server/actions/portal-admin';
+
+const EVENT_LABEL: Record<string, string> = {
+  'portal_login.created': 'Login created',
+  'portal_login.reset_password': 'Password reset',
+  'portal_login.revoked': 'Login revoked',
+  'portal_login.restored': 'Login restored',
+  'portal_login.resend_hire_emails': 'Hire emails re-sent',
+  'portal_login.send_tools_email': 'Tools email sent',
+  'portal.signed_in': 'Signed in',
+  'document.viewed': 'Viewed',
+  'document.downloaded': 'Downloaded',
+  'agreement.viewed': 'Viewed agreement',
+};
+
+/** One-line description of an access event, e.g. "Downloaded Passport (1).jpg". */
+const describe = (h: PortalAccess['history'][number]): string => {
+  const base = EVENT_LABEL[h.action] ?? h.action;
+  const d = h.detail ?? {};
+  if (h.action.startsWith('document.'))
+    return `${base} ${String(d.title ?? d.kind ?? 'a document')}`;
+  if (h.action === 'agreement.viewed') {
+    const kind = String(d.kind ?? '');
+    return `${base} · ${AGREEMENT_TITLE[kind] ?? kind}${d.version ? ` v${String(d.version)}` : ''}`;
+  }
+  return base;
+};
 
 interface Props {
   worker: RosterWorker;
@@ -18,6 +51,25 @@ interface Props {
 
 /** Portal & login tab — self-service login provisioning (decoupled from the profile form). */
 export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panelProps }: Props) {
+  const [access, setAccess] = useState<PortalAccess | null>(null);
+  const [accessErr, setAccessErr] = useState('');
+  // Load on mount and again each time a login action settles (busy → idle).
+  useEffect(() => {
+    if (loginBusy) return;
+    let alive = true;
+    getPortalAccess({ workerId: worker.workerId }).then((res) => {
+      if (!alive) return;
+      if (res.ok) setAccess(res.data);
+      else setAccessErr(res.error);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [worker.workerId, loginBusy]);
+  const login = access?.login ?? null;
+  // Until the lookup answers, the buttons stay enabled as they always were.
+  const known = access !== null;
+
   return (
     <div
       {...panelProps}
@@ -39,8 +91,14 @@ export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panel
           <button
             type="button"
             className="btn sm"
-            disabled={loginBusy || !worker.email}
-            title={worker.email ? '' : 'Set a personal email first.'}
+            disabled={loginBusy || !worker.email || login?.status === 'active'}
+            title={
+              login?.status === 'active'
+                ? 'Already has an active login.'
+                : worker.email
+                  ? ''
+                  : 'Set a personal email first.'
+            }
             onClick={() =>
               runLogin(
                 () =>
@@ -70,7 +128,7 @@ export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panel
           <button
             type="button"
             className="btn ghost sm"
-            disabled={loginBusy}
+            disabled={loginBusy || (known && login?.status !== 'active')}
             onClick={() => {
               if (
                 !window.confirm(
@@ -88,14 +146,12 @@ export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panel
             Revoke login
           </button>
           {/* The undo for the nightly sunset sweep — without it an automatic (or
-              mistaken) revocation has no way back. ponytail: always enabled, no
-              login-status gate: RosterWorker doesn't carry contractor_logins.status,
-              and restorePortalLogin already answers "no login yet" and "already
-              active" itself. Add the gate only if the extra query earns its keep. */}
+              mistaken) revocation has no way back. Gated on the access lookup
+              below; restorePortalLogin still answers "no login yet" itself. */}
           <button
             type="button"
             className="btn ghost sm"
-            disabled={loginBusy}
+            disabled={loginBusy || (known && login?.status !== 'revoked')}
             title="Give a revoked portal login back — use this if access was ended in error, or if their pay was re-drafted after it landed."
             onClick={() =>
               runLogin(
@@ -108,6 +164,71 @@ export function PortalLoginTab({ worker, loginBusy, portalCreds, runLogin, panel
           </button>
         </div>
       </div>
+      <div
+        style={{
+          marginTop: 8,
+          padding: '8px 12px',
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          display: 'flex',
+          gap: 16,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+        }}
+      >
+        {!known && !accessErr ? (
+          <Spinner />
+        ) : accessErr ? (
+          <span className="sub">{accessErr}</span>
+        ) : !login ? (
+          <>
+            <Badge tone="neutral">No portal login</Badge>
+            <span className="sub">Create one to give this contractor access.</span>
+          </>
+        ) : (
+          <>
+            <Badge tone={login.status === 'active' ? 'good' : 'bad'}>
+              {login.status === 'active' ? 'Access active' : `Access ${login.status}`}
+            </Badge>
+            <span className="sub">{login.email ?? '—'}</span>
+            <span className="sub">Granted {fmtDate(login.createdAt)}</span>
+            <span className="sub">
+              Last sign-in {login.lastSignInAt ? fmtDateTime(login.lastSignInAt) : 'never'}
+            </span>
+          </>
+        )}
+      </div>
+      {access && (
+        <div style={{ marginTop: 16 }}>
+          <b>Access history</b>
+          {access.history.length === 0 ? (
+            <p className="sub" style={{ margin: '4px 0 0', fontSize: 12 }}>
+              Nothing recorded yet — sign-ins, views and downloads appear here from now on.
+            </p>
+          ) : (
+            <div className="table-scroll" style={{ marginTop: 6 }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>What</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {access.history.map((h) => (
+                    <tr key={h.id}>
+                      <td>{fmtDateTime(h.at)}</td>
+                      <td>{describe(h)}</td>
+                      <td>{h.actor ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
       {portalCreds &&
         (portalCreds.emailSent ? (
           <div

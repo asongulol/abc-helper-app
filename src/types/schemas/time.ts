@@ -78,6 +78,24 @@ export const EditTotalSchema = z.object({
 });
 export type EditTotalInput = z.infer<typeof EditTotalSchema>;
 
+/** Edit-days: set tracked hours on specific existing entries — the way back
+ *  from a mistaken Add hours, which sums into the day's row and can't be undone. */
+export const EditDaysSchema = z.object({
+  companyId: uuid(),
+  sourceName: z.string().min(1),
+  days: z
+    .array(
+      z.object({
+        id: uuid(),
+        hours: z.number().nonnegative().max(24, 'more than 24 hours in one day'),
+      }),
+    )
+    .min(1),
+  periodStart: IsoDateSchema,
+  periodEnd: IsoDateSchema,
+});
+export type EditDaysInput = z.infer<typeof EditDaysSchema>;
+
 /** CSV import: array of parsed rows summed per (name, date). */
 export const CsvImportRowSchema = z.object({
   sourceName: z.string().min(1),

@@ -1,8 +1,8 @@
 import { redirect } from 'next/navigation';
 import { PortalContracts } from '@/components/portal/PortalContracts';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchContractVersions } from '@/db/queries/contracts';
-import { fetchOwnOnboarding } from '@/db/queries/portal';
+import { fetchContractVersions, isLegacySignatureVersion } from '@/db/queries/contracts';
+import { fetchOwnDocuments, fetchOwnOnboarding } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 
 export const metadata = { title: 'Contracts — Contractor Portal' };
@@ -17,11 +17,18 @@ export default async function PortalContractsPage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [versions, { signatures, agreements }] = await Promise.all([
+  const [versions, { signatures, agreements }, documents] = await Promise.all([
     fetchContractVersions(supabase, worker.workerId),
     fetchOwnOnboarding(supabase, worker.workerId),
+    fetchOwnDocuments(supabase, worker.workerId),
   ]);
-  const v1 = signatures.find((s) => s.agreement_kind === 'ic_agreement' && s.doc_version === '1');
+  // A signed copy uploaded as a file (Docs tab kind "IC Agreement") is an agreement too.
+  const uploads = documents
+    .filter((d) => d.kind === 'ic_agreement' && d.storagePath)
+    .map((d) => ({ id: d.id, title: d.title, signedOn: d.signedOn, createdAt: d.createdAt }));
+  const v1 = signatures.find(
+    (s) => s.agreement_kind === 'ic_agreement' && isLegacySignatureVersion(s.doc_version),
+  );
   const agreement = agreements.find((a) => a.agreement_kind === 'ic_agreement');
   const legacy = v1
     ? {
@@ -31,5 +38,28 @@ export default async function PortalContractsPage() {
       }
     : null;
 
-  return <PortalContracts versions={versions} legacy={legacy} />;
+  // The NDA / non-compete / BAA live only on the Onboarding tab, which hides once
+  // onboarding completes — surface the signed ones here so the contractor can
+  // always print their own copy. Signatures are newest-first; keep one per kind.
+  const signedAgreements = signatures
+    .filter((s) => s.agreement_kind !== 'ic_agreement')
+    .filter((s, i, all) => all.findIndex((x) => x.agreement_kind === s.agreement_kind) === i)
+    .map((s) => {
+      const a = agreements.find((x) => x.agreement_kind === s.agreement_kind);
+      return {
+        kind: s.agreement_kind,
+        signedAt: s.signed_at,
+        countersignedAt: a?.countersigned_at ?? null,
+        countersignedName: a?.countersigned_name ?? null,
+      };
+    });
+
+  return (
+    <PortalContracts
+      versions={versions}
+      legacy={legacy}
+      agreements={signedAgreements}
+      uploads={uploads}
+    />
+  );
 }

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { AGREEMENT_TITLE, AgreementPrint } from '@/components/print/AgreementPrint';
 import { createServerSupabase } from '@/db/clients/server';
+import { isLegacySignatureVersion } from '@/db/queries/contracts';
 import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
 import { fetchWorkerLink } from '@/db/queries/workers';
@@ -52,7 +53,13 @@ export default async function AdminAgreementPrintPage({
 
   const row = agreements.find((a) => a.agreementKind === agreementKind) ?? null;
   const sig =
-    signatures.find((s) => s.agreementKind === agreementKind && s.status === 'signed') ?? null;
+    // The ORIGINAL signature: a versioned IC agreement prints from its own route.
+    signatures.find(
+      (s) =>
+        s.agreementKind === agreementKind &&
+        s.status === 'signed' &&
+        isLegacySignatureVersion(s.docVersion),
+    ) ?? null;
   const workerName = fullName(worker);
 
   const vars: AgreementVars = {

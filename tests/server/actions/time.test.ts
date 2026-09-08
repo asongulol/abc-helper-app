@@ -14,9 +14,40 @@ vi.mock('@/server/audit', () => ({ logEvent: async () => {} }));
 vi.mock('@/server/payroll', () => ({
   syncApprovedTimeToDrafts: async () => ({ workers: 0, closedPeriods: [] }),
 }));
+// editContractorDays: two known entries (one in the Aug 16–31 period, one
+// past it), a switchable set of closed periods, and a record of what was written.
+const dayState = vi.hoisted(() => ({
+  written: [] as Array<{ id: string; trackedSeconds: number }>,
+  closed: [] as Array<{
+    id: string;
+    periodStart: string;
+    periodEnd: string;
+    state: 'locked' | 'paid';
+    lockedAt: string | null;
+  }>,
+}));
+const IN_ID = '33333333-3333-4333-8333-333333333333';
+const OUT_ID = '44444444-4444-4444-8444-444444444444';
+
 vi.mock('@/db/queries/time', async (orig) => ({
   ...(await orig<typeof import('@/db/queries/time')>()),
   fetchExistingDays: async () => [],
+  fetchEntryDates: async (_db: unknown, _co: string, ids: string[]) =>
+    ids.map((id) => ({
+      id,
+      workerId: '22222222-2222-4222-8222-222222222222',
+      workDate: id === '44444444-4444-4444-8444-444444444444' ? '2026-09-02' : '2026-08-24',
+      approval: 'approved',
+      approvedAt: '2026-08-25T00:00:00Z',
+    })),
+  fetchLockedPeriodsInRange: async () => dayState.closed,
+  updateTrackedSeconds: async (
+    _db: unknown,
+    _co: string,
+    updates: Array<{ id: string; trackedSeconds: number }>,
+  ) => {
+    dayState.written.push(...updates);
+  },
   // Contractor's last day is 2026-07-20: the two days past it never land.
   upsertTimeEntries: async (_db: unknown, rows: Array<{ work_date: string }>): Promise<number> =>
     rows.filter((r) => r.work_date > '2026-07-20').length,
@@ -98,5 +129,61 @@ describe('addHoursDaily (#87 — a partial post-last-day drop is not clean succe
       days: [{ date: '2026-07-21', hours: 8 }],
     });
     expect(res.ok).toBe(false);
+  });
+});
+
+describe('editContractorDays (the way back from a mistaken Add hours)', () => {
+  const period = { periodStart: '2026-08-16', periodEnd: '2026-08-31' };
+
+  it('rewrites one day and leaves the rest alone', async () => {
+    dayState.written.length = 0;
+    dayState.closed = [];
+    const { editContractorDays } = await import('@/server/actions/time');
+    const res = await editContractorDays({
+      companyId: COMPANY,
+      sourceName: 'Trisha Tagubaras',
+      days: [{ id: IN_ID, hours: 8.4 }],
+      ...period,
+    });
+    expect(res.ok).toBe(true);
+    expect(dayState.written).toEqual([{ id: IN_ID, trackedSeconds: 30240 }]);
+  });
+
+  it('refuses a day outside the period being viewed', async () => {
+    dayState.written.length = 0;
+    dayState.closed = [];
+    const { editContractorDays } = await import('@/server/actions/time');
+    const res = await editContractorDays({
+      companyId: COMPANY,
+      sourceName: 'Trisha Tagubaras',
+      days: [{ id: OUT_ID, hours: 0 }],
+      ...period,
+    });
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toContain('2026-09-02');
+    expect(dayState.written).toEqual([]);
+  });
+
+  it('refuses a day a locked run has already paid', async () => {
+    dayState.written.length = 0;
+    dayState.closed = [
+      {
+        id: 'p',
+        periodStart: '2026-08-16',
+        periodEnd: '2026-08-31',
+        state: 'paid',
+        lockedAt: '2026-08-30T00:00:00Z', // approved 08-25, before the lock → paid
+      },
+    ];
+    const { editContractorDays } = await import('@/server/actions/time');
+    const res = await editContractorDays({
+      companyId: COMPANY,
+      sourceName: 'Trisha Tagubaras',
+      days: [{ id: IN_ID, hours: 8.4 }],
+      ...period,
+    });
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toContain('locked or paid');
+    expect(dayState.written).toEqual([]);
   });
 });
