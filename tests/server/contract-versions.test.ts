@@ -11,7 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
-import { contractOfRecord } from '@/db/queries/contracts';
+import { contractOfRecord, isLegacySignatureVersion } from '@/db/queries/contracts';
 import { endEngagement } from '@/db/queries/workers';
 import type { Database } from '@/db/types';
 
@@ -71,6 +71,13 @@ describe('endEngagement stamps the contract of record', () => {
   });
 });
 
+describe('isLegacySignatureVersion', () => {
+  it("treats '1' (app) and '1.0' (legacy portal) as the original, integers ≥ 2 as versioned", () => {
+    expect(['1', '1.0', ''].map(isLegacySignatureVersion)).toEqual([true, true, true]);
+    expect(['2', '4', '10'].map(isLegacySignatureVersion)).toEqual([false, false, false]);
+  });
+});
+
 describe('contractOfRecord', () => {
   const link = { contract: 'FT', role: 'VA', weekly_hours: 40, started_on: '2024-01-15' };
 
@@ -94,7 +101,12 @@ describe('contractOfRecord', () => {
         countersigned_name: 'Owner',
       },
       rates: { amount_php: '22000', period_basis: 'semi_monthly', effective_start: '2026-01-01' },
-      onboarding_signatures: { signed_at: '2024-01-10T00:00:00Z', doc_sha256: 'abc' },
+      // Prod shape: the legacy portal stamped '1.0'; a later versioned signature
+      // (newest first) must not be mistaken for the original.
+      onboarding_signatures: [
+        { signed_at: '2026-09-08T00:00:00Z', doc_sha256: 'v4', doc_version: '4' },
+        { signed_at: '2024-01-10T00:00:00Z', doc_sha256: 'abc', doc_version: '1.0' },
+      ],
     });
     const c = await contractOfRecord(db, W, CO);
     expect(c).toMatchObject({
