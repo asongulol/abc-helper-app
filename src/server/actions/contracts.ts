@@ -50,6 +50,7 @@ import {
 } from '@/server/off-cycle';
 import { todayManila } from '@/types/schemas/contractors';
 import {
+  CONTRACT_CHANGE_REASON_LABEL,
   ContractVersionRefSchema,
   DraftContractVersionSchema,
   EngagementRefSchema,
@@ -129,6 +130,8 @@ export async function draftContractVersion(
       };
 
     const terms = {
+      change_reason: input.changeReason,
+      change_note: input.changeNote || null,
       rate_php: input.ratePhp,
       position: input.position?.trim() || null,
       employment_type: input.employmentType,
@@ -184,6 +187,8 @@ export async function draftContractVersion(
       detail: {
         version,
         version_id: versionId,
+        reason: input.changeReason,
+        note: input.changeNote || null,
         rate_php: input.ratePhp,
         effective_from: input.effectiveFrom,
         edited: !!inFlight,
@@ -324,12 +329,15 @@ export async function sendContractVersion(
     if (!sent?.length) return { ok: false, error: `Version ${v.version} was already sent.` };
 
     // 4. The notice. Best-effort like every other hire email; the admin is told.
+    //    The reason LABEL goes to the contractor, never the note (wizard
+    //    decision 2); a pre-wizard draft has none and reads as a change in terms.
     const tpl = DEFAULT_HIRE_EMAILS.contract_review;
     const vars = {
       name: escapeHtml(name),
       portal_url: portalUrl(),
       version: String(v.version),
       effective_from: effectiveFrom,
+      reason: CONTRACT_CHANGE_REASON_LABEL[v.changeReason ?? 'terms_change'],
     };
     const emailSent = to
       ? await trySend(
@@ -347,6 +355,7 @@ export async function sendContractVersion(
       detail: {
         version: v.version,
         version_id: v.id,
+        reason: v.changeReason,
         doc_sha256: sha,
         login: loginState,
         email_sent: emailSent,

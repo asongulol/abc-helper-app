@@ -8,8 +8,12 @@ import type { ContractVersion, ContractVersionStatus } from '@/db/queries/contra
 import type { Database } from '@/db/types';
 import { fmtDate } from '@/lib/format';
 import { signContractVersion } from '@/server/actions/contracts';
+import { CONTRACT_CHANGE_REASON_LABEL } from '@/types/schemas/contracts';
 import { DocButtons } from './PortalDocs';
 import { type SignInput, SignModal } from './SignModal';
+
+/** A version as the contractor may see it: the reason label, never the admin's note. */
+export type PortalContractVersion = Omit<ContractVersion, 'changeNote'>;
 
 /** The original (version 1) agreement, read from the legacy rows. */
 export type LegacyContract = {
@@ -32,7 +36,7 @@ export type UploadedAgreement = {
 };
 
 interface Props {
-  versions: ContractVersion[];
+  versions: PortalContractVersion[];
   legacy: LegacyContract | null;
   agreements: SignedAgreement[];
   uploads: UploadedAgreement[];
@@ -66,7 +70,7 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [signing, setSigning] = useState<ContractVersion | null>(null);
+  const [signing, setSigning] = useState<PortalContractVersion | null>(null);
   const [showVoid, setShowVoid] = useState(false);
 
   // Drafts are the admin's business until they are sent; withdrawn versions
@@ -76,7 +80,7 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
   const pending = shown.find((v) => v.status === 'sent') ?? null;
   const hasActive = shown.some((v) => v.status === 'active');
 
-  const sign = (v: ContractVersion, sig: SignInput) => {
+  const sign = (v: PortalContractVersion, sig: SignInput) => {
     startTransition(async () => {
       const res = await signContractVersion({ versionId: v.id, ...sig });
       if (res.ok) {
@@ -99,8 +103,12 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
           <h2 style={{ marginTop: 8 }}>A new agreement is ready to sign</h2>
           <p className="sub">
             Version {pending.version} of your Independent Contractor Agreement takes effect on{' '}
-            {fmtDate(pending.effectiveFrom)}. Read it through to the end, then sign. Your current
-            agreement stays in force until this one is countersigned.
+            {fmtDate(pending.effectiveFrom)}
+            {pending.changeReason
+              ? ` — ${CONTRACT_CHANGE_REASON_LABEL[pending.changeReason].toLowerCase()}`
+              : ''}
+            . Read it through to the end, then sign. Your current agreement stays in force until
+            this one is countersigned.
           </p>
           <button
             type="button"
@@ -134,7 +142,14 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
               <tbody>
                 {shown.map((v) => (
                   <tr key={v.id} style={v.status === 'active' ? { fontWeight: 600 } : undefined}>
-                    <td>v{v.version}</td>
+                    <td>
+                      v{v.version}
+                      {v.changeReason && (
+                        <span className="sub" style={{ fontSize: 11, marginLeft: 6 }}>
+                          {CONTRACT_CHANGE_REASON_LABEL[v.changeReason]}
+                        </span>
+                      )}
+                    </td>
                     <td>
                       <Badge tone={TONE[v.status]}>{LABEL[v.status]}</Badge>
                     </td>

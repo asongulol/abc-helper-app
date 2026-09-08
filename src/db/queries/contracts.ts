@@ -11,6 +11,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { DEFAULT_NOTICE_DAYS } from '@/lib/agreements/merge';
+import type { ContractChangeReason } from '@/types/schemas/contracts';
 
 type Db = SupabaseClient<Database>;
 type Row = Database['public']['Tables']['contract_versions']['Row'];
@@ -39,6 +40,10 @@ export type ContractVersion = ContractTerms & {
   companyId: string;
   version: number;
   status: ContractVersionStatus;
+  /** Why this version exists; null on rows drafted before the wizard. */
+  changeReason: ContractChangeReason | null;
+  /** Admin-only — never rendered on a contractor-visible view. */
+  changeNote: string | null;
   supersedesId: string | null;
   endedOn: string | null;
   renderedBody: string | null;
@@ -72,6 +77,8 @@ const mapVersion = (r: Row): ContractVersion => ({
   companyId: r.company_id,
   version: r.version,
   status: r.status,
+  changeReason: r.change_reason as ContractChangeReason | null,
+  changeNote: r.change_note,
   ratePhp: Number(r.rate_php),
   periodBasis: r.period_basis,
   position: r.position,

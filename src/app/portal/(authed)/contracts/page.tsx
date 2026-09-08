@@ -17,11 +17,15 @@ export default async function PortalContractsPage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [versions, { signatures, agreements }, documents] = await Promise.all([
+  const [allVersions, { signatures, agreements }, documents] = await Promise.all([
     fetchContractVersions(supabase, worker.workerId),
     fetchOwnOnboarding(supabase, worker.workerId),
     fetchOwnDocuments(supabase, worker.workerId),
   ]);
+  // The change note is the admin's; the contractor gets the reason label only
+  // (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 2) — stripped here so it never
+  // reaches the browser.
+  const versions = allVersions.map(({ changeNote: _note, ...v }) => v);
   // A signed copy uploaded as a file (Docs tab kind "IC Agreement") is an agreement too.
   const uploads = documents
     .filter((d) => d.kind === 'ic_agreement' && d.storagePath)

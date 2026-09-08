@@ -279,6 +279,9 @@ export type Database = {
         Row: {
           addendum_text: string | null
           addendum_type: string | null
+          change_detail: Json | null
+          change_note: string | null
+          change_reason: string | null
           company_id: string
           countersigned_at: string | null
           countersigned_by: string | null
@@ -289,19 +292,25 @@ export type Database = {
           effective_from: string
           employment_type: Database["public"]["Enums"]["contract_type"] | null
           ended_on: string | null
+          health_allowance: boolean | null
+          holiday_pay: boolean | null
           hours_per_week: number | null
           id: string
           notice_days: number
           period_basis: string
           position: string | null
+          pto_days_per_year: number | null
           rate_php: number
           rendered_body: string | null
+          resign_due_on: string | null
+          resign_kinds: Database["public"]["Enums"]["agreement_kind"][]
           schedule: string | null
           sent_at: string | null
           signed_at: string | null
           start_date: string
           status: Database["public"]["Enums"]["contract_version_status"]
           supersedes_id: string | null
+          thirteenth_month: boolean | null
           version: number
           void_reason: string | null
           voided_at: string | null
@@ -310,6 +319,9 @@ export type Database = {
         Insert: {
           addendum_text?: string | null
           addendum_type?: string | null
+          change_detail?: Json | null
+          change_note?: string | null
+          change_reason?: string | null
           company_id: string
           countersigned_at?: string | null
           countersigned_by?: string | null
@@ -320,19 +332,25 @@ export type Database = {
           effective_from: string
           employment_type?: Database["public"]["Enums"]["contract_type"] | null
           ended_on?: string | null
+          health_allowance?: boolean | null
+          holiday_pay?: boolean | null
           hours_per_week?: number | null
           id?: string
           notice_days?: number
           period_basis?: string
           position?: string | null
+          pto_days_per_year?: number | null
           rate_php: number
           rendered_body?: string | null
+          resign_due_on?: string | null
+          resign_kinds?: Database["public"]["Enums"]["agreement_kind"][]
           schedule?: string | null
           sent_at?: string | null
           signed_at?: string | null
           start_date: string
           status?: Database["public"]["Enums"]["contract_version_status"]
           supersedes_id?: string | null
+          thirteenth_month?: boolean | null
           version: number
           void_reason?: string | null
           voided_at?: string | null
@@ -341,6 +359,9 @@ export type Database = {
         Update: {
           addendum_text?: string | null
           addendum_type?: string | null
+          change_detail?: Json | null
+          change_note?: string | null
+          change_reason?: string | null
           company_id?: string
           countersigned_at?: string | null
           countersigned_by?: string | null
@@ -351,19 +372,25 @@ export type Database = {
           effective_from?: string
           employment_type?: Database["public"]["Enums"]["contract_type"] | null
           ended_on?: string | null
+          health_allowance?: boolean | null
+          holiday_pay?: boolean | null
           hours_per_week?: number | null
           id?: string
           notice_days?: number
           period_basis?: string
           position?: string | null
+          pto_days_per_year?: number | null
           rate_php?: number
           rendered_body?: string | null
+          resign_due_on?: string | null
+          resign_kinds?: Database["public"]["Enums"]["agreement_kind"][]
           schedule?: string | null
           sent_at?: string | null
           signed_at?: string | null
           start_date?: string
           status?: Database["public"]["Enums"]["contract_version_status"]
           supersedes_id?: string | null
+          thirteenth_month?: boolean | null
           version?: number
           void_reason?: string | null
           voided_at?: string | null
@@ -1159,6 +1186,11 @@ export type Database = {
           fx_rate: number | null
           gross_php: number
           health_allowance_php: number
+          held_at: string | null
+          hold_lifted_at: string | null
+          hold_lifted_by: string | null
+          hold_lifted_note: string | null
+          hold_reason: string | null
           id: string
           misc_items: Json
           net_php: number
@@ -1197,6 +1229,11 @@ export type Database = {
           fx_rate?: number | null
           gross_php?: number
           health_allowance_php?: number
+          held_at?: string | null
+          hold_lifted_at?: string | null
+          hold_lifted_by?: string | null
+          hold_lifted_note?: string | null
+          hold_reason?: string | null
           id?: string
           misc_items?: Json
           net_php?: number
@@ -1235,6 +1272,11 @@ export type Database = {
           fx_rate?: number | null
           gross_php?: number
           health_allowance_php?: number
+          held_at?: string | null
+          hold_lifted_at?: string | null
+          hold_lifted_by?: string | null
+          hold_lifted_note?: string | null
+          hold_reason?: string | null
           id?: string
           misc_items?: Json
           net_php?: number
@@ -1743,6 +1785,7 @@ export type Database = {
           health_allowance_date: string | null
           health_allowance_eligible: boolean
           hire_date: string | null
+          holiday_pay_eligible: boolean
           id: string
           last_name: string
           marital_status: string | null
@@ -1758,6 +1801,7 @@ export type Database = {
           photo_url: string | null
           postal_code: string | null
           profile_extras: Json
+          pto_days_per_year: number
           school: string | null
           shift_end: string | null
           shift_start: string | null
@@ -1788,6 +1832,7 @@ export type Database = {
           health_allowance_date?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
+          holiday_pay_eligible?: boolean
           id?: string
           last_name: string
           marital_status?: string | null
@@ -1803,6 +1848,7 @@ export type Database = {
           photo_url?: string | null
           postal_code?: string | null
           profile_extras?: Json
+          pto_days_per_year?: number
           school?: string | null
           shift_end?: string | null
           shift_start?: string | null
@@ -1833,6 +1879,7 @@ export type Database = {
           health_allowance_date?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
+          holiday_pay_eligible?: boolean
           id?: string
           last_name?: string
           marital_status?: string | null
@@ -1848,6 +1895,7 @@ export type Database = {
           photo_url?: string | null
           postal_code?: string | null
           profile_extras?: Json
+          pto_days_per_year?: number
           school?: string | null
           shift_end?: string | null
           shift_start?: string | null
