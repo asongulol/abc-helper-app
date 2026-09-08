@@ -104,6 +104,7 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
     versions: ContractVersion[];
   } | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [showVoid, setShowVoid] = useState(false);
   const [busy, startBusy] = useTransition();
   const [form, setForm] = useState<DraftForm | null>(null);
   const [backpay, setBackpay] = useState<BackpayQuote | null>(null);
@@ -495,42 +496,56 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                   </tr>
                 </thead>
                 <tbody>
-                  {versions.map((v) => (
-                    <tr key={v.id}>
-                      <td>v{v.version}</td>
-                      <td>
-                        <Badge
-                          tone={TONE[v.status]}
-                          {...(v.voidReason ? { title: v.voidReason } : {})}
-                        >
-                          {v.status}
-                        </Badge>
-                      </td>
-                      <td>{money(v.ratePhp)}</td>
-                      <td>
-                        {fmtDate(v.effectiveFrom)}
-                        {v.endedOn ? ` → ${fmtDate(v.endedOn)}` : ''}
-                      </td>
-                      <td>{v.sentAt ? fmtDate(v.sentAt) : '—'}</td>
-                      <td>{v.signedAt ? fmtDate(v.signedAt) : '—'}</td>
-                      <td>
-                        {v.countersignedAt
-                          ? `${fmtDate(v.countersignedAt)}${v.countersignedName ? ` · ${v.countersignedName}` : ''}`
-                          : '—'}
-                      </td>
-                      <td>
-                        {v.renderedBody && (
-                          <a href={`/contracts/${v.id}/print`} target="_blank" rel="noopener">
-                            Print
-                          </a>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {versions
+                    .filter((v) => showVoid || v.status !== 'void')
+                    .map((v) => (
+                      <tr key={v.id}>
+                        <td>v{v.version}</td>
+                        <td>
+                          <Badge
+                            tone={TONE[v.status]}
+                            {...(v.voidReason ? { title: v.voidReason } : {})}
+                          >
+                            {v.status}
+                          </Badge>
+                        </td>
+                        <td>{money(v.ratePhp)}</td>
+                        <td>
+                          {fmtDate(v.effectiveFrom)}
+                          {v.endedOn ? ` → ${fmtDate(v.endedOn)}` : ''}
+                        </td>
+                        <td>{v.sentAt ? fmtDate(v.sentAt) : '—'}</td>
+                        <td>{v.signedAt ? fmtDate(v.signedAt) : '—'}</td>
+                        <td>
+                          {v.countersignedAt
+                            ? `${fmtDate(v.countersignedAt)}${v.countersignedName ? ` · ${v.countersignedName}` : ''}`
+                            : '—'}
+                        </td>
+                        <td>
+                          {v.renderedBody && (
+                            <a href={`/contracts/${v.id}/print`} target="_blank" rel="noopener">
+                              Print
+                            </a>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
           )
+        )}
+        {versions.some((v) => v.status === 'void') && (
+          <button
+            type="button"
+            className="btn link sm"
+            style={{ padding: '8px 0 0' }}
+            onClick={() => setShowVoid((s) => !s)}
+          >
+            {showVoid
+              ? 'Hide withdrawn versions'
+              : `Show withdrawn versions (${versions.filter((v) => v.status === 'void').length})`}
+          </button>
         )}
       </section>
 

@@ -11,6 +11,7 @@ import {
   monthlyFromPeriod,
   renderAgreementParts,
 } from '@/lib/agreements/merge';
+import { logWorkerEvent } from '@/server/audit';
 import { getCurrentWorker } from '@/server/auth/worker';
 
 export const metadata: Metadata = {
@@ -52,6 +53,10 @@ export default async function PortalAgreementPrintPage({
         isLegacySignatureVersion(s.docVersion),
     ) ?? null;
   if (!sig) notFound();
+  await logWorkerEvent(worker, {
+    action: 'agreement.viewed',
+    detail: { kind: agreementKind, version: sig.docVersion },
+  });
 
   const workerName = profile
     ? [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(' ').trim()

@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { PortalContracts } from '@/components/portal/PortalContracts';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchContractVersions, isLegacySignatureVersion } from '@/db/queries/contracts';
-import { fetchOwnOnboarding } from '@/db/queries/portal';
+import { fetchOwnDocuments, fetchOwnOnboarding } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 
 export const metadata = { title: 'Contracts — Contractor Portal' };
@@ -17,10 +17,15 @@ export default async function PortalContractsPage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [versions, { signatures, agreements }] = await Promise.all([
+  const [versions, { signatures, agreements }, documents] = await Promise.all([
     fetchContractVersions(supabase, worker.workerId),
     fetchOwnOnboarding(supabase, worker.workerId),
+    fetchOwnDocuments(supabase, worker.workerId),
   ]);
+  // A signed copy uploaded as a file (Docs tab kind "IC Agreement") is an agreement too.
+  const uploads = documents
+    .filter((d) => d.kind === 'ic_agreement' && d.storagePath)
+    .map((d) => ({ id: d.id, title: d.title, signedOn: d.signedOn, createdAt: d.createdAt }));
   const v1 = signatures.find(
     (s) => s.agreement_kind === 'ic_agreement' && isLegacySignatureVersion(s.doc_version),
   );
@@ -49,5 +54,12 @@ export default async function PortalContractsPage() {
       };
     });
 
-  return <PortalContracts versions={versions} legacy={legacy} agreements={signedAgreements} />;
+  return (
+    <PortalContracts
+      versions={versions}
+      legacy={legacy}
+      agreements={signedAgreements}
+      uploads={uploads}
+    />
+  );
 }

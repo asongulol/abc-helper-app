@@ -83,8 +83,10 @@ Via `src/db/queries/portal.ts`, all RLS-scoped to the worker:
 ## Contracts {#contracts}
 
 `/portal/contracts` (`PortalContracts`) lists every IC agreement version — version 1 is the
-onboarding row, versions 2+ come from `contract_versions` under RLS — with the current one
-highlighted and a **Sign** card for a `sent` version. Signing reuses the onboarding
+onboarding row, versions 2+ come from `contract_versions` under RLS, plus any signed copy
+uploaded as a file (Docs tab kind "IC Agreement") — with the current one highlighted and a
+**Sign** card for a `sent` version. Withdrawn (`void`) versions stay hidden behind a
+**Show withdrawn versions** checkbox, on this tab and on the admin Contracts tab alike. Signing reuses the onboarding
 `SignModal` (`src/components/portal/SignModal.tsx`: scroll-to-end, typed name or drawn
 signature) and calls `signContractVersion()` in `src/server/actions/contracts.ts`. It lives on
 its own tab rather than the onboarding page because a rehire's onboarding is already complete
@@ -121,6 +123,12 @@ no exchange rate appears anywhere on it. Full lifecycle:
   correcting the email in both auth and `contractor_logins`.
 - `revokePortalLogin()` — sets `contractor_logins.status = 'revoked'` (login stops working
   immediately via the `getCurrentWorker` gate).
+- `getPortalAccess()` — feeds the **Portal & login** tab's access panel: login status, granted
+  date, last sign-in (`auth.users.last_sign_in_at`, else `contractor_logins.last_login_at`) and an
+  **Access history** read from `audit_log`. Contractor-side rows come from `logWorkerEvent()`
+  (service client; actor = login email, entity = worker id): `portal.signed_in` (login form →
+  `recordPortalSignIn()`), `document.viewed` / `document.downloaded` (`getDocumentSignedUrl()`),
+  `agreement.viewed` (both portal print routes).
 - `restorePortalLogin()` — sets it back to `active`. `sendContractVersion()` calls this (or
   `createPortalLogin()`) so a departed contractor can sign a rehire; `voidContractVersion()`
   hands a fully-paid departure's login straight back to the sunset rule.

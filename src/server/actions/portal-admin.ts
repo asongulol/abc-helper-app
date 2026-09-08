@@ -13,12 +13,16 @@
 
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
-import { seedAgreementPrefill, seedOnboardingProgress } from '@/db/queries/onboarding';
+import {
+  fetchContractorLogin,
+  seedAgreementPrefill,
+  seedOnboardingProgress,
+} from '@/db/queries/onboarding';
 import { decryptWorkerTools } from '@/db/queries/secrets';
 import { endEngagement } from '@/db/queries/workers';
 import { humanizeError } from '@/lib/errors';
 import { logEvent } from '@/server/audit';
-import { getCurrentAdmin } from '@/server/auth/admin';
+import { adminInScopeForWorker, getCurrentAdmin } from '@/server/auth/admin';
 import { portalUrl, trySend } from '@/server/email/send';
 import {
   DEFAULT_HIRE_EMAILS,
@@ -736,5 +740,101 @@ export async function deleteContractor(args: {
       ok: false,
       error: humanizeError(err, 'Delete failed.'),
     };
+  }
+}
+
+/* ---------- Portal & login tab: access status + history ---------- */
+
+/** Every audit action the access history shows, admin- and contractor-side. */
+const ACCESS_ACTIONS = [
+  'portal_login.created',
+  'portal_login.reset_password',
+  'portal_login.revoked',
+  'portal_login.restored',
+  'portal_login.resend_hire_emails',
+  'portal_login.send_tools_email',
+  'portal.signed_in',
+  'document.viewed',
+  'document.downloaded',
+  'agreement.viewed',
+];
+
+export interface PortalAccess {
+  /** Null when no portal login has ever been created. */
+  login: {
+    status: string;
+    email: string | null;
+    createdAt: string;
+    /** Supabase Auth's last_sign_in_at, else our own last_login_at stamp. */
+    lastSignInAt: string | null;
+  } | null;
+  history: {
+    id: string;
+    at: string;
+    actor: string | null;
+    action: string;
+    detail: Record<string, unknown> | null;
+  }[];
+}
+
+/**
+ * What the Portal & login tab shows about access: the login row, the auth
+ * user's last sign-in, and the access-related audit trail for this worker.
+ * Service client after the scope gate (audit rows logged without a company —
+ * portal_login.* — are owner-only under RLS, which would hide them from a
+ * scoped admin who can otherwise see the worker).
+ */
+export async function getPortalAccess(args: {
+  workerId: string;
+}): Promise<ActionResult<PortalAccess>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  try {
+    if (!(await adminInScopeForWorker(admin, args.workerId)))
+      return { ok: false, error: 'Not authorized for this contractor.' };
+    const svc = createServiceClient();
+    const login = await fetchContractorLogin(svc, args.workerId);
+    const authUser = login?.auth_user_id
+      ? (await svc.auth.admin.getUserById(login.auth_user_id)).data.user
+      : null;
+
+    // Admin-side rows key the worker by entity (id or email) or detail.worker_id;
+    // contractor-side rows always by entity = worker id.
+    const keys = [`entity.eq.${args.workerId}`, `detail->>worker_id.eq.${args.workerId}`];
+    if (login?.email) keys.push(`entity.eq."${login.email}"`);
+    const { data, error } = await svc
+      .from('audit_log')
+      .select('id, created_at, actor, action, detail')
+      .in('action', ACCESS_ACTIONS)
+      .or(keys.join(','))
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) return { ok: false, error: error.message };
+
+    return {
+      ok: true,
+      data: {
+        login: login
+          ? {
+              status: login.status,
+              email: login.email ?? authUser?.email ?? null,
+              createdAt: login.created_at,
+              lastSignInAt: authUser?.last_sign_in_at ?? login.last_login_at,
+            }
+          : null,
+        history: (data ?? []).map((r) => ({
+          id: r.id,
+          at: r.created_at,
+          actor: r.actor,
+          action: r.action,
+          detail:
+            r.detail && typeof r.detail === 'object' && !Array.isArray(r.detail)
+              ? (r.detail as Record<string, unknown>)
+              : null,
+        })),
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Lookup failed.') };
   }
 }
