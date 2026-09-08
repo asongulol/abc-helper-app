@@ -10,6 +10,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
+import { fetchPendingContractRates } from '@/db/queries/contracts';
 import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import {
   clearPeriodSessionsPaid,
@@ -53,7 +54,7 @@ import type { Centavos } from '@/lib/money';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
 import { expectedHours, payModelFor } from '@/lib/pay/expected-hours';
 import { resolveHolidaysForRange } from '@/lib/pay/holidays';
-import { resolveRate } from '@/lib/pay/rates';
+import { overlayPendingRates, resolveRate } from '@/lib/pay/rates';
 import {
   attributeTimeEntries,
   buildStatements,
@@ -85,6 +86,28 @@ export const realDeps = async (): Promise<PayrollDeps> => ({
   db: await createServerSupabase(),
   serviceDb: createServiceClient(),
 });
+
+/**
+ * The rates Calculate prices with: the `rates` rows plus every sent / signed
+ * contract version overlaid as if already countersigned (early pricing,
+ * docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 5). The ONE seam — every
+ * statement build and the salaried catch-up read through here, so a period
+ * priced early and the catch-up on it later agree.
+ */
+const fetchPricingRates = async (db: PayrollDeps['db'], companyId: string) => {
+  const [rates, pending] = await Promise.all([
+    fetchRates(db, companyId),
+    fetchPendingContractRates(db, companyId),
+  ]);
+  return overlayPendingRates(
+    rates,
+    pending.map((p) => ({
+      workerId: p.workerId,
+      amountPhp: p.ratePhp,
+      effectiveStart: p.effectiveFrom,
+    })),
+  );
+};
 
 export type CalculateDraftResult = {
   periodId: string;
@@ -152,7 +175,7 @@ export const calculateDraft = async (
       ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
       : fetchApprovedTime(db, input.companyId, input.periodStart, input.periodEnd),
     fetchRoster(db, input.companyId),
-    fetchRates(db, input.companyId),
+    fetchPricingRates(db, input.companyId),
     fetchLastPayoutMethods(db, input.companyId),
     fetchHolidaysConfig(db, input.companyId),
   ]);
@@ -312,7 +335,7 @@ export const recomputeWorkerDraft = async (
       ? Promise.resolve([] as Awaited<ReturnType<typeof fetchApprovedTime>>)
       : fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
-    fetchRates(db, args.companyId),
+    fetchPricingRates(db, args.companyId),
     fetchLastPayoutMethods(db, args.companyId),
     fetchHolidaysConfig(db, args.companyId),
   ]);
@@ -513,6 +536,45 @@ export const reconcileApprovedTime = async (
   return { workers: res.workers };
 };
 
+/**
+ * Rebuild a worker's DRAFT rows on every open regular period from `from` on.
+ * Send and void call it so early pricing (wizard decision 5) is true the moment
+ * the version changes state, not on the next full Recalculate — a row built
+ * before the send would otherwise sit at the old rate, and one built while the
+ * version was out would keep the withdrawn rate. Single-row rebuilds merge
+ * (RP-20), so hand edits survive. Returns the periods rebuilt.
+ */
+export const repriceOpenDrafts = async (
+  args: { companyId: string; workerId: string; from: string },
+  deps?: PayrollDeps,
+): Promise<string[]> => {
+  const resolved = deps ?? (await realDeps());
+  const { data, error } = await resolved.db
+    .from('payments')
+    .select('pay_period_id, pay_periods(period_start, period_end, state, kind)')
+    .eq('company_id', args.companyId)
+    .eq('worker_id', args.workerId)
+    .eq('status', 'draft');
+  if (error) throw new Error(`payments: ${error.message}`);
+  const done: string[] = [];
+  for (const row of data ?? []) {
+    const p = row.pay_periods;
+    if (p?.state !== 'open' || p.kind === 'off_cycle' || p.period_end < args.from) continue;
+    await recomputeWorkerDraft(
+      {
+        companyId: args.companyId,
+        periodId: row.pay_period_id,
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        workerId: args.workerId,
+      },
+      resolved,
+    );
+    done.push(`${p.period_start} – ${p.period_end}`);
+  }
+  return done;
+};
+
 export type CatchUpCandidate = {
   workerId: string;
   name: string;
@@ -550,7 +612,7 @@ export const salariedCatchUpCandidates = async (
   const [entries, roster, rates, holidaysConfig, saved] = await Promise.all([
     fetchApprovedTime(db, args.companyId, args.periodStart, args.periodEnd),
     fetchRoster(db, args.companyId),
-    fetchRates(db, args.companyId),
+    fetchPricingRates(db, args.companyId),
     fetchHolidaysConfig(db, args.companyId),
     fetchSavedPayments(db, args.periodId),
   ]);

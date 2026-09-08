@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { useToast } from '@/components/ui/Toast';
+import type { PendingContractRate } from '@/db/queries/contracts';
 import type { PeriodSummaryRow, SavedPayment } from '@/db/queries/payroll';
 import type { PayPeriod } from '@/lib/dates/periods';
 import { periodFor } from '@/lib/dates/periods';
@@ -91,6 +92,11 @@ interface PayrollShellProps {
   initialPayments: SavedPayment[];
   /** Deep-link from Process & Pay → open the unlock modal once the locked period loads. */
   autoUnlock?: boolean;
+  /**
+   * Contract versions out for signature — a row priced at one reads "at new
+   * rate, pending signature" (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 5).
+   */
+  pendingContracts?: PendingContractRate[];
 }
 
 // Convert SavedPayment to EditableRow
@@ -144,7 +150,12 @@ export const PayrollShell = ({
   initialBatchId,
   initialPayments,
   autoUnlock = false,
+  pendingContracts = [],
 }: PayrollShellProps) => {
+  const pendingByWorker = useMemo(
+    () => new Map(pendingContracts.map((p) => [p.workerId, p])),
+    [pendingContracts],
+  );
   const idPeriodStart = useId();
   const idFxRef = useId();
   const { notify } = useToast();
@@ -1291,6 +1302,11 @@ export const PayrollShell = ({
                           const a = Number(it.amount) || 0;
                           return s + (it.kind === 'deduction' ? -a : a);
                         }, 0);
+                        const pending = pendingByWorker.get(r.workerId);
+                        const pricedEarly =
+                          pending != null &&
+                          pending.ratePhp === r.ratePhp &&
+                          pending.effectiveFrom <= periodEnd;
                         return (
                           <tr
                             key={r.workerId}
@@ -1343,6 +1359,11 @@ export const PayrollShell = ({
                                       {' '}
                                       /session
                                     </span>
+                                  )}
+                                  {pricedEarly && (
+                                    <div className="muted" style={{ fontSize: 11 }}>
+                                      at new rate · v{pending.version} pending signature
+                                    </div>
                                   )}
                                 </>
                               )}

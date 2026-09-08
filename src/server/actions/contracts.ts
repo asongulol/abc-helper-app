@@ -24,13 +24,16 @@ import {
   fetchContractVersion,
   fetchContractVersions,
 } from '@/db/queries/contracts';
+import { fetchRates } from '@/db/queries/payroll';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
 import { executeRateUpsert } from '@/db/queries/rates';
 import { hasPayOutstanding } from '@/db/queries/workers';
 import { mergeAgreement, monthlyFromPeriod, safeSigImg } from '@/lib/agreements/merge';
 import { humanizeError } from '@/lib/errors';
+import { centavosToPhp } from '@/lib/format';
+import { centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
 import { fullName } from '@/lib/names';
-import { dayBefore } from '@/lib/pay/rates';
+import { dayBefore, resolveRate } from '@/lib/pay/rates';
 import {
   type ActionResult,
   createPortalLogin,
@@ -48,9 +51,11 @@ import {
   type BackpayQuote,
   quoteContractBackpay,
 } from '@/server/off-cycle';
+import { repriceOpenDrafts } from '@/server/payroll';
 import { todayManila } from '@/types/schemas/contractors';
 import {
   CONTRACT_CHANGE_REASON_LABEL,
+  type ContractChangeDetail,
   ContractVersionRefSchema,
   DraftContractVersionSchema,
   EngagementRefSchema,
@@ -74,6 +79,73 @@ const authorize = async (
 };
 
 const isoDay = (ts: string | null | undefined): string => (ts ? ts.slice(0, 10) : '');
+
+type Svc = ReturnType<typeof createServiceClient>;
+
+/**
+ * Early pricing's flip side (wizard decision 5): send and void rebuild the
+ * worker's open draft rows so Calculate shows the version's rate — or stops
+ * showing it — right away. Best-effort: a failure here must not undo a send
+ * or a void that already happened; the next full Recalculate prices the same
+ * way, and the audit row says it was skipped.
+ */
+const reprice = async (svc: Svc, v: ContractVersion): Promise<string[] | string> => {
+  if (!v.effectiveFrom) return [];
+  try {
+    return await repriceOpenDrafts(
+      { companyId: v.companyId, workerId: v.workerId, from: v.effectiveFrom },
+      { db: svc, serviceDb: svc },
+    );
+  } catch (err) {
+    return `skipped: ${err instanceof Error ? err.message : String(err)}`;
+  }
+};
+
+/**
+ * Rows already priced at a withdrawn version's rate (decision 5). Paid ones
+ * become the overpayment note — what was paid over the rate still in force —
+ * and locked ones are named so the admin unlocks and recalculates. Whole
+ * period, like the engine prices it (RP-35); no clawback. ponytail: a per-unit
+ * row with a mid-period effective date overstates — the note is a flag for a
+ * human, not a ledger entry.
+ */
+const pricedAtVersion = async (
+  svc: Svc,
+  v: ContractVersion,
+): Promise<{ overpaid: { periods: string[]; amountPhp: number } | null; locked: string[] }> => {
+  if (v.ratePhp == null || !v.effectiveFrom) return { overpaid: null, locked: [] };
+  const [rates, rows] = await Promise.all([
+    fetchRates(svc, v.companyId),
+    svc
+      .from('payments')
+      .select('gross_php, rate_php, paid_at, pay_periods(period_start, period_end, state, kind)')
+      .eq('company_id', v.companyId)
+      .eq('worker_id', v.workerId),
+  ]);
+  if (rows.error) throw new Error(`payments: ${rows.error.message}`);
+  const newRate = centavos(majorToMinor(v.ratePhp));
+  const periods: string[] = [];
+  const locked: string[] = [];
+  let total = 0;
+  for (const r of rows.data ?? []) {
+    const p = r.pay_periods;
+    if (!p || p.kind === 'off_cycle' || p.period_end < v.effectiveFrom) continue;
+    if (r.rate_php == null || Number(r.rate_php) !== v.ratePhp) continue;
+    const label = `${p.period_start} – ${p.period_end}`;
+    if (!r.paid_at) {
+      if (p.state === 'locked') locked.push(label);
+      continue;
+    }
+    const old = resolveRate(rates, v.workerId, p.period_start, p.period_end);
+    if (old == null || old === newRate) continue;
+    total += mulRatioMinor(centavos(majorToMinor(Number(r.gross_php))), (newRate - old) / newRate);
+    periods.push(label);
+  }
+  return {
+    overpaid: periods.length ? { periods, amountPhp: centavosToPhp(total) } : null,
+    locked,
+  };
+};
 
 /** The contract of record plus every versioned row, for the profile's Contracts tab. */
 export async function listContractVersions(
@@ -132,6 +204,7 @@ export async function draftContractVersion(
     const terms = {
       change_reason: input.changeReason,
       change_note: input.changeNote || null,
+      change_detail: input.changeDetail,
       rate_php: input.ratePhp,
       position: input.position?.trim() || null,
       employment_type: input.employmentType,
@@ -190,6 +263,7 @@ export async function draftContractVersion(
         reason: input.changeReason,
         note: input.changeNote || null,
         rate_php: input.ratePhp,
+        increase: input.changeDetail?.increase ?? null,
         effective_from: input.effectiveFrom,
         edited: !!inFlight,
         by: auth.admin.email,
@@ -328,6 +402,10 @@ export async function sendContractVersion(
     if (sendErr) throw new Error(`contract_versions send: ${sendErr.message}`);
     if (!sent?.length) return { ok: false, error: `Version ${v.version} was already sent.` };
 
+    // Early pricing (wizard decision 5): from now Calculate prices this
+    // worker at the version's rate from its effective date, either direction.
+    const repriced = await reprice(svc, v);
+
     // 4. The notice. Best-effort like every other hire email; the admin is told.
     //    The reason LABEL goes to the contractor, never the note (wizard
     //    decision 2); a pre-wizard draft has none and reads as a change in terms.
@@ -359,6 +437,7 @@ export async function sendContractVersion(
         doc_sha256: sha,
         login: loginState,
         email_sent: emailSent,
+        repriced,
         by: auth.admin.email,
       },
     });
@@ -373,11 +452,19 @@ export async function sendContractVersion(
  * Void a draft / sent / signed version (decision 9: admin-only, no contractor
  * decline). A signature on it becomes 'superseded' — evidence of a document
  * nobody is bound by. The versions of record (active/superseded/ended) are
- * history and cannot be voided.
+ * history and cannot be voided. A sent version may already have priced pay
+ * (wizard decision 5): paid periods leave an overpayment note on the version,
+ * open drafts are rebuilt at the rate still in force, locked ones are named.
  */
-export async function voidContractVersion(
-  args: unknown,
-): Promise<ActionResult<{ loginRevoked: boolean }>> {
+export async function voidContractVersion(args: unknown): Promise<
+  ActionResult<{
+    loginRevoked: boolean;
+    /** Signed: positive = overpaid. Null when nothing paid was priced at this version. */
+    overpaymentPhp: number | null;
+    /** Periods locked at this version's rate — unlock and recalculate. */
+    lockedAtNewRate: string[];
+  }>
+> {
   const parsed = VoidContractVersionSchema.safeParse(args);
   if (!parsed.success)
     return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
@@ -416,6 +503,25 @@ export async function voidContractVersion(
       if (sigErr) throw new Error(`onboarding_signatures: ${sigErr.message}`);
     }
 
+    // What the version priced while it was out. Read after the status flip so
+    // the rebuild no longer sees it as pending.
+    let overpayment: ContractChangeDetail['overpayment'] | null = null;
+    let lockedAtNewRate: string[] = [];
+    let repriced: string[] | string = [];
+    if (v.status !== 'draft') {
+      const priced = await pricedAtVersion(svc, v);
+      lockedAtNewRate = priced.locked;
+      if (priced.overpaid && v.ratePhp != null) {
+        overpayment = { ...priced.overpaid, ratePhp: v.ratePhp, notedAt: new Date().toISOString() };
+        const { error: noteErr } = await svc
+          .from('contract_versions')
+          .update({ change_detail: { ...(v.changeDetail ?? {}), overpayment } })
+          .eq('id', v.id);
+        if (noteErr) throw new Error(`contract_versions note: ${noteErr.message}`);
+      }
+      repriced = await reprice(svc, v);
+    }
+
     // Send restored a departed contractor's login so they could sign; void hands
     // it straight back to the sunset rule instead of waiting for tonight's tick.
     // ponytail: same predicate as sunsetPortalLogins (ended + fully paid) rather
@@ -450,11 +556,17 @@ export async function voidContractVersion(
         was: v.status,
         reason: parsed.data.reason?.trim() || null,
         login_revoked: loginRevoked,
+        overpayment,
+        locked_at_new_rate: lockedAtNewRate,
+        repriced,
         by: auth.admin.email,
       },
     });
     revalidatePath('/contractors');
-    return { ok: true, data: { loginRevoked } };
+    return {
+      ok: true,
+      data: { loginRevoked, overpaymentPhp: overpayment?.amountPhp ?? null, lockedAtNewRate },
+    };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Could not void the contract.') };
   }

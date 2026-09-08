@@ -62,6 +62,14 @@ vi.mock('@/db/queries/portal', () => ({
   }),
 }));
 
+// Early pricing's rebuild of open drafts (wizard decision 5) is the payroll
+// service's; here only the hand-off is checked.
+const payroll = vi.hoisted(() => ({ repriceOpenDrafts: vi.fn(async () => [] as string[]) }));
+vi.mock('@/server/payroll', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/server/payroll')>()),
+  repriceOpenDrafts: payroll.repriceOpenDrafts,
+}));
+
 const {
   countersignContractVersion,
   draftContractVersion,
@@ -182,6 +190,18 @@ describe('sendContractVersion', () => {
     expect(context).toBe('contract_review');
   });
 
+  it('re-prices open drafts from the effective date the moment it is sent (wizard decision 5)', async () => {
+    boot(seed());
+
+    const res = await sendContractVersion({ versionId: V2 });
+
+    expect(res.ok).toBe(true);
+    expect(payroll.repriceOpenDrafts).toHaveBeenCalledWith(
+      { companyId: CO, workerId: W, from: '2026-09-16' },
+      expect.anything(),
+    );
+  });
+
   it('creates a login from the profile email when there is none', async () => {
     boot(seed({ login: null }));
 
@@ -222,7 +242,7 @@ describe('voidContractVersion', () => {
 
     const res = await voidContractVersion({ versionId: V2, reason: 'wrong rate' });
 
-    expect(res).toEqual({ ok: true, data: { loginRevoked: true } });
+    expect(res).toMatchObject({ ok: true, data: { loginRevoked: true } });
     expect(portal.revokePortalLogin).toHaveBeenCalledWith({ workerId: W });
     const row = first(tables);
     expect(row).toMatchObject({ status: 'void', void_reason: 'wrong rate' });
@@ -235,7 +255,7 @@ describe('voidContractVersion', () => {
 
     const res = await voidContractVersion({ versionId: V2 });
 
-    expect(res).toEqual({ ok: true, data: { loginRevoked: false } });
+    expect(res).toMatchObject({ ok: true, data: { loginRevoked: false } });
     expect(portal.revokePortalLogin).not.toHaveBeenCalled();
   });
 
@@ -244,7 +264,7 @@ describe('voidContractVersion', () => {
 
     const res = await voidContractVersion({ versionId: V2 });
 
-    expect(res).toEqual({ ok: true, data: { loginRevoked: false } });
+    expect(res).toMatchObject({ ok: true, data: { loginRevoked: false } });
     expect(portal.revokePortalLogin).not.toHaveBeenCalled();
   });
 
@@ -265,6 +285,73 @@ describe('voidContractVersion', () => {
       (tables.onboarding_signatures ?? []).map((s) => [s.doc_version, s.status]),
     );
     expect(byVersion).toEqual({ '1': 'signed', '2': 'superseded' });
+  });
+
+  it('notes what a withdrawn version already priced: paid = overpayment note, locked = named, open = rebuilt', async () => {
+    const tables = boot(
+      seed({ versions: [sent({ rate_php: 25000, effective_from: '2026-09-16' })] }),
+    );
+    tables.rates = [
+      {
+        worker_id: W,
+        company_id: CO,
+        amount_php: 22000,
+        effective_start: '2025-01-01',
+        effective_end: null,
+      },
+    ];
+    const period = (id: string, start: string, end: string, state: string) => ({
+      id,
+      company_id: CO,
+      period_start: start,
+      period_end: end,
+      state,
+      kind: 'regular',
+    });
+    tables.pay_periods = [
+      period('pp-before', '2026-09-01', '2026-09-15', 'paid'),
+      period('pp-paid', '2026-09-16', '2026-09-30', 'paid'),
+      period('pp-locked', '2026-10-01', '2026-10-15', 'locked'),
+    ];
+    const pay = (periodId: string, rate: number, paidAt: string | null) => ({
+      company_id: CO,
+      worker_id: W,
+      pay_period_id: periodId,
+      gross_php: rate,
+      rate_php: rate,
+      paid_at: paidAt,
+      status: paidAt ? 'paid' : 'locked',
+    });
+    tables.payments = [
+      pay('pp-before', 22000, '2026-09-30T00:00:00Z'), // old rate — not this version's doing
+      pay('pp-paid', 25000, '2026-10-15T00:00:00Z'),
+      pay('pp-locked', 25000, null),
+    ];
+
+    const res = await voidContractVersion({ versionId: V2 });
+
+    // 25,000 paid where 22,000 was in force: 25,000 × (25,000 − 22,000) / 25,000.
+    expect(res).toMatchObject({
+      ok: true,
+      data: { overpaymentPhp: 3000, lockedAtNewRate: ['2026-10-01 – 2026-10-15'] },
+    });
+    expect(first(tables).change_detail).toMatchObject({
+      overpayment: { amountPhp: 3000, ratePhp: 25000, periods: ['2026-09-16 – 2026-09-30'] },
+    });
+    expect(payroll.repriceOpenDrafts).toHaveBeenCalledWith(
+      { companyId: CO, workerId: W, from: '2026-09-16' },
+      expect.anything(),
+    );
+  });
+
+  it('a draft never priced anything — no note, no rebuild', async () => {
+    const tables = boot(seed());
+
+    const res = await voidContractVersion({ versionId: V2 });
+
+    expect(res).toMatchObject({ ok: true, data: { overpaymentPhp: null, lockedAtNewRate: [] } });
+    expect(first(tables).change_detail).toBeUndefined();
+    expect(payroll.repriceOpenDrafts).not.toHaveBeenCalled();
   });
 
   it('cannot void the contract of record', async () => {
@@ -339,6 +426,30 @@ describe('draftContractVersion', () => {
       position: 'Lead VA',
       change_reason: 'annual_review',
       change_note: null,
+    });
+  });
+
+  it('keeps how the Increase step arrived at the rate, and only when it adds up', async () => {
+    const tables = boot(seed());
+    const increase = { method: 'percent', value: 5, from: 22000, to: 23100, base: 'record' };
+
+    const bad = await draftContractVersion({
+      ...terms,
+      ratePhp: 30000,
+      changeDetail: { increase },
+    });
+    expect(bad).toMatchObject({ ok: false, error: /does not add up/ });
+
+    const res = await draftContractVersion({
+      ...terms,
+      ratePhp: 23100,
+      changeDetail: { increase },
+    });
+
+    expect(res.ok).toBe(true);
+    expect(tables.contract_versions?.[0]).toMatchObject({
+      rate_php: 23100,
+      change_detail: { increase },
     });
   });
 

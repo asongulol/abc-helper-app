@@ -15,6 +15,7 @@ import type {
   ContractVersionStatus,
 } from '@/db/queries/contracts';
 import type { RosterWorker } from '@/db/queries/workers';
+import { describeIncrease } from '@/lib/contracts/increase';
 import { fmtDate, money } from '@/lib/format';
 import {
   addContractBackpay,
@@ -132,12 +133,19 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
         notify(res.error, { type: 'error' });
         return;
       }
-      notify(
-        res.data.loginRevoked
+      const { loginRevoked, overpaymentPhp, lockedAtNewRate } = res.data;
+      const parts = [
+        loginRevoked
           ? `Version ${v.version} voided — portal login revoked again.`
           : `Version ${v.version} voided.`,
-        { type: 'success' },
-      );
+      ];
+      if (overpaymentPhp != null)
+        parts.push(
+          `${overpaymentPhp > 0 ? 'Overpaid' : 'Underpaid'} ${money(Math.abs(overpaymentPhp))} on pay already made at its rate — noted below, nothing is clawed back.`,
+        );
+      if (lockedAtNewRate.length)
+        parts.push(`Locked at its rate: ${lockedAtNewRate.join(', ')} — unlock and recalculate.`);
+      notify(parts.join(' '), { type: parts.length > 1 ? 'warn' : 'success' });
       await load();
     });
   };
@@ -384,6 +392,24 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
           </div>
         </div>
 
+        {/* Wizard decision 5: a version withdrawn after it priced paid periods
+            leaves the amount here — a note for a human, never a clawback. */}
+        {versions
+          .flatMap((v) =>
+            v.changeDetail?.overpayment ? [[v, v.changeDetail.overpayment] as const] : [],
+          )
+          .map(([v, o]) => (
+            <p
+              key={v.id}
+              className="sub"
+              style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--bad)' }}
+            >
+              ⚠ {o.amountPhp > 0 ? 'Overpaid' : 'Underpaid'} {money(Math.abs(o.amountPhp))} —
+              version {v.version} was withdrawn on {fmtDate(o.notedAt)} after {o.periods.join(', ')}{' '}
+              had been paid at {money(o.ratePhp)}. No automatic clawback; settle it by hand.
+            </p>
+          ))}
+
         {loaded && versions.length === 0 ? (
           <p className="sub" style={{ margin: 0 }}>
             No versions yet — the original agreement is version 1.
@@ -418,6 +444,9 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                               {...(v.changeNote ? { title: v.changeNote } : {})}
                             >
                               {CONTRACT_CHANGE_REASON_LABEL[v.changeReason]}
+                              {v.changeDetail?.increase &&
+                                describeIncrease(v.changeDetail.increase) &&
+                                ` · ${describeIncrease(v.changeDetail.increase)}`}
                             </span>
                           )}
                         </td>

@@ -271,6 +271,68 @@ describe('calculateDraft', () => {
     expect(tables.payments[0]?.bonus_php).toBe(0);
   });
 
+  it('early pricing (wizard decision 5): a SENT version prices the period at its rate from its effective date', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana')];
+    seed.worker_companies = [link('w-ana', 'PH')];
+    seed.rates = [rate('w-ana', 100)];
+    seed.time_entries = [entry(1, 'w-ana', '2026-07-06', 10)];
+    seed.contract_versions = [
+      {
+        id: 'cv-2',
+        worker_id: 'w-ana',
+        company_id: COMPANY,
+        version: 2,
+        status: 'sent',
+        rate_php: 150,
+        effective_from: START,
+      },
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await calculateDraft(draftInput(), deps);
+
+    // 10h × ₱150, not ₱100 — and the rates table itself is untouched (countersign writes it).
+    expect(tables.payments[0]).toMatchObject({ worker_id: 'w-ana', rate_php: 150, net_php: 1500 });
+    expect(tables.rates[0]).toMatchObject({ amount_php: 100, effective_end: null });
+  });
+
+  it('early pricing: a draft version, or one effective after the period, changes nothing', async () => {
+    const seed = seedBase();
+    seed.workers = [worker('w-ana'), worker('w-ben')];
+    seed.worker_companies = [link('w-ana', 'PH'), link('w-ben', 'PH')];
+    seed.rates = [rate('w-ana', 100), rate('w-ben', 100)];
+    seed.time_entries = [entry(1, 'w-ana', '2026-07-06', 10), entry(2, 'w-ben', '2026-07-06', 10)];
+    seed.contract_versions = [
+      {
+        id: 'cv-a',
+        worker_id: 'w-ana',
+        company_id: COMPANY,
+        version: 2,
+        status: 'draft',
+        rate_php: 150,
+        effective_from: START,
+      },
+      {
+        id: 'cv-b',
+        worker_id: 'w-ben',
+        company_id: COMPANY,
+        version: 2,
+        status: 'sent',
+        rate_php: 150,
+        effective_from: '2026-07-16',
+      },
+    ];
+    const { deps, tables } = mkDeps(seed);
+
+    await calculateDraft(draftInput(), deps);
+
+    expect(tables.payments.map((p) => [p.worker_id, p.net_php])).toEqual([
+      ['w-ana', 1000],
+      ['w-ben', 1000],
+    ]);
+  });
+
   it('RP-29: warns about the other period this year that already accrued the 13th', async () => {
     const seed = seedBase();
     seed.workers = [worker('w-cara', { thirteenth_month_eligible: true })];
