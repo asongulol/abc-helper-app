@@ -135,6 +135,15 @@ export const PortalDocs = ({
     });
   };
 
+  const download = (id: string) => {
+    startTransition(async () => {
+      const res = await getDocumentSignedUrl({ documentId: id, download: true });
+      // Attachment disposition: the browser saves the file and stays on this page.
+      if (res.ok) window.location.assign(res.data.url);
+      else notify(res.error, { type: 'error' });
+    });
+  };
+
   const upload = () => {
     if (!file) {
       notify('Choose a file first.', { type: 'error' });
@@ -251,15 +260,26 @@ export const PortalDocs = ({
                 )}
               </div>
               {d.storagePath && (
-                <button
-                  type="button"
-                  className="btn link"
-                  style={{ padding: '4px 8px' }}
-                  disabled={busy}
-                  onClick={() => view(d.id)}
-                >
-                  View
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn link"
+                    style={{ padding: '4px 8px' }}
+                    disabled={busy}
+                    onClick={() => view(d.id)}
+                  >
+                    View
+                  </button>
+                  <button
+                    type="button"
+                    className="btn link"
+                    style={{ padding: '4px 8px' }}
+                    disabled={busy}
+                    onClick={() => download(d.id)}
+                  >
+                    Download
+                  </button>
+                </>
               )}
             </div>
           </div>

@@ -1021,13 +1021,15 @@ export async function dismissOwnNotification(args: { id: string }): Promise<Acti
  * service client — the contractor-docs storage policies live out-of-band). */
 export async function getDocumentSignedUrl(args: {
   documentId: string;
+  /** Serve as an attachment (named after the upload) so the browser saves a copy. */
+  download?: boolean;
 }): Promise<ActionResult<{ url: string }>> {
   const worker = await requireWorker();
   try {
     const svc = createServiceClient();
     const { data: doc, error } = await svc
       .from('documents')
-      .select('id, worker_id, kind, storage_path')
+      .select('id, worker_id, kind, storage_path, title')
       .eq('id', args.documentId)
       .maybeSingle();
     if (error) return { ok: false, error: error.message };
@@ -1035,7 +1037,7 @@ export async function getDocumentSignedUrl(args: {
       return { ok: false, error: 'Document not found.' };
     const { data: signed, error: sErr } = await svc.storage
       .from('contractor-docs')
-      .createSignedUrl(doc.storage_path, 120);
+      .createSignedUrl(doc.storage_path, 120, args.download ? { download: doc.title ?? true } : {});
     if (sErr || !signed?.signedUrl)
       return { ok: false, error: sErr?.message ?? 'Could not sign URL.' };
     return { ok: true, data: { url: signed.signedUrl } };
