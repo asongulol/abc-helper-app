@@ -10,7 +10,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
-import { fetchPendingContractRates } from '@/db/queries/contracts';
+import { fetchOutstandingPackages, fetchPendingContractRates } from '@/db/queries/contracts';
 import { fetchHolidaysConfig } from '@/db/queries/holidays';
 import {
   clearPeriodSessionsPaid,
@@ -49,6 +49,7 @@ import {
   upsertDraftPayments,
 } from '@/db/queries/payroll';
 import type { Database } from '@/db/types';
+import { holdFor } from '@/lib/contracts/package';
 import { periodFor } from '@/lib/dates/periods';
 import type { Centavos } from '@/lib/money';
 import { salariedCatchUpAmount } from '@/lib/pay/catch-up';
@@ -107,6 +108,64 @@ const fetchPricingRates = async (db: PayrollDeps['db'], companyId: string) => {
       effectiveStart: p.effectiveFrom,
     })),
   );
+};
+
+/**
+ * Make the worker's DRAFT rows agree with their re-sign package
+ * (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 9): a row in the held period
+ * or later is stamped `hold_reason` while anything in the package is unsigned,
+ * and lifts on its own (`hold_lifted_by` null) when the last item is signed or
+ * the version is withdrawn. A hold an admin lifted by hand stays lifted; a
+ * system lift is re-armed if a later package holds the same open row. The
+ * hold columns are operational, so a locked period's row can still be stamped
+ * or lifted (migration 18) — hours were approved all along, nothing recomputes.
+ * Runs after every draft build and on every package state change.
+ */
+export const syncPackageHolds = async (
+  args: { companyId?: string | undefined; workerIds?: readonly string[] | undefined },
+  deps?: PayrollDeps,
+): Promise<{ held: number; lifted: number }> => {
+  const { db } = deps ?? (await realDeps());
+  const packages = await fetchOutstandingPackages(db, args);
+  let q = db
+    .from('payments')
+    .select(
+      'id, worker_id, hold_reason, hold_lifted_at, hold_lifted_by, pay_periods(period_start, kind)',
+    )
+    .eq('status', 'draft');
+  if (args.companyId) q = q.eq('company_id', args.companyId);
+  if (args.workerIds) q = q.in('worker_id', [...args.workerIds]);
+  const { data, error } = await q;
+  if (error) throw new Error(`payments: ${error.message}`);
+
+  const now = new Date().toISOString();
+  let held = 0;
+  let lifted = 0;
+  for (const row of data ?? []) {
+    const p = row.pay_periods;
+    if (!p) continue;
+    const pkg = packages.get(row.worker_id) ?? null;
+    const reason = holdFor({ start: p.period_start, kind: p.kind }, pkg);
+    const isHeld = row.hold_reason != null && row.hold_lifted_at == null;
+    let patch: Database['public']['Tables']['payments']['Update'] | null = null;
+    if (reason && (row.hold_reason == null || (row.hold_lifted_at && !row.hold_lifted_by))) {
+      patch = { hold_reason: reason, held_at: now, hold_lifted_at: null, hold_lifted_note: null };
+      held += 1;
+    } else if (reason && isHeld && row.hold_reason !== reason) {
+      patch = { hold_reason: reason }; // the outstanding list shrank
+    } else if (!reason && isHeld) {
+      patch = {
+        hold_lifted_at: now,
+        hold_lifted_by: null,
+        hold_lifted_note: pkg ? 'Package signed' : 'No package outstanding',
+      };
+      lifted += 1;
+    }
+    if (!patch) continue;
+    const { error: upErr } = await db.from('payments').update(patch).eq('id', row.id);
+    if (upErr) throw new Error(`payments hold: ${upErr.message}`);
+  }
+  return { held, lifted };
 };
 
 export type CalculateDraftResult = {
@@ -258,6 +317,7 @@ export const calculateDraft = async (
   );
 
   await upsertDraftPayments(db, input.companyId, period.id, drafts);
+  await syncPackageHolds({ companyId: input.companyId }, { db, serviceDb });
 
   // RP-29: the 13th-month accrual is stateless, so ticking it on a second period
   // in the same year pays it twice. Only this layer can see the other periods.
@@ -392,6 +452,10 @@ export const recomputeWorkerDraft = async (
   const existing = await fetchPaymentForWorker(db, args.periodId, args.workerId);
   const drafts = engineDrafts.map((d) => mergeManualColumns(d, existing));
   await upsertDraftPayments(db, args.companyId, args.periodId, drafts);
+  await syncPackageHolds(
+    { companyId: args.companyId, workerIds: [args.workerId] },
+    { db, serviceDb },
+  );
   return { netPhp: drafts[0]?.net_php ?? null };
 };
 

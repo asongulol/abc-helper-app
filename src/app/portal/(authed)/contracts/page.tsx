@@ -1,8 +1,16 @@
 import { redirect } from 'next/navigation';
-import { PortalContracts } from '@/components/portal/PortalContracts';
+import { PortalContracts, type PortalPackage } from '@/components/portal/PortalContracts';
 import { createServerSupabase } from '@/db/clients/server';
 import { fetchContractVersions, isLegacySignatureVersion } from '@/db/queries/contracts';
-import { fetchOwnDocuments, fetchOwnOnboarding } from '@/db/queries/portal';
+import { fetchAgreements } from '@/db/queries/onboarding';
+import {
+  fetchAgreementTemplate,
+  fetchOwnDocuments,
+  fetchOwnOnboarding,
+  fetchOwnProfile,
+} from '@/db/queries/portal';
+import { mergeAgreement, monthlyFromPeriod } from '@/lib/agreements/merge';
+import { PACKAGE_TITLE, packageStatusOf } from '@/lib/contracts/package';
 import { getCurrentWorker } from '@/server/auth/worker';
 
 export const metadata = { title: 'Contracts — Contractor Portal' };
@@ -17,10 +25,12 @@ export default async function PortalContractsPage() {
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [allVersions, { signatures, agreements }, documents] = await Promise.all([
+  const [allVersions, { signatures, agreements }, documents, prefill, profile] = await Promise.all([
     fetchContractVersions(supabase, worker.workerId),
     fetchOwnOnboarding(supabase, worker.workerId),
     fetchOwnDocuments(supabase, worker.workerId),
+    fetchAgreements(supabase, worker.workerId),
+    fetchOwnProfile(supabase, worker.workerId),
   ]);
   // The change note is the admin's; the contractor gets the reason label only
   // (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 2) — stripped here so it never
@@ -58,12 +68,60 @@ export default async function PortalContractsPage() {
       };
     });
 
+  // The re-sign package (wizard decision 8): the newest version that asked for
+  // one, judged on the signatures still `signed`. The contractor signs the
+  // filled agreement, merged the way the onboarding page merges it.
+  const status = packageStatusOf(allVersions, new Set(signatures.map((s) => s.agreement_kind)));
+  let pkg: PortalPackage | null = null;
+  if (status && status.outstanding.length > 0) {
+    const workerName = profile
+      ? [profile.first_name, profile.middle_name, profile.last_name]
+          .filter(Boolean)
+          .join(' ')
+          .trim()
+      : `${worker.firstName} ${worker.lastName}`.trim();
+    const today = new Date().toISOString().slice(0, 10);
+    const templates = await Promise.all(
+      status.outstanding.map((kind) => fetchAgreementTemplate(supabase, kind)),
+    );
+    pkg = {
+      dueOn: status.dueOn,
+      contractSigned: status.contractSigned,
+      items: status.kinds.map((kind) => {
+        const t = templates.find((x) => x?.kind === kind);
+        const row = prefill.find((a) => a.agreementKind === kind) ?? null;
+        return {
+          kind,
+          title: PACKAGE_TITLE[kind],
+          signed: !status.outstanding.includes(kind),
+          body: t
+            ? mergeAgreement(t.body ?? '', {
+                contractor_name: workerName,
+                rate: row?.fRate ?? undefined,
+                monthly_rate: monthlyFromPeriod(row?.fRate),
+                company_name: row?.fCompanyName ?? undefined,
+                start_date: row?.fStartDate ?? profile?.hire_date ?? undefined,
+                position: row?.fPosition ?? undefined,
+                countersigner_name: row?.countersignerName ?? undefined,
+                contractor_address: profile?.ph_address ?? undefined,
+                employment_type: row?.fEmploymentType ?? undefined,
+                hours_per_week: row?.fHoursPerWeek ?? undefined,
+                schedule: row?.fSchedule ?? undefined,
+                today,
+              })
+            : '',
+        };
+      }),
+    };
+  }
+
   return (
     <PortalContracts
       versions={versions}
       legacy={legacy}
       agreements={signedAgreements}
       uploads={uploads}
+      pkg={pkg}
     />
   );
 }

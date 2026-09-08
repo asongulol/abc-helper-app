@@ -125,6 +125,7 @@ const ExceptionsBlock = async ({ admin, companyId, today, period }: BlockProps) 
       onboardingStalled: counts.onboardingStalled,
       sessionsPending: counts.sessionsPending,
       countersignPending: counts.countersignPending,
+      heldPay: counts.heldPay,
       missingRate,
       missingPayoutMethod,
       coverageGaps: coverage.gaps.length,

@@ -16,6 +16,7 @@ import type {
 } from '@/db/queries/contracts';
 import type { RosterWorker } from '@/db/queries/workers';
 import { describeIncrease } from '@/lib/contracts/increase';
+import { packageLabels } from '@/lib/contracts/package';
 import { fmtDate, money } from '@/lib/format';
 import {
   addContractBackpay,
@@ -447,6 +448,10 @@ export function ContractsTab({ worker, companyId, panelProps }: Props) {
                               {v.changeDetail?.increase &&
                                 describeIncrease(v.changeDetail.increase) &&
                                 ` · ${describeIncrease(v.changeDetail.increase)}`}
+                              {v.resignKinds.length > 0 &&
+                                ` · re-sign ${packageLabels(v.resignKinds)}${
+                                  v.resignDueOn ? ` by ${fmtDate(v.resignDueOn)}` : ''
+                                }`}
                             </span>
                           )}
                         </td>

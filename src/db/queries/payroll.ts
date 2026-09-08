@@ -1251,6 +1251,8 @@ export type SavedPayment = {
   overridden: boolean;
   /** Worker or company link is no longer active — lock-time warning (RP-18). */
   inactive: boolean;
+  /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
+  holdReason: string | null;
 };
 
 /* ---------- NEW: list periods with summary totals ---------- */
@@ -1718,6 +1720,8 @@ export type ProcessPayment = {
   wiseRecipientId: number | null;
   /** Saved Wise recipients ({id,label}) — options for the API-draft dropdown. */
   wiseRecipients: { id: number; label: string }[];
+  /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
+  holdReason: string | null;
 };
 
 export const fetchProcessPayments = async (
@@ -1727,7 +1731,7 @@ export const fetchProcessPayments = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, workers(first_name, middle_name, last_name, status, email, wise_recipient_uuid, wise_recipient_id, wise_recipients)',
+      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, email, wise_recipient_uuid, wise_recipient_id, wise_recipients)',
     )
     .eq('pay_period_id', payPeriodId)
     .order('worker_id');
@@ -1747,6 +1751,7 @@ export const fetchProcessPayments = async (
     wiseLockedAt: p.wise_locked_at,
     workerStatus: p.workers?.status ?? null,
     workerEmail: p.workers?.email ?? null,
+    holdReason: p.hold_lifted_at ? null : p.hold_reason,
     wiseRecipientUuid: p.workers?.wise_recipient_uuid ?? null,
     wiseRecipientId: p.workers?.wise_recipient_id ?? null,
     wiseRecipients: Array.isArray(p.workers?.wise_recipients)
@@ -1785,6 +1790,33 @@ export const unpayablePeriodReason = (
   const bad = [...new Set(states.filter((s) => !PAYABLE_PERIOD_STATES.includes(s)))];
   if (bad.length === 0) return null;
   return `Payments can only be ${verb} once their period is locked — this selection includes ${bad.join(' / ')} period(s). Lock the period first.`;
+};
+
+/**
+ * Why this set of payments may not be paid yet, or null: rows withheld until
+ * the contractor signs their re-sign package (wizard decision 9). The
+ * period-state gate above says "not yet locked"; this one says "not until they
+ * sign, or an admin lifts it on Calculate".
+ */
+export const heldPaymentReason = async (
+  db: Db,
+  paymentIds: readonly string[],
+): Promise<string | null> => {
+  if (paymentIds.length === 0) return null;
+  const { data, error } = await db
+    .from('payments')
+    .select('hold_reason, workers(first_name, last_name)')
+    .in('id', [...paymentIds])
+    .not('hold_reason', 'is', null)
+    .is('hold_lifted_at', null);
+  if (error) throw new Error(`held payments: ${error.message}`);
+  if (!data?.length) return null;
+  const names = data.map(
+    (p) =>
+      [p.workers?.first_name, p.workers?.last_name].filter(Boolean).join(' ').trim() ||
+      'Unnamed worker',
+  );
+  return `${names.length} contractor(s) are on hold until they sign their re-sign package (${names.join(', ')}). Lift the hold on Calculate first.`;
 };
 
 /** Distinct period states behind the given payment ids (RP-52 gate). */
@@ -2127,7 +2159,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, workers(first_name, middle_name, last_name, status, worker_companies(company_id, status))',
+      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, worker_companies(company_id, status))',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -2167,5 +2199,6 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
       (p.workers?.worker_companies ?? []).find((l) => l.company_id === p.company_id)?.status ??
         null,
     ),
+    holdReason: p.hold_lifted_at ? null : p.hold_reason,
   }));
 };

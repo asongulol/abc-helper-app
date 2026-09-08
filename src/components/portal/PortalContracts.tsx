@@ -6,8 +6,10 @@ import { AGREEMENT_TITLE } from '@/components/print/AgreementPrint';
 import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { ContractVersion, ContractVersionStatus } from '@/db/queries/contracts';
 import type { Database } from '@/db/types';
+import { type PackageKind, packageLabels, packageWarning } from '@/lib/contracts/package';
 import { fmtDate } from '@/lib/format';
 import { signContractVersion } from '@/server/actions/contracts';
+import { signAgreement } from '@/server/actions/portal';
 import { CONTRACT_CHANGE_REASON_LABEL } from '@/types/schemas/contracts';
 import { DocButtons } from './PortalDocs';
 import { type SignInput, SignModal } from './SignModal';
@@ -35,11 +37,20 @@ export type UploadedAgreement = {
   createdAt: string;
 };
 
+/** The re-sign package (wizard decision 8), in signing order, with the filled bodies to sign. */
+export type PortalPackage = {
+  dueOn: string;
+  /** The contract itself is signed — the agreements may follow. */
+  contractSigned: boolean;
+  items: { kind: PackageKind; title: string; body: string; signed: boolean }[];
+};
+
 interface Props {
   versions: PortalContractVersion[];
   legacy: LegacyContract | null;
   agreements: SignedAgreement[];
   uploads: UploadedAgreement[];
+  pkg: PortalPackage | null;
 }
 
 const LABEL: Record<ContractVersionStatus, string> = {
@@ -66,12 +77,14 @@ const TONE: Record<ContractVersionStatus, BadgeTone> = {
  * then every version they have seen, the original agreement last. Read-only
  * apart from signing. Owner rule: nothing here ever shows an exchange rate.
  */
-export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props) => {
+export const PortalContracts = ({ versions, legacy, agreements, uploads, pkg }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [signing, setSigning] = useState<PortalContractVersion | null>(null);
+  const [signingKind, setSigningKind] = useState<PortalPackage['items'][number] | null>(null);
   const [showVoid, setShowVoid] = useState(false);
+  const outstanding = pkg ? pkg.items.filter((i) => !i.signed).map((i) => i.kind) : [];
 
   // Drafts are the admin's business until they are sent; withdrawn versions
   // stay out of the way unless asked for.
@@ -79,6 +92,21 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
   const shown = versions.filter((v) => v.status !== 'draft' && (showVoid || v.status !== 'void'));
   const pending = shown.find((v) => v.status === 'sent') ?? null;
   const hasActive = shown.some((v) => v.status === 'active');
+
+  // The contract first, then each agreement in order (decision 8) — the same
+  // modal, the same evidence; the action files it under the version.
+  const signKind = (item: PortalPackage['items'][number], sig: SignInput) => {
+    startTransition(async () => {
+      const res = await signAgreement({ agreementKey: item.kind, ...sig });
+      if (res.ok) {
+        notify(`${item.title} signed — thank you.`, { type: 'success' });
+        setSigningKind(null);
+        router.refresh();
+      } else {
+        notify(res.error, { type: 'error' });
+      }
+    });
+  };
 
   const sign = (v: PortalContractVersion, sig: SignInput) => {
     startTransition(async () => {
@@ -109,6 +137,13 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
               : ''}
             . Read it through to the end, then sign. Your current agreement stays in force until
             this one is countersigned.
+            {pkg && outstanding.length > 0 && (
+              <>
+                {' '}
+                After that, please also re-sign: <b>{packageLabels(outstanding)}</b>.{' '}
+                {packageWarning(pkg.dueOn)}
+              </>
+            )}
           </p>
           <button
             type="button"
@@ -119,6 +154,57 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
           >
             Review &amp; sign
           </button>
+        </div>
+      )}
+
+      {pkg && outstanding.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, borderColor: 'var(--warn, #b45309)' }}>
+          <Badge tone="warn">Action needed</Badge>
+          <h2 style={{ marginTop: 8 }}>Agreements to re-sign</h2>
+          <p className="sub">{packageWarning(pkg.dueOn)}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+            {pkg.items.map((item, idx) => {
+              const prevSigned = idx === 0 || !!pkg.items[idx - 1]?.signed;
+              const blocker = !pkg.contractSigned
+                ? 'Sign the contract first'
+                : !prevSigned
+                  ? 'Sign the previous one first'
+                  : null;
+              return (
+                <div
+                  key={item.kind}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '10px 12px',
+                    background: 'var(--surface2)',
+                    borderRadius: 6,
+                  }}
+                >
+                  <span style={{ fontWeight: item.signed ? 600 : 400 }}>
+                    {item.signed ? '✓ ' : ''}
+                    {item.title}
+                  </span>
+                  {!item.signed &&
+                    (blocker ? (
+                      <span className="sub" style={{ fontSize: 11 }}>
+                        {blocker}
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn sm"
+                        disabled={isPending}
+                        onClick={() => setSigningKind(item)}
+                      >
+                        Review &amp; sign
+                      </button>
+                    ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -281,6 +367,15 @@ export const PortalContracts = ({ versions, legacy, agreements, uploads }: Props
           busy={isPending}
           onClose={() => setSigning(null)}
           onSign={(sig) => sign(signing, sig)}
+        />
+      )}
+      {signingKind && (
+        <SignModal
+          title={`Sign — ${signingKind.title}`}
+          body={signingKind.body}
+          busy={isPending}
+          onClose={() => setSigningKind(null)}
+          onSign={(sig) => signKind(signingKind, sig)}
         />
       )}
     </div>

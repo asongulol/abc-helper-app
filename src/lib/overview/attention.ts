@@ -62,6 +62,8 @@ export interface AttentionInput {
   onboardingStalled: number;
   sessionsPending: { count: number; oldestDays: number | null };
   countersignPending: number;
+  /** Draft rows withheld for an unsigned re-sign package (wizard decision 9). */
+  heldPay?: number;
   missingRate: AttentionWorker[];
   missingPayoutMethod: AttentionWorker[];
   coverageGaps: number;
@@ -287,6 +289,19 @@ export const buildAttentionItems = (i: AttentionInput): AttentionItem[] => {
       oldestDays: null,
       action: 'Countersign',
       href: '/onboarding',
+    });
+  }
+
+  if ((i.heldPay ?? 0) > 0) {
+    items.push({
+      key: 'pay_held',
+      severity: 'warn',
+      icon: '✋',
+      label: 'Pay held — re-sign package unsigned',
+      count: i.heldPay ?? 0,
+      oldestDays: null,
+      action: 'Review',
+      href: '/payroll',
     });
   }
 

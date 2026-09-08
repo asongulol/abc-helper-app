@@ -50,7 +50,10 @@ export default async function PortalAgreementPrintPage({
       (s) =>
         s.agreementKind === agreementKind &&
         s.status === 'signed' &&
-        isLegacySignatureVersion(s.docVersion),
+        // A re-signed NDA / non-compete / BAA (wizard decision 8) is filed
+        // under the contract version that asked for it; only the IC
+        // agreement's versions print elsewhere.
+        (agreementKind !== 'ic_agreement' || isLegacySignatureVersion(s.docVersion)),
     ) ?? null;
   if (!sig) notFound();
   await logWorkerEvent(worker, {

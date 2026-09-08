@@ -312,3 +312,11 @@ export const ToggleWiseRowLockSchema = z.object({
   reason: z.string().min(1).optional(),
 });
 export type ToggleWiseRowLockInput = z.infer<typeof ToggleWiseRowLockSchema>;
+
+/** Lift a re-sign-package pay hold by hand (wizard decision 9) — the note is the logged reason. */
+export const LiftPaymentHoldSchema = z.object({
+  companyId: uuid(),
+  paymentId: uuid(),
+  note: z.string().trim().min(1, 'Say why the hold is lifted.').max(500),
+});
+export type LiftPaymentHoldInput = z.infer<typeof LiftPaymentHoldSchema>;

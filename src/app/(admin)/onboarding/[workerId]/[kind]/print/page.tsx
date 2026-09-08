@@ -58,7 +58,9 @@ export default async function AdminAgreementPrintPage({
       (s) =>
         s.agreementKind === agreementKind &&
         s.status === 'signed' &&
-        isLegacySignatureVersion(s.docVersion),
+        // A re-signed NDA / non-compete / BAA (wizard decision 8) is filed
+        // under the contract version that asked for it.
+        (agreementKind !== 'ic_agreement' || isLegacySignatureVersion(s.docVersion)),
     ) ?? null;
   const workerName = fullName(worker);
 

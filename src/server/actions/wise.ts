@@ -27,7 +27,11 @@ import {
   lastAttribution,
   paymentsWithAttribution,
 } from '@/db/queries/audit';
-import { fetchPeriodStatesForPayments, unpayablePeriodReason } from '@/db/queries/payroll';
+import {
+  fetchPeriodStatesForPayments,
+  heldPaymentReason,
+  unpayablePeriodReason,
+} from '@/db/queries/payroll';
 import { fetchPeriodPayments } from '@/db/queries/wise';
 import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
 import type { MatchOutcomeReport } from '@/lib/wise/match-summary';
@@ -103,9 +107,13 @@ async function unpayableDraftReason(
   db: ReturnType<typeof createServiceClient>,
   paymentIds: string[],
 ): Promise<string | null> {
-  return unpayablePeriodReason(
-    await fetchPeriodStatesForPayments(db, paymentIds),
-    'drafted into Wise',
+  return (
+    unpayablePeriodReason(
+      await fetchPeriodStatesForPayments(db, paymentIds),
+      'drafted into Wise',
+    ) ??
+    // Wizard decision 9: a held row never goes on the Wise batch.
+    (await heldPaymentReason(db, paymentIds))
   );
 }
 

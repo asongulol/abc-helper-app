@@ -23,12 +23,14 @@ import {
   contractOfRecord,
   fetchContractVersion,
   fetchContractVersions,
+  fetchOutstandingPackages,
 } from '@/db/queries/contracts';
 import { fetchRates } from '@/db/queries/payroll';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
 import { executeRateUpsert } from '@/db/queries/rates';
 import { hasPayOutstanding } from '@/db/queries/workers';
 import { mergeAgreement, monthlyFromPeriod, safeSigImg } from '@/lib/agreements/merge';
+import { packageLabels, packageWarning, resignDueOn } from '@/lib/contracts/package';
 import { humanizeError } from '@/lib/errors';
 import { centavosToPhp } from '@/lib/format';
 import { centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
@@ -51,7 +53,7 @@ import {
   type BackpayQuote,
   quoteContractBackpay,
 } from '@/server/off-cycle';
-import { repriceOpenDrafts } from '@/server/payroll';
+import { repriceOpenDrafts, syncPackageHolds } from '@/server/payroll';
 import { todayManila } from '@/types/schemas/contractors';
 import {
   CONTRACT_CHANGE_REASON_LABEL,
@@ -94,6 +96,21 @@ const reprice = async (svc: Svc, v: ContractVersion): Promise<string[] | string>
   try {
     return await repriceOpenDrafts(
       { companyId: v.companyId, workerId: v.workerId, from: v.effectiveFrom },
+      { db: svc, serviceDb: svc },
+    );
+  } catch (err) {
+    return `skipped: ${err instanceof Error ? err.message : String(err)}`;
+  }
+};
+
+/** Decision 9's bookkeeping, best-effort like `reprice`: stamp or lift the worker's pay holds. */
+const holds = async (
+  svc: Svc,
+  v: ContractVersion,
+): Promise<{ held: number; lifted: number } | string> => {
+  try {
+    return await syncPackageHolds(
+      { companyId: v.companyId, workerIds: [v.workerId] },
       { db: svc, serviceDb: svc },
     );
   } catch (err) {
@@ -215,6 +232,7 @@ export async function draftContractVersion(
       addendum_type: input.addendumType || null,
       addendum_text: input.addendumText?.trim() || null,
       notice_days: input.noticeDays,
+      resign_kinds: input.resignKinds,
     };
 
     let versionId: string;
@@ -265,6 +283,7 @@ export async function draftContractVersion(
         rate_php: input.ratePhp,
         increase: input.changeDetail?.increase ?? null,
         effective_from: input.effectiveFrom,
+        package: input.resignKinds,
         edited: !!inFlight,
         by: auth.admin.email,
       },
@@ -387,7 +406,10 @@ export async function sendContractVersion(
       loginState = 'active';
     }
 
-    // 3. Sent. Filtered on draft so two admins clicking at once send once.
+    // 3. Sent. Filtered on draft so two admins clicking at once send once. A
+    //    re-sign package is due at the end of the period after this one
+    //    (wizard decision 9), measured on the Manila calendar like the signature.
+    const dueOn = v.resignKinds.length ? resignDueOn(todayManila()) : null;
     const { data: sent, error: sendErr } = await svc
       .from('contract_versions')
       .update({
@@ -395,6 +417,7 @@ export async function sendContractVersion(
         sent_at: new Date().toISOString(),
         rendered_body: body,
         doc_sha256: sha,
+        resign_due_on: dueOn,
       })
       .eq('id', v.id)
       .eq('status', 'draft')
@@ -402,9 +425,22 @@ export async function sendContractVersion(
     if (sendErr) throw new Error(`contract_versions send: ${sendErr.message}`);
     if (!sent?.length) return { ok: false, error: `Version ${v.version} was already sent.` };
 
+    // Decision 8: each ticked agreement's current signature is superseded —
+    // the evidence row stays, the portal asks for a fresh one after the contract.
+    if (v.resignKinds.length) {
+      const { error: supErr } = await svc
+        .from('onboarding_signatures')
+        .update({ status: 'superseded' })
+        .eq('worker_id', v.workerId)
+        .in('agreement_kind', v.resignKinds)
+        .eq('status', 'signed');
+      if (supErr) throw new Error(`onboarding_signatures: ${supErr.message}`);
+    }
+
     // Early pricing (wizard decision 5): from now Calculate prices this
     // worker at the version's rate from its effective date, either direction.
     const repriced = await reprice(svc, v);
+    const held = await holds(svc, v);
 
     // 4. The notice. Best-effort like every other hire email; the admin is told.
     //    The reason LABEL goes to the contractor, never the note (wizard
@@ -416,6 +452,10 @@ export async function sendContractVersion(
       version: String(v.version),
       effective_from: effectiveFrom,
       reason: CONTRACT_CHANGE_REASON_LABEL[v.changeReason ?? 'terms_change'],
+      // Decision 10, warning one of three: the package, the date, the consequence.
+      package_block: dueOn
+        ? `<p>Please also sign in the portal, after the agreement: <b>${escapeHtml(packageLabels(v.resignKinds))}</b>. ${escapeHtml(packageWarning(dueOn))}</p>`
+        : '',
     };
     const emailSent = to
       ? await trySend(
@@ -438,6 +478,9 @@ export async function sendContractVersion(
         login: loginState,
         email_sent: emailSent,
         repriced,
+        package: v.resignKinds,
+        due_on: dueOn,
+        held,
         by: auth.admin.email,
       },
     });
@@ -503,11 +546,41 @@ export async function voidContractVersion(args: unknown): Promise<
       if (sigErr) throw new Error(`onboarding_signatures: ${sigErr.message}`);
     }
 
+    // Decision 8's undo: an agreement this send superseded and nobody re-signed
+    // goes back into force — the contractor still has an NDA. One they did
+    // re-sign stays signed; it is a current agreement whatever became of the
+    // contract. A draft superseded nothing.
+    const restored: string[] = [];
+    if (v.status !== 'draft' && v.resignKinds.length) {
+      const { data: sigs, error: sigErr } = await svc
+        .from('onboarding_signatures')
+        .select('id, agreement_kind, status, signed_at')
+        .eq('worker_id', v.workerId)
+        .in('agreement_kind', v.resignKinds)
+        .in('status', ['signed', 'superseded']);
+      if (sigErr) throw new Error(`onboarding_signatures: ${sigErr.message}`);
+      for (const kind of v.resignKinds) {
+        const rows = (sigs ?? []).filter((s) => s.agreement_kind === kind);
+        if (rows.some((s) => s.status === 'signed')) continue;
+        const newest = rows
+          .filter((s) => s.status === 'superseded')
+          .sort((a, b) => String(b.signed_at ?? '').localeCompare(String(a.signed_at ?? '')))[0];
+        if (!newest) continue;
+        const { error } = await svc
+          .from('onboarding_signatures')
+          .update({ status: 'signed' })
+          .eq('id', newest.id);
+        if (error) throw new Error(`onboarding_signatures restore: ${error.message}`);
+        restored.push(kind);
+      }
+    }
+
     // What the version priced while it was out. Read after the status flip so
     // the rebuild no longer sees it as pending.
     let overpayment: ContractChangeDetail['overpayment'] | null = null;
     let lockedAtNewRate: string[] = [];
     let repriced: string[] | string = [];
+    let held: { held: number; lifted: number } | string = { held: 0, lifted: 0 };
     if (v.status !== 'draft') {
       const priced = await pricedAtVersion(svc, v);
       lockedAtNewRate = priced.locked;
@@ -520,6 +593,7 @@ export async function voidContractVersion(args: unknown): Promise<
         if (noteErr) throw new Error(`contract_versions note: ${noteErr.message}`);
       }
       repriced = await reprice(svc, v);
+      held = await holds(svc, v);
     }
 
     // Send restored a departed contractor's login so they could sign; void hands
@@ -559,6 +633,8 @@ export async function voidContractVersion(args: unknown): Promise<
         overpayment,
         locked_at_new_rate: lockedAtNewRate,
         repriced,
+        signatures_restored: restored,
+        held,
         by: auth.admin.email,
       },
     });
@@ -712,6 +788,18 @@ export async function countersignContractVersion(
     const effectiveFrom = v.effectiveFrom;
     if (ratePhp == null || !effectiveFrom || !v.startDate)
       return { ok: false, error: `Version ${v.version} is missing its rate or dates.` };
+    // Decision 11: a rehire's package blocks countersign — nobody is waiting on
+    // pay. A working contractor's never does (decision 9 holds the pay instead).
+    if (v.changeReason === 'rehire' && v.resignKinds.length) {
+      const pkg = (
+        await fetchOutstandingPackages(svc, { companyId: v.companyId, workerIds: [v.workerId] })
+      ).get(v.workerId);
+      if (pkg?.outstanding.length)
+        return {
+          ok: false,
+          error: `Rehire package still unsigned: ${packageLabels(pkg.outstanding)}. Countersign once they have signed everything.`,
+        };
+    }
 
     // Everything the undo stack needs, read before the first write.
     const [link, worker, rates, login] = await Promise.all([
