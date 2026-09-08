@@ -2,7 +2,12 @@
 
 > **Status:** decisions confirmed 2026-09-08 (owner interview, one question at a time). Slice 1
 > (migration 47 with every column, wizard Reason → Terms → Review, reason label in the admin
-> history / portal / send email) shipped 2026-09-08. Slices 2–5 in §6 not started.
+> history / portal / send email) shipped 2026-09-08. Slice 2 (Increase step owning the rate,
+> `change_detail.increase` + the history line, early pricing as an in-memory overlay of sent /
+> signed versions on the `rates` rows at Calculate's one rate read — send and void rebuild the
+> worker's open drafts so it holds straight away — and the overpayment note on
+> `change_detail.overpayment` when a void follows pay) shipped 2026-09-08. Slices 3–5 in §6 not
+> started.
 > **Builds on:** [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — every decision there
 > stands unless §0 below says otherwise (only decision 5's "rate is written at countersign" gains
 > the early-pricing exception in §0.5).

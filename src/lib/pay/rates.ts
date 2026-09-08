@@ -55,6 +55,48 @@ export const resolveRate = (
   return centavos(majorToMinor(Number(best.amountPhp)));
 };
 
+export type PendingRate = { workerId: string; amountPhp: number; effectiveStart: string };
+
+/**
+ * The rate rows as they will stand once each pending contract version is
+ * countersigned — early pricing (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision
+ * 5): a SENT or signed version prices pay from its effective date straight
+ * away, either direction. Same rules as executeRateUpsert so Calculate today
+ * and the countersign later agree to the centavo: a same-day row is replaced,
+ * an earlier open row closes the day before, a future-dated row is left alone.
+ * In memory only; the `rates` table is still written by countersign.
+ */
+export const overlayPendingRates = (
+  rates: readonly RateRow[],
+  pending: readonly PendingRate[],
+): RateRow[] => {
+  const out: RateRow[] = rates.map((r) => ({ ...r }));
+  for (const p of pending) {
+    const sameDay = out.find(
+      (r) => r.workerId === p.workerId && r.effectiveStart === p.effectiveStart,
+    );
+    if (sameDay) {
+      sameDay.amountPhp = p.amountPhp;
+      sameDay.effectiveEnd = null;
+      continue;
+    }
+    for (const r of out)
+      if (
+        r.workerId === p.workerId &&
+        r.effectiveEnd === null &&
+        r.effectiveStart < p.effectiveStart
+      )
+        r.effectiveEnd = dayBefore(p.effectiveStart);
+    out.push({
+      workerId: p.workerId,
+      amountPhp: p.amountPhp,
+      effectiveStart: p.effectiveStart,
+      effectiveEnd: null,
+    });
+  }
+  return out;
+};
+
 /** A planned write for an effective-dated rate change (executed by the data layer). */
 export type RateUpsertPlan =
   | {

@@ -43,3 +43,25 @@ describe('DraftContractVersionSchema — change reason', () => {
     ).toBe(true);
   });
 });
+
+describe('DraftContractVersionSchema — increase detail (slice 2, decision 4)', () => {
+  const increase = { method: 'percent', value: 5, from: 8000, to: 8400, base: 'record' };
+  const draft = (over: Record<string, unknown>) =>
+    DraftContractVersionSchema.safeParse({ ...base, changeReason: 'annual_review', ...over });
+
+  it('is optional — a rate typed straight in has no detail', () => {
+    const r = draft({ ratePhp: 8400 });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.changeDetail).toBeNull();
+  });
+
+  it('must add up to the rate stored, by its own method', () => {
+    expect(draft({ ratePhp: 8400, changeDetail: { increase } }).success).toBe(true);
+    // Rate disagrees with the detail.
+    expect(draft({ ratePhp: 8500, changeDetail: { increase } }).success).toBe(false);
+    // Detail agrees with itself but 5% of 8,000 is not 8,500.
+    expect(
+      draft({ ratePhp: 8500, changeDetail: { increase: { ...increase, to: 8500 } } }).success,
+    ).toBe(false);
+  });
+});
