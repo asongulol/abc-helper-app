@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { applyIncrease, INCREASE_METHODS, type IncreaseDetail } from '@/lib/contracts/increase';
 import { ContractTypeSchema, IcAddendumTypeSchema } from './contractors';
 import { uuid } from './uuid';
 
@@ -33,6 +34,31 @@ export const CONTRACT_CHANGE_REASON_LABEL: Record<ContractChangeReason, string> 
   other: 'Other',
 };
 
+/** How the Increase step arrived at the rate (decision 4) — history, not terms. */
+export const IncreaseDetailSchema = z.object({
+  method: z.enum(INCREASE_METHODS),
+  value: z.number().finite(),
+  from: z.number().nullable(),
+  to: z.number().min(0),
+  base: z.enum(['record', 'live']),
+});
+
+/**
+ * contract_versions.change_detail. `increase` is written by the wizard;
+ * `overpayment` by void, when the version had already priced paid periods
+ * (decision 5: a note on the profile, no clawback).
+ */
+export type ContractChangeDetail = {
+  increase?: IncreaseDetail;
+  overpayment?: {
+    /** Positive = paid more than the rate still in force would have. */
+    amountPhp: number;
+    ratePhp: number;
+    periods: string[];
+    notedAt: string;
+  };
+};
+
 /** The terms of a draft — everything that renders into the document, plus why. */
 export const DraftContractVersionSchema = z
   .object({
@@ -40,6 +66,7 @@ export const DraftContractVersionSchema = z
     companyId: uuid(),
     changeReason: ContractChangeReasonSchema,
     changeNote: z.string().trim().max(1000).nullable().default(null),
+    changeDetail: z.object({ increase: IncreaseDetailSchema }).nullable().default(null),
     ratePhp: z.number().min(0, 'Rate cannot be negative.').max(10_000_000),
     position: z.string().max(100).nullable().default(null),
     employmentType: ContractTypeSchema.nullable().default(null),
@@ -60,7 +87,19 @@ export const DraftContractVersionSchema = z
   .refine((v) => v.changeReason !== 'other' || !!v.changeNote, {
     message: 'Say what the change is when the reason is Other.',
     path: ['changeNote'],
-  });
+  })
+  // The history line is only worth reading if it adds up to the rate stored.
+  .refine(
+    (v) =>
+      !v.changeDetail ||
+      (v.changeDetail.increase.to === v.ratePhp &&
+        applyIncrease(
+          v.changeDetail.increase.method,
+          v.changeDetail.increase.value,
+          v.changeDetail.increase.from,
+        ) === v.ratePhp),
+    { message: 'The increase does not add up to the rate.', path: ['changeDetail'] },
+  );
 export type DraftContractVersionInput = z.infer<typeof DraftContractVersionSchema>;
 
 export const ContractVersionRefSchema = z.object({ versionId: uuid() });

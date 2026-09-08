@@ -2,17 +2,25 @@
 
 /**
  * Contract-change wizard (docs/CONTRACT-CHANGE-WIZARD-PLAN.md §4) — every new
- * version goes through here: Reason → Terms → Review, then Save draft or Send
- * for signature from Review. The reason sets defaults and never skips a step
- * (decision 2); reopening a draft lands on Review with everything editable
- * (decision 3). Slice 1: the Increase / Benefits / Package / Access steps
- * slot in between Terms and Review in later slices.
+ * version goes through here: Reason → Terms → Increase → Review, then Save
+ * draft or Send for signature from Review. The reason sets defaults and never
+ * skips a step (decision 2); reopening a draft lands on Review with everything
+ * editable (decision 3). The Increase step owns the rate (decision 4). The
+ * Benefits / Package / Access steps slot in before Review in later slices.
  */
 
 import { useState, useTransition } from 'react';
 import { Modal, Spinner, useToast } from '@/components/ui';
 import type { ContractOfRecord, ContractVersion } from '@/db/queries/contracts';
 import type { RosterWorker } from '@/db/queries/workers';
+import { monthlyFromPeriod } from '@/lib/agreements/merge';
+import {
+  applyIncrease,
+  INCREASE_METHODS,
+  type IncreaseDetail,
+  type IncreaseMethod,
+  increaseHow,
+} from '@/lib/contracts/increase';
 import { nextPeriod } from '@/lib/dates/periods';
 import { fmtDate, money } from '@/lib/format';
 import { draftContractVersion } from '@/server/actions/contracts';
@@ -28,7 +36,10 @@ type AddendumType = '' | 'scope_of_work' | 'other';
 type Form = {
   changeReason: ContractChangeReason | '';
   changeNote: string;
-  ratePhp: string;
+  /** Increase step: the rate measured from, how, and by how much (as typed). */
+  base: IncreaseDetail['base'];
+  method: IncreaseMethod;
+  value: string;
   position: string;
   employmentType: ContractType | '';
   schedule: string;
@@ -40,13 +51,21 @@ type Form = {
   noticeDays: string;
 };
 
-const STEPS = ['Reason', 'Terms', 'Review'] as const;
+const STEPS = ['Reason', 'Terms', 'Increase', 'Review'] as const;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const ADDENDUM_LABEL: Record<AddendumType, string> = {
   '': 'None',
   scope_of_work: 'Scope of work',
   other: 'Other',
 };
+const METHOD_LABEL: Record<IncreaseMethod, string> = {
+  percent: 'Percent',
+  flat: 'Flat amount',
+  exact: 'Exact rate',
+};
+/** Annual Review / COLA land on the Increase step with percent selected (decision 2). */
+const defaultMethod = (reason: ContractChangeReason | ''): IncreaseMethod =>
+  reason === 'annual_review' || reason === 'cola' ? 'percent' : 'exact';
 
 /**
  * Prefill: the draft being edited as it is; else the version just voided, so a
@@ -65,10 +84,13 @@ const formFrom = (
   const rehire = worker.linkStatus === 'ended';
   const resume = draft ?? (latest?.status === 'void' ? latest : null);
   const t = resume ?? record;
+  const inc = resume?.changeDetail?.increase ?? null;
   return {
     changeReason: resume?.changeReason ?? (rehire ? 'rehire' : ''),
     changeNote: resume?.changeNote ?? '',
-    ratePhp: t.ratePhp != null ? String(t.ratePhp) : '',
+    base: inc?.base ?? 'record',
+    method: inc?.method ?? 'exact',
+    value: inc ? String(inc.value) : t.ratePhp != null ? String(t.ratePhp) : '',
     position: t.position ?? worker.role ?? '',
     employmentType: t.employmentType ?? worker.contract,
     schedule: t.schedule ?? '',
@@ -87,13 +109,30 @@ const reasonValid = (f: Form): boolean =>
 
 /** Same checks the schema makes, worded for the form. Null when the terms are fine. */
 const termsError = (f: Form): string | null => {
-  const rate = Number(f.ratePhp);
-  if (!f.ratePhp || Number.isNaN(rate) || rate < 0) return 'Enter the semi-monthly rate.';
   if (!ISO_DATE.test(f.startDate) || !ISO_DATE.test(f.effectiveFrom)) return 'Enter both dates.';
   if (f.effectiveFrom < f.startDate) return 'Effective date cannot be before the start date.';
   const n = Number(f.noticeDays);
   if (!Number.isInteger(n) || n < 1) return 'Enter the termination notice in whole days.';
   return null;
+};
+
+const baseRate = (f: Form, record: ContractOfRecord): number | null =>
+  f.base === 'live' ? record.liveRatePhp : record.ratePhp;
+
+/** The Increase step's result, or null while it cannot be computed. */
+const increaseOf = (f: Form, record: ContractOfRecord): IncreaseDetail | null => {
+  if (f.value.trim() === '') return null;
+  const from = baseRate(f, record);
+  const value = Number(f.value);
+  const to = applyIncrease(f.method, value, from);
+  return to == null || to < 0 ? null : { method: f.method, value, from, to, base: f.base };
+};
+
+const increaseError = (f: Form, record: ContractOfRecord): string | null => {
+  if (increaseOf(f, record)) return null;
+  if (f.method === 'exact') return 'Enter the semi-monthly rate.';
+  if (baseRate(f, record) == null) return 'There is no rate to change from — enter the exact rate.';
+  return f.method === 'percent' ? 'Enter the percent.' : 'Enter the amount.';
 };
 
 const typeLabel = (t: ContractType | '' | null): string =>
@@ -132,17 +171,38 @@ export function ContractWizard({
   const [step, setStep] = useState(draft ? STEPS.length - 1 : 0);
   const [busy, startBusy] = useTransition();
   const rehire = worker.linkStatus === 'ended';
+  const liveDiffers =
+    record.liveRatePhp != null && record.ratePhp != null && record.liveRatePhp !== record.ratePhp;
 
   const update = <K extends keyof Form>(key: K, value: Form[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+  // A new reason resets the Increase step to its default; re-picking the same one keeps it.
+  const pickReason = (r: ContractChangeReason) =>
+    setForm((f) => {
+      if (f.changeReason === r) return f;
+      const method = defaultMethod(r);
+      const from = baseRate(f, record);
+      return {
+        ...f,
+        changeReason: r,
+        method,
+        value: method === 'exact' && from != null ? String(from) : '',
+      };
+    });
+  const pickMethod = (method: IncreaseMethod) =>
+    setForm((f) => {
+      const from = baseRate(f, record);
+      return { ...f, method, value: method === 'exact' && from != null ? String(from) : '' };
+    });
 
-  const valid = [reasonValid(form), termsError(form) === null, true];
+  const inc = increaseOf(form, record);
+  const valid = [reasonValid(form), termsError(form) === null, inc !== null, true];
   // A step is reachable once every step before it is valid.
   const reachable = (i: number) => valid.slice(0, i).every(Boolean);
 
   const submit = (andSend: boolean) => {
-    const err = termsError(form);
-    if (!reasonValid(form) || err) {
+    const err = termsError(form) ?? increaseError(form, record);
+    if (!reasonValid(form) || err || !inc) {
       notify(err ?? 'Pick a reason for the change.', { type: 'error' });
       return;
     }
@@ -152,7 +212,8 @@ export function ContractWizard({
         companyId,
         changeReason: form.changeReason,
         changeNote: form.changeNote.trim() || null,
-        ratePhp: Number(form.ratePhp),
+        changeDetail: { increase: inc },
+        ratePhp: inc.to,
         position: form.position.trim() || null,
         employmentType: form.employmentType || null,
         schedule: form.schedule.trim() || null,
@@ -177,12 +238,13 @@ export function ContractWizard({
     });
   };
 
+  const how = inc ? increaseHow(inc) : null;
   // Old vs new, side by side; a row whose text differs is the change.
   const rows: [string, string, string][] = [
     [
       'Rate / period',
       record.ratePhp != null ? money(record.ratePhp) : '—',
-      form.ratePhp ? money(Number(form.ratePhp)) : '—',
+      inc ? `${money(inc.to)}${how ? ` · ${how}` : ''}` : '—',
     ],
     ['Position', record.position ?? '—', form.position.trim() || '—'],
     ['Employment type', typeLabel(record.employmentType), typeLabel(form.employmentType)],
@@ -252,7 +314,7 @@ export function ContractWizard({
                     name="cv-reason"
                     value={r}
                     checked={form.changeReason === r}
-                    onChange={() => update('changeReason', r)}
+                    onChange={() => pickReason(r)}
                     disabled={busy}
                   />
                   {CONTRACT_CHANGE_REASON_LABEL[r]}
@@ -274,17 +336,6 @@ export function ContractWizard({
       {step === 1 && (
         <div>
           <div className="grid-2">
-            <Field id="cv-rate" label="Rate (PHP, semi-monthly)" required>
-              <input
-                id="cv-rate"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.ratePhp}
-                onChange={(e) => update('ratePhp', e.target.value)}
-                disabled={busy}
-              />
-            </Field>
             <Field id="cv-position" label="Position">
               <input
                 id="cv-position"
@@ -388,6 +439,93 @@ export function ContractWizard({
 
       {step === 2 && (
         <div>
+          {liveDiffers && (
+            <fieldset style={{ border: 0, padding: 0, margin: '0 0 10px' }}>
+              <legend className="sub" style={{ fontSize: 12, padding: 0, marginBottom: 6 }}>
+                The contract of record and the rate row disagree — pick the base.
+              </legend>
+              {(['record', 'live'] as const).map((b) => (
+                <label
+                  key={b}
+                  style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}
+                >
+                  <input
+                    type="radio"
+                    name="cv-base"
+                    checked={form.base === b}
+                    onChange={() => update('base', b)}
+                    disabled={busy}
+                  />
+                  {b === 'record'
+                    ? `Contract of record, version ${record.version} — ${money(record.ratePhp)}`
+                    : `Rate row — ${money(record.liveRatePhp)}`}
+                </label>
+              ))}
+            </fieldset>
+          )}
+          <div className="grid-2">
+            <Field id="cv-method" label="Change">
+              <select
+                id="cv-method"
+                value={form.method}
+                onChange={(e) => pickMethod(e.target.value as IncreaseMethod)}
+                disabled={busy}
+              >
+                {INCREASE_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {METHOD_LABEL[m]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              id="cv-value"
+              label={
+                form.method === 'percent'
+                  ? 'Percent (negative for a decrease)'
+                  : form.method === 'flat'
+                    ? 'Amount per period (PHP, negative for a decrease)'
+                    : 'Rate (PHP, semi-monthly)'
+              }
+              required
+            >
+              <input
+                id="cv-value"
+                type="number"
+                step={form.method === 'percent' ? '0.1' : '0.01'}
+                min={form.method === 'exact' ? '0' : undefined}
+                value={form.value}
+                onChange={(e) => update('value', e.target.value)}
+                disabled={busy}
+              />
+            </Field>
+          </div>
+          <p style={{ margin: '4px 0 0' }}>
+            {inc ? (
+              <>
+                New rate <strong>{money(inc.to)}</strong> per period · PHP{' '}
+                {monthlyFromPeriod(inc.to) || '0'} per month
+                {inc.from != null && how && (
+                  <span className="muted">
+                    {' '}
+                    (from {money(inc.from)} · {how})
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="muted">{increaseError(form, record)}</span>
+            )}
+          </p>
+          {form.method === 'percent' && (
+            <p className="sub" style={{ fontSize: 12, margin: '6px 0 0' }}>
+              Percent rounds to the nearest peso.
+            </p>
+          )}
+        </div>
+      )}
+
+      {step === 3 && (
+        <div>
           <p style={{ margin: '0 0 10px' }}>
             <strong>
               {form.changeReason ? CONTRACT_CHANGE_REASON_LABEL[form.changeReason] : '—'}
@@ -434,8 +572,9 @@ export function ContractWizard({
           </div>
           <p className="sub" style={{ fontSize: 12, margin: '10px 0 0' }}>
             Send freezes the document as it stands today
-            {rehire ? ' and restores their portal login so they can sign' : ''}. Your current
-            contract of record stays in force until the new version is countersigned.
+            {rehire ? ' and restores their portal login so they can sign' : ''}. Pay from{' '}
+            {fmtDate(form.effectiveFrom)} is priced at the new rate as soon as it is sent; the
+            current contract of record stays in force until the new version is countersigned.
           </p>
         </div>
       )}

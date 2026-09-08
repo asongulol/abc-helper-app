@@ -11,7 +11,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { DEFAULT_NOTICE_DAYS } from '@/lib/agreements/merge';
-import type { ContractChangeReason } from '@/types/schemas/contracts';
+import type { ContractChangeDetail, ContractChangeReason } from '@/types/schemas/contracts';
 
 type Db = SupabaseClient<Database>;
 type Row = Database['public']['Tables']['contract_versions']['Row'];
@@ -44,6 +44,8 @@ export type ContractVersion = ContractTerms & {
   changeReason: ContractChangeReason | null;
   /** Admin-only — never rendered on a contractor-visible view. */
   changeNote: string | null;
+  /** How the rate was arrived at, and an overpayment note once voided after pay. */
+  changeDetail: ContractChangeDetail | null;
   supersedesId: string | null;
   endedOn: string | null;
   renderedBody: string | null;
@@ -65,6 +67,12 @@ export type ContractOfRecord = ContractTerms & {
   source: 'legacy' | 'versioned';
   /** contract_versions.id, null for the legacy read-through. */
   id: string | null;
+  /**
+   * The latest `rates` row — the money the engine is using today. Equals
+   * ratePhp unless the rate was edited outside a version; the wizard's
+   * Increase step offers both as the base when they differ (decision 4).
+   */
+  liveRatePhp: number | null;
   signedAt: string | null;
   countersignedAt: string | null;
   countersignedName: string | null;
@@ -79,6 +87,7 @@ const mapVersion = (r: Row): ContractVersion => ({
   status: r.status,
   changeReason: r.change_reason as ContractChangeReason | null,
   changeNote: r.change_note,
+  changeDetail: r.change_detail as ContractChangeDetail | null,
   ratePhp: Number(r.rate_php),
   periodBasis: r.period_basis,
   position: r.position,
@@ -185,10 +194,11 @@ export const contractOfRecord = async (
   for (const r of [active, link, agreement, rate, signature])
     if (r.error) throw new Error(`contract of record: ${r.error.message}`);
   const v1 = (signature.data ?? []).find((s) => isLegacySignatureVersion(s.doc_version)) ?? null;
+  const liveRatePhp = rate.data ? Number(rate.data.amount_php) : null;
 
   if (active.data) {
     const v = mapVersion(active.data);
-    return { ...v, source: 'versioned' };
+    return { ...v, source: 'versioned', liveRatePhp };
   }
   if (!link.data) return null;
 
@@ -197,7 +207,8 @@ export const contractOfRecord = async (
     source: 'legacy',
     version: 1,
     id: null,
-    ratePhp: rate.data ? Number(rate.data.amount_php) : a?.f_rate ? Number(a.f_rate) : null,
+    liveRatePhp,
+    ratePhp: liveRatePhp ?? (a?.f_rate ? Number(a.f_rate) : null),
     periodBasis: rate.data?.period_basis ?? 'semi_monthly',
     position: a?.f_position ?? link.data.role,
     employmentType: link.data.contract,
@@ -242,6 +253,37 @@ export const fetchContractVersion = async (db: Db, id: string): Promise<Contract
   const { data, error } = await db.from('contract_versions').select('*').eq('id', id).maybeSingle();
   if (error) throw new Error(`contract_versions: ${error.message}`);
   return data ? mapVersion(data) : null;
+};
+
+export type PendingContractRate = {
+  workerId: string;
+  version: number;
+  ratePhp: number;
+  effectiveFrom: string;
+};
+
+/**
+ * Every version out for signature or signed-not-countersigned at one company,
+ * as the rate it will write — what Calculate overlays on the `rates` rows
+ * (early pricing, docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 5). At most one
+ * per worker (the one-in-flight index).
+ */
+export const fetchPendingContractRates = async (
+  db: Db,
+  companyId: string,
+): Promise<PendingContractRate[]> => {
+  const { data, error } = await db
+    .from('contract_versions')
+    .select('worker_id, version, rate_php, effective_from')
+    .eq('company_id', companyId)
+    .in('status', ['sent', 'signed']);
+  if (error) throw new Error(`contract_versions: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    workerId: r.worker_id,
+    version: r.version,
+    ratePhp: Number(r.rate_php),
+    effectiveFrom: r.effective_from,
+  }));
 };
 
 /**

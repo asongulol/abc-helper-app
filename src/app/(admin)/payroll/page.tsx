@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PayrollShell } from '@/components/payroll/PayrollShell';
 import { createServerSupabase } from '@/db/clients/server';
+import { fetchPendingContractRates } from '@/db/queries/contracts';
 import { fetchPeriodSummaries, fetchSavedPayments, preferredOpenDraft } from '@/db/queries/payroll';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
 import { batchForWindow } from '@/lib/payroll/batch-window';
@@ -68,7 +69,10 @@ export default async function PayrollPage({
   // points somewhere else simply misses this seed and loads the old way; the
   // shell matches on id before trusting it.
   const initialBatch = batchForWindow(periods, defaultPeriod.start, defaultPeriod.end);
-  const initialPayments = initialBatch ? await fetchSavedPayments(db, initialBatch.id) : [];
+  const [initialPayments, pendingContracts] = await Promise.all([
+    initialBatch ? fetchSavedPayments(db, initialBatch.id) : [],
+    fetchPendingContractRates(db, companyId),
+  ]);
 
   return (
     <PayrollShell
@@ -79,6 +83,7 @@ export default async function PayrollPage({
       initialBatchId={initialBatch?.id ?? null}
       initialPayments={initialPayments}
       autoUnlock={autoUnlock}
+      pendingContracts={pendingContracts}
     />
   );
 }
