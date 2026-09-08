@@ -44,6 +44,7 @@ API, and code references.
 
 - [Prod conformance plan](./PROD-CONFORMANCE-PLAN.md)
 - [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — rehire, modify, re-issue: confirmed decisions + PR slices
+- [Contract-change wizard plan](./CONTRACT-CHANGE-WIZARD-PLAN.md) — reason, increase, benefits, re-sign package, holds, access: confirmed decisions + PR slices
 - [Money core spec](./money-core-spec.md)
 - [Recreation handoff](./RECREATION-HANDOFF.md)
 - [Recreation recommendations](./RECREATION-RECOMMENDATIONS.md)
