@@ -40,6 +40,8 @@ export type PortalDocumentRow = {
   reviewReason: string | null;
   storagePath: string | null;
   expiresOn: string | null;
+  /** Admin-entered date an uploaded agreement was signed (documents.signed_on). */
+  signedOn: string | null;
   side: string | null;
   createdAt: string;
 };
@@ -92,7 +94,7 @@ export const fetchOwnDocuments = async (db: Db, workerId: string): Promise<Porta
   const { data, error } = await db
     .from('documents')
     .select(
-      'id, kind, title, review_status, review_reason, storage_path, expires_on, side, created_at',
+      'id, kind, title, review_status, review_reason, storage_path, expires_on, signed_on, side, created_at',
     )
     .eq('worker_id', workerId)
     .order('created_at', { ascending: false });
@@ -105,6 +107,7 @@ export const fetchOwnDocuments = async (db: Db, workerId: string): Promise<Porta
     reviewReason: d.review_reason,
     storagePath: d.storage_path,
     expiresOn: d.expires_on,
+    signedOn: d.signed_on,
     side: d.side,
     createdAt: d.created_at,
   }));
