@@ -14,5 +14,5 @@ export default async function PortalContractVersionPrintPage({
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');
   const { versionId } = await params;
-  return <ContractVersionPrint versionId={versionId} />;
+  return <ContractVersionPrint versionId={versionId} viewer={worker} />;
 }

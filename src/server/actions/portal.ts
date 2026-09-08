@@ -30,7 +30,7 @@ import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
 import { validateProfileFields } from '@/lib/profile/validate';
 import type { ActionResult } from '@/server/actions/portal-admin';
-import { logEvent } from '@/server/audit';
+import { logEvent, logWorkerEvent } from '@/server/audit';
 import { requireAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
@@ -1040,12 +1040,35 @@ export async function getDocumentSignedUrl(args: {
       .createSignedUrl(doc.storage_path, 120, args.download ? { download: doc.title ?? true } : {});
     if (sErr || !signed?.signedUrl)
       return { ok: false, error: sErr?.message ?? 'Could not sign URL.' };
+    await logWorkerEvent(worker, {
+      action: args.download ? 'document.downloaded' : 'document.viewed',
+      detail: { document_id: doc.id, kind: doc.kind, title: doc.title },
+    });
     return { ok: true, data: { url: signed.signedUrl } };
   } catch (err) {
     return {
       ok: false,
       error: humanizeError(err, 'Could not open document.'),
     };
+  }
+}
+
+/**
+ * Called by the login form right after a successful sign-in: stamps
+ * contractor_logins.last_login_at and leaves an audit row, so the admin's
+ * Portal & login tab can show whether — and when — the contractor gets in.
+ */
+export async function recordPortalSignIn(): Promise<ActionResult> {
+  const worker = await requireWorker();
+  try {
+    await createServiceClient()
+      .from('contractor_logins')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('worker_id', worker.workerId);
+    await logWorkerEvent(worker, { action: 'portal.signed_in' });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not record sign-in.') };
   }
 }
 

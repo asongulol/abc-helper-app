@@ -5,6 +5,8 @@ import { fetchContractVersion } from '@/db/queries/contracts';
 import { fetchSignatures } from '@/db/queries/onboarding';
 import { renderAgreementParts } from '@/lib/agreements/merge';
 import { fullName } from '@/lib/names';
+import { logWorkerEvent } from '@/server/audit';
+import type { CurrentWorker } from '@/server/auth/worker';
 import { uuid } from '@/types/schemas/uuid';
 
 /**
@@ -14,11 +16,23 @@ import { uuid } from '@/types/schemas/uuid';
  * workers they can see — the route just authenticates and hands over the id.
  * 404 for anything without a frozen body (a draft has nothing to print).
  */
-export async function ContractVersionPrint({ versionId }: { versionId: string }) {
+export async function ContractVersionPrint({
+  versionId,
+  viewer,
+}: {
+  versionId: string;
+  /** The contractor viewing their own copy — logged as agreement.viewed; admins pass nothing. */
+  viewer?: CurrentWorker;
+}) {
   if (!uuid().safeParse(versionId).success) notFound();
   const db = await createServerSupabase();
   const v = await fetchContractVersion(db, versionId);
   if (!v?.renderedBody) notFound();
+  if (viewer)
+    await logWorkerEvent(viewer, {
+      action: 'agreement.viewed',
+      detail: { kind: 'ic_agreement', version: v.version },
+    });
 
   const [signatures, { data: w }] = await Promise.all([
     fetchSignatures(db, v.workerId),
