@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
 import { AGREEMENT_TITLE, AgreementPrint } from '@/components/print/AgreementPrint';
 import { createServerSupabase } from '@/db/clients/server';
+import { isLegacySignatureVersion } from '@/db/queries/contracts';
 import { fetchAgreements, fetchSignatures } from '@/db/queries/onboarding';
 import { fetchAgreementTemplate, fetchOwnProfile } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
@@ -40,9 +41,16 @@ export default async function PortalAgreementPrintPage({
   if (!template) notFound();
 
   const row = agreements.find((a) => a.agreementKind === agreementKind) ?? null;
+  // The contractor may only print an agreement they have actually signed — and
+  // this route is the ORIGINAL one; versioned IC agreements print from
+  // /portal/contracts/[versionId]/print, so a v4 signature must not land here.
   const sig =
-    signatures.find((s) => s.agreementKind === agreementKind && s.status === 'signed') ?? null;
-  // The contractor may only print an agreement they have actually signed.
+    signatures.find(
+      (s) =>
+        s.agreementKind === agreementKind &&
+        s.status === 'signed' &&
+        isLegacySignatureVersion(s.docVersion),
+    ) ?? null;
   if (!sig) notFound();
 
   const workerName = profile

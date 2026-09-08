@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PortalContracts } from '@/components/portal/PortalContracts';
 import { createServerSupabase } from '@/db/clients/server';
-import { fetchContractVersions } from '@/db/queries/contracts';
+import { fetchContractVersions, isLegacySignatureVersion } from '@/db/queries/contracts';
 import { fetchOwnOnboarding } from '@/db/queries/portal';
 import { getCurrentWorker } from '@/server/auth/worker';
 
@@ -21,7 +21,9 @@ export default async function PortalContractsPage() {
     fetchContractVersions(supabase, worker.workerId),
     fetchOwnOnboarding(supabase, worker.workerId),
   ]);
-  const v1 = signatures.find((s) => s.agreement_kind === 'ic_agreement' && s.doc_version === '1');
+  const v1 = signatures.find(
+    (s) => s.agreement_kind === 'ic_agreement' && isLegacySignatureVersion(s.doc_version),
+  );
   const agreement = agreements.find((a) => a.agreement_kind === 'ic_agreement');
   const legacy = v1
     ? {

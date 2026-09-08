@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { PortalDocumentRow } from '@/db/queries/portal';
+import { EXPIRY_KIND_LABEL } from '@/lib/documents/expiry';
 import { getDocumentSignedUrl } from '@/server/actions/portal';
 import { type OutstandingDocSlot, uploadOwnDocument } from '@/server/actions/portal-docs';
 
@@ -14,12 +15,7 @@ const DOC_TYPES = [
   { value: 'gov_id', label: 'Government ID' },
 ] as const;
 
-const KIND_LABELS: Record<string, string> = {
-  ic_agreement: 'IC Agreement',
-  w8ben: 'W-8BEN',
-  gov_id: 'Government ID',
-};
-const labelKind = (k: string) => KIND_LABELS[k] ?? k;
+const labelKind = (k: string) => EXPIRY_KIND_LABEL[k] ?? k;
 
 /**
  * One outstanding required-document uploader (legacy `UploadSlot`,
