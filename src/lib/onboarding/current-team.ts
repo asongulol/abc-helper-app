@@ -8,13 +8,16 @@
  */
 
 import type { Database } from '@/db/types';
+import { type PackageStatus, packageLabels, packageOwedLines } from '@/lib/contracts/package';
 import { daysUntil } from '@/lib/documents/expiry';
+import { fmtDate } from '@/lib/format';
 import { humanizeKind, type RequiredDoc } from '@/lib/onboarding/documents';
 
 export type OpenItemKind =
   | 'draft'
   | 'sent'
   | 'signed'
+  | 'resign'
   | 'no_agreement'
   | 'doc_review'
   | 'doc_replacement'
@@ -51,6 +54,10 @@ export interface TeamInput {
   } | null;
   /** A signed `ic_agreement` signature exists (the v1 read-through). */
   hasIcSignature: boolean;
+  /** The re-sign package still being worked through (wizard decision 8), if any. */
+  package?: PackageStatus | null;
+  /** A draft on Calculate is withheld for it (decision 9). */
+  payHeld?: boolean;
   docs: readonly TeamDoc[];
   /** Admin-requested documents (`onboarding_progress.extra_documents`). */
   requested?: readonly Pick<RequiredDoc, 'kind' | 'title'>[];
@@ -90,6 +97,17 @@ export const deriveOpenItems = (
     items.push({ kind: 'signed', label: 'Signed, awaiting countersign', tone: 'warn', owed: [] });
   else if (!v && !input.hasIcSignature)
     items.push({ kind: 'no_agreement', label: 'No IC agreement in app', tone: 'warn', owed: [] });
+
+  const pkg = input.package;
+  if (pkg && pkg.outstanding.length > 0)
+    items.push({
+      kind: 'resign',
+      label: `Re-sign ${packageLabels(pkg.outstanding)} · due ${fmtDate(pkg.dueOn)}${
+        input.payHeld ? ' · pay held' : ''
+      }`,
+      tone: input.payHeld ? 'bad' : 'warn',
+      owed: packageOwedLines(pkg),
+    });
 
   // Latest per slot — newest first, id as the total tie-break.
   const sorted = [...input.docs].sort(
@@ -188,5 +206,9 @@ export const owedLines = (items: readonly OpenItem[]): string[] => items.flatMap
  */
 export const digestLines = (items: readonly OpenItem[]): string[] =>
   items.flatMap((i) =>
-    i.kind === 'sent' || i.kind === 'signed' ? [i.label] : i.kind === 'doc_requested' ? i.owed : [],
+    i.kind === 'sent' || i.kind === 'signed' || i.kind === 'resign'
+      ? [i.label]
+      : i.kind === 'doc_requested'
+        ? i.owed
+        : [],
   );

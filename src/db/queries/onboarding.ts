@@ -5,6 +5,7 @@
 
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { fetchOutstandingPackages } from '@/db/queries/contracts';
 import type { Database } from '@/db/types';
 import { deriveOpenItems, type OpenItem, type TeamDoc } from '@/lib/onboarding/current-team';
 import { parseExtraDocs } from '@/lib/onboarding/documents';
@@ -468,7 +469,7 @@ export const fetchCurrentTeam = async (
   const ids = (links ?? []).map((l) => l.worker_id);
   if (ids.length === 0) return [];
 
-  const [versions, sigs, logins, docs, progress] = await Promise.all([
+  const [versions, sigs, logins, docs, progress, packages, held] = await Promise.all([
     svc
       .from('contract_versions')
       .select('worker_id, status, sent_at')
@@ -492,9 +493,20 @@ export const fetchCurrentTeam = async (
       .from('onboarding_progress')
       .select('worker_id, current_stage, completed_at, extra_documents')
       .in('worker_id', ids),
+    // The re-sign package (wizard decision 8) and the pay it holds (decision 9).
+    fetchOutstandingPackages(svc, { companyId, workerIds: ids }),
+    svc
+      .from('payments')
+      .select('worker_id')
+      .eq('company_id', companyId)
+      .eq('status', 'draft')
+      .not('hold_reason', 'is', null)
+      .is('hold_lifted_at', null)
+      .in('worker_id', ids),
   ]);
-  for (const r of [versions, sigs, logins, docs, progress])
+  for (const r of [versions, sigs, logins, docs, progress, held])
     if (r.error) throw new Error(`current team: ${r.error.message}`);
+  const payHeld = new Set((held.data ?? []).map((p) => p.worker_id));
 
   // Mid-onboarding contractors are the New hires tab's rows, never this one's.
   const inProgress = new Set(
@@ -545,6 +557,8 @@ export const fetchCurrentTeam = async (
         {
           version: versionBy.get(l.worker_id) ?? null,
           hasIcSignature: signed.has(l.worker_id),
+          package: packages.get(l.worker_id) ?? null,
+          payHeld: payHeld.has(l.worker_id),
           docs: docsBy.get(l.worker_id) ?? [],
           requested: requestedBy.get(l.worker_id) ?? [],
         },

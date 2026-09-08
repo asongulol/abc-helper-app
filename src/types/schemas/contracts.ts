@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { applyIncrease, INCREASE_METHODS, type IncreaseDetail } from '@/lib/contracts/increase';
+import { PACKAGE_KINDS } from '@/lib/contracts/package';
 import { ContractTypeSchema, IcAddendumTypeSchema } from './contractors';
 import { uuid } from './uuid';
 
@@ -78,6 +79,11 @@ export const DraftContractVersionSchema = z
     addendumText: z.string().max(5000).nullable().default(null),
     /** Section 11.1 termination notice — the {{notice_days}} token. */
     noticeDays: z.number().int().min(1, 'Notice must be at least 1 day.').max(365).default(15),
+    /** Agreements to re-sign alongside the contract (decision 8). */
+    resignKinds: z
+      .array(z.enum(PACKAGE_KINDS))
+      .default([])
+      .transform((k) => [...new Set(k)]),
   })
   // Mirrors the table CHECK, with a message a person can act on.
   .refine((v) => v.effectiveFrom >= v.startDate, {

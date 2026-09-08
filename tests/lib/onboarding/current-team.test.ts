@@ -26,6 +26,55 @@ const doc = (over: Partial<TeamDoc> & { id: string }): TeamDoc => ({
 
 const kinds = (items: ReturnType<typeof deriveOpenItems>) => items.map((i) => i.kind);
 
+describe('deriveOpenItems — re-sign package (wizard decisions 8–9)', () => {
+  const pkg = {
+    version: 3,
+    dueOn: '2026-09-30',
+    kinds: ['confidentiality_nda', 'baa'] as const,
+    outstanding: ['confidentiality_nda', 'baa'] as const,
+    contractSigned: true,
+  };
+
+  it('is one item naming what is unsigned and the due date, red once pay is held', () => {
+    const base = {
+      version: { status: 'active' as const, sentAt: null },
+      hasIcSignature: true,
+      docs: [],
+    };
+    const open = deriveOpenItems(
+      { ...base, package: { ...pkg, kinds: [...pkg.kinds], outstanding: [...pkg.outstanding] } },
+      TODAY,
+    );
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({
+      kind: 'resign',
+      label: 'Re-sign NDA, BAA · due Sep 30, 2026',
+      tone: 'warn',
+    });
+    expect(owedLines(open)).toEqual([
+      'Sign your Confidentiality / NDA in the portal by Sep 30, 2026',
+      'Sign your Business Associate Agreement in the portal by Sep 30, 2026',
+    ]);
+    expect(digestLines(open)).toEqual(['Re-sign NDA, BAA · due Sep 30, 2026']);
+
+    const held = deriveOpenItems(
+      { ...base, package: { ...pkg, kinds: [...pkg.kinds], outstanding: ['baa'] }, payHeld: true },
+      TODAY,
+    );
+    expect(held[0]).toMatchObject({
+      label: 'Re-sign BAA · due Sep 30, 2026 · pay held',
+      tone: 'bad',
+    });
+
+    expect(
+      deriveOpenItems(
+        { ...base, package: { ...pkg, kinds: [...pkg.kinds], outstanding: [] } },
+        TODAY,
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe('deriveOpenItems — contract', () => {
   it('an in-flight version is the item; no version and no v1 signature is "no agreement"', () => {
     expect(

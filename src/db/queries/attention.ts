@@ -46,6 +46,8 @@ export interface AttentionCounts {
   onboardingStalled: number;
   sessionsPending: { count: number; oldestDays: number | null };
   countersignPending: number;
+  /** Draft rows withheld for an unsigned re-sign package (wizard decision 9). */
+  heldPay: number;
   /** Locked periods whose money has not been sent — the liability KPI. */
   lockedUnpaid: { count: number; centavos: number };
   /** The locked batch to send first (earliest pay date), for the owner duty list. */
@@ -94,6 +96,7 @@ export const fetchAttentionCounts = cache(
       onboarding,
       sessionsCount,
       sessionsOldest,
+      heldPay,
       summaries,
       countersign,
       invoices,
@@ -192,6 +195,13 @@ export const fetchAttentionCounts = cache(
         .order('session_date', { ascending: true })
         .limit(1)
         .maybeSingle(),
+      db
+        .from('payments')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', companyId)
+        .eq('status', 'draft')
+        .not('hold_reason', 'is', null)
+        .is('hold_lifted_at', null),
       fetchPeriodSummaries(db, companyId),
       canCountersign
         ? Promise.all([
@@ -312,6 +322,7 @@ export const fetchAttentionCounts = cache(
           : null,
       },
       countersignPending,
+      heldPay: heldPay.count ?? 0,
       lockedUnpaid,
       lockedPeriod: nextLocked
         ? { id: nextLocked.id, start: nextLocked.periodStart, end: nextLocked.periodEnd }

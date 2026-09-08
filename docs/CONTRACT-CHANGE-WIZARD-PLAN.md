@@ -6,8 +6,15 @@
 > `change_detail.increase` + the history line, early pricing as an in-memory overlay of sent /
 > signed versions on the `rates` rows at Calculate's one rate read — send and void rebuild the
 > worker's open drafts so it holds straight away — and the overpayment note on
-> `change_detail.overpayment` when a void follows pay) shipped 2026-09-08. Slices 3–5 in §6 not
-> started.
+> `change_detail.overpayment` when a void follows pay) shipped 2026-09-08. Slice 3 (Package step
+> with Request a document; send supersedes the ticked signatures and stamps `resign_due_on`; the
+> portal signs the contract then each agreement in order through the same modal, filed under the
+> version number; `syncPackageHolds` in the payroll service stamps `payments.hold_*` after every
+> draft build and on every package state change, lifts on its own or by hand with a logged note;
+> the Wise batch, Mark paid and the Process page refuse a held row; the three warnings — send
+> email, portal card, one reminder at due − 3 from the hiring-review cron slot; rehire blocks
+> countersign; void restores an un-re-signed superseded signature) shipped 2026-09-08. Slices 4–5
+> in §6 not started.
 > **Builds on:** [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — every decision there
 > stands unless §0 below says otherwise (only decision 5's "rate is written at countersign" gains
 > the early-pricing exception in §0.5).

@@ -51,7 +51,8 @@ const toRows = (payments: ProcessPayment[]): Row[] =>
         recipientId: def,
         recipients: p.wiseRecipients,
         recipientUuid: p.wiseRecipientUuid,
-        include: !!def && !p.wiseTransferId,
+        // Wizard decision 9: a held row is never pre-ticked (the action refuses it anyway).
+        include: !!def && !p.wiseTransferId && !p.holdReason,
         transferId: p.wiseTransferId,
       };
     });

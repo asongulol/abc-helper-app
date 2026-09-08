@@ -34,6 +34,7 @@ import {
   deleteStatement,
   getPeriodSummaries,
   getSavedPayments,
+  liftPaymentHold,
   lockPeriod,
   openOffCycleBatch,
   reconcilePeriodApprovedTime,
@@ -79,6 +80,8 @@ type EditableRow = {
   netPhp: number | null;
   payoutMethod: string | null;
   inactive: boolean;
+  /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
+  holdReason: string | null;
 };
 
 interface PayrollShellProps {
@@ -127,6 +130,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   netPhp: p.netPhp,
   payoutMethod: p.payoutMethod,
   inactive: p.inactive,
+  holdReason: p.holdReason,
 });
 
 const recomputeRow = (r: EditableRow): EditableRow => {
@@ -533,6 +537,26 @@ export const PayrollShell = ({
   };
 
   // Patch a row value and recompute net locally (optimistic); debounced server save
+  // Wizard decision 9: lift a re-sign-package hold by hand, with a logged
+  // reason. Not patchRow — that arms the autosave, and nothing here is money.
+  const liftHold = (r: EditableRow) => {
+    const note = window.prompt(`Lift the pay hold on ${r.displayName || r.name}? Reason (logged):`);
+    if (note === null || !note.trim()) return;
+    setBusy(true);
+    void liftPaymentHold({ companyId, paymentId: r.paymentId, note: note.trim() })
+      .then((res) => {
+        if (!res.ok) {
+          notify(res.error, { type: 'error' });
+          return;
+        }
+        setRows((prev) =>
+          (prev ?? []).map((x) => (x.paymentId === r.paymentId ? { ...x, holdReason: null } : x)),
+        );
+        notify('Hold lifted — the row can be paid.', { type: 'success' });
+      })
+      .finally(() => setBusy(false));
+  };
+
   const patchRow = (workerId: string, patch: Partial<EditableRow>) => {
     dirty.current = true;
     setRows(
@@ -1324,6 +1348,22 @@ export const PayrollShell = ({
                               >
                                 {r.displayName || r.name}
                               </b>
+                              {r.holdReason && (
+                                <div style={{ marginTop: 2, fontSize: 11 }}>
+                                  <Badge tone="bad" style={{ fontSize: 10 }}>
+                                    ✋ Held: {r.holdReason}
+                                  </Badge>{' '}
+                                  <button
+                                    type="button"
+                                    className="btn link sm"
+                                    style={{ padding: '0 4px' }}
+                                    disabled={busy}
+                                    onClick={() => liftHold(r)}
+                                  >
+                                    Lift
+                                  </button>
+                                </div>
+                              )}
                               {r.inactive && (
                                 <Badge tone="bad" style={{ marginLeft: 6, fontSize: 10 }}>
                                   🚫 inactive

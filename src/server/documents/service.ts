@@ -36,18 +36,22 @@ import 'server-only';
 
 import { createServiceClient } from '@/db/clients/service';
 import { getPortalSettings, listCompaniesFull, parseOnboardingConfig } from '@/db/queries/config';
+import { fetchOutstandingPackages } from '@/db/queries/contracts';
 import {
   fetchDocumentsForExpiryCheck,
   fetchDocumentsForHiringReview,
 } from '@/db/queries/documents';
 import { fetchCurrentTeam } from '@/db/queries/onboarding';
+import { packageOwedLines, packageWarning } from '@/lib/contracts/package';
 import { shouldSendDigestToday } from '@/lib/documents/digest-schedule';
 import type { ExpiryResult } from '@/lib/documents/expiry';
 import { classifyExpiry } from '@/lib/documents/expiry';
 import type { HiringReviewResult } from '@/lib/documents/hiring-review';
 import { classifyHiringReview } from '@/lib/documents/hiring-review';
 import { digestLines } from '@/lib/onboarding/current-team';
-import { escapeHtml } from '@/server/email/templates';
+import { logEvent } from '@/server/audit';
+import { portalUrl, trySend } from '@/server/email/send';
+import { DEFAULT_HIRE_EMAILS, escapeHtml, mergeTemplate } from '@/server/email/templates';
 import { sendEmail } from '@/server/email/transport';
 import { env } from '@/server/env';
 
@@ -287,9 +291,66 @@ export const runHiringReviewCheck = async (
 // Scheduled hiring-review digest (config-driven)
 // ---------------------------------------------------------------------------
 
+/**
+ * Warning three of three (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 10): one
+ * automatic reminder, three days before a re-sign package's due date, to every
+ * contractor who still owes something on it. Rides the daily hiring-review
+ * slot rather than a cron of its own, and the exact-date match is what makes
+ * it fire once. Same template as the manual Remind; only contractors with an
+ * active portal login (the others get Onboard Current, as today).
+ */
+export const sendPackageReminders = async (
+  db: ReturnType<typeof createServiceClient>,
+  today: string,
+): Promise<number> => {
+  const dueOn = new Date(Date.parse(`${today}T00:00:00Z`) + 3 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const packages = await fetchOutstandingPackages(db, {});
+  const due = [...packages].filter(([, p]) => p.outstanding.length > 0 && p.dueOn === dueOn);
+  if (due.length === 0) return 0;
+  const ids = due.map(([workerId]) => workerId);
+  const [{ data: logins }, { data: workers }] = await Promise.all([
+    db
+      .from('contractor_logins')
+      .select('worker_id, email')
+      .in('worker_id', ids)
+      .eq('status', 'active'),
+    db.from('workers').select('id, first_name').in('id', ids),
+  ]);
+  const firstName = new Map((workers ?? []).map((w) => [w.id, (w.first_name ?? '').trim()]));
+  let sent = 0;
+  for (const login of logins ?? []) {
+    const pkg = packages.get(login.worker_id);
+    if (!pkg || !login.email) continue;
+    const owed = [...packageOwedLines(pkg), packageWarning(pkg.dueOn)];
+    const tpl = DEFAULT_HIRE_EMAILS.owed_reminder;
+    const vars = {
+      name: escapeHtml(firstName.get(login.worker_id) || 'there'),
+      portal_url: portalUrl(),
+      owed_list: `<ul>${owed.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`,
+    };
+    const ok = await trySend(
+      login.email,
+      mergeTemplate(tpl.subject, vars),
+      mergeTemplate(tpl.html, vars),
+      'owed_reminder',
+    );
+    if (ok) sent += 1;
+    await logEvent({
+      action: 'contract.package_reminded',
+      entity: login.worker_id,
+      detail: { due_on: pkg.dueOn, outstanding: pkg.outstanding, email_sent: ok, automatic: true },
+    });
+  }
+  return sent;
+};
+
 export interface ScheduledDigestResult {
   /** Did the digest actually run (config enabled AND today matched the frequency)? */
   ran: boolean;
+  /** Re-sign package reminders emailed on this tick (decision 10) — not gated by the digest config. */
+  packageReminders: number;
   /** When `ran` is false, why it was skipped. */
   skippedReason?: 'disabled' | 'frequency';
   /** Present only when `ran` is true. */
@@ -313,12 +374,15 @@ export const runScheduledHiringReviewDigest = async (
   const today = opts.today ?? new Date();
 
   const db = createServiceClient();
+  // The contractor-facing package reminder is a deadline, not a digest: it
+  // goes out whatever the admin's digest frequency says.
+  const packageReminders = await sendPackageReminders(db, today.toISOString().slice(0, 10));
   const settings = await getPortalSettings(db);
   const { reminders } = parseOnboardingConfig(settings.onboardingConfigRaw);
 
-  if (!reminders.enabled) return { ran: false, skippedReason: 'disabled' };
+  if (!reminders.enabled) return { ran: false, skippedReason: 'disabled', packageReminders };
   if (!shouldSendDigestToday(reminders.frequency, today)) {
-    return { ran: false, skippedReason: 'frequency' };
+    return { ran: false, skippedReason: 'frequency', packageReminders };
   }
 
   const result = await runHiringReviewCheck({
@@ -326,5 +390,5 @@ export const runScheduledHiringReviewDigest = async (
     recipients: reminders.send_to,
     skipEmail: false,
   });
-  return { ran: true, result };
+  return { ran: true, result, packageReminders };
 };
