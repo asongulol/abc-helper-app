@@ -9,7 +9,7 @@
  *   credentials  → {{name}} {{portal_url}} {{email}} {{password}}
  *   tools        → {{name}} {{portal_url}} {{tools_block}}
  *   withdraw     → {{name}}
- *   contract_review        → {{name}} {{portal_url}} {{version}} {{effective_from}}
+ *   contract_review        → {{name}} {{portal_url}} {{version}} {{effective_from}} {{reason}}
  *   contract_countersigned → {{name}} {{print_url}} {{version}} {{effective_from}}
  *   doc_request    → {{name}} {{doc_title}} {{portal_url}}
  *   owed_reminder  → {{name}} {{owed_list}} {{portal_url}}
@@ -160,7 +160,7 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
     subject: 'Your updated Aaron Anderson E.H.S. LLC contractor agreement is ready to sign',
     html: [
       '<p>Hi {{name}},</p>',
-      '<p>A new version of your Independent Contractor Agreement (version {{version}}) is ready for your review and signature. The new terms take effect on <b>{{effective_from}}</b>.</p>',
+      '<p>A new version of your Independent Contractor Agreement (version {{version}}) is ready for your review and signature. Reason: <b>{{reason}}</b>. The new terms take effect on <b>{{effective_from}}</b>.</p>',
       '<p>Please sign in to the contractor portal, read the agreement through to the end, and sign it:</p>',
       '<p><a href="{{portal_url}}" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Review and sign</a></p>',
       '<p>Your current agreement stays in force until the new one is countersigned. Questions? Just reply to this email.</p>',

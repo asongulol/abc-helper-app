@@ -1,7 +1,8 @@
 # Contract-change wizard — reason, increase, benefits, re-sign package, access
 
-> **Status:** decisions confirmed 2026-09-08 (owner interview, one question at a time). No code
-> yet. Slices in §6; start with slice 1.
+> **Status:** decisions confirmed 2026-09-08 (owner interview, one question at a time). Slice 1
+> (migration 47 with every column, wizard Reason → Terms → Review, reason label in the admin
+> history / portal / send email) shipped 2026-09-08. Slices 2–5 in §6 not started.
 > **Builds on:** [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — every decision there
 > stands unless §0 below says otherwise (only decision 5's "rate is written at countersign" gains
 > the early-pricing exception in §0.5).

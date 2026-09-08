@@ -9,11 +9,37 @@ import { uuid } from './uuid';
 
 const IsoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'must be an ISO date (YYYY-MM-DD)');
 
-/** The terms of a draft — everything that renders into the document. */
+/**
+ * Why a version exists (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 2). The
+ * label is what the contractor sees — on the portal and in the send email; the
+ * note never leaves the admin side.
+ */
+export const ContractChangeReasonSchema = z.enum([
+  'annual_review',
+  'cola',
+  'role_change',
+  'rehire',
+  'terms_change',
+  'other',
+]);
+export type ContractChangeReason = z.infer<typeof ContractChangeReasonSchema>;
+
+export const CONTRACT_CHANGE_REASON_LABEL: Record<ContractChangeReason, string> = {
+  annual_review: 'Annual review',
+  cola: 'Cost-of-living adjustment',
+  role_change: 'Role or title change',
+  rehire: 'Rehire',
+  terms_change: 'Change in terms',
+  other: 'Other',
+};
+
+/** The terms of a draft — everything that renders into the document, plus why. */
 export const DraftContractVersionSchema = z
   .object({
     workerId: uuid(),
     companyId: uuid(),
+    changeReason: ContractChangeReasonSchema,
+    changeNote: z.string().trim().max(1000).nullable().default(null),
     ratePhp: z.number().min(0, 'Rate cannot be negative.').max(10_000_000),
     position: z.string().max(100).nullable().default(null),
     employmentType: ContractTypeSchema.nullable().default(null),
@@ -30,6 +56,10 @@ export const DraftContractVersionSchema = z
   .refine((v) => v.effectiveFrom >= v.startDate, {
     message: 'Effective date cannot be before the start date.',
     path: ['effectiveFrom'],
+  })
+  .refine((v) => v.changeReason !== 'other' || !!v.changeNote, {
+    message: 'Say what the change is when the reason is Other.',
+    path: ['changeNote'],
   });
 export type DraftContractVersionInput = z.infer<typeof DraftContractVersionSchema>;
 

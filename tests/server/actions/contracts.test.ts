@@ -281,6 +281,7 @@ describe('draftContractVersion', () => {
   const terms = {
     workerId: W,
     companyId: CO,
+    changeReason: 'annual_review',
     ratePhp: 30000,
     position: 'Lead VA',
     employmentType: 'FT',
@@ -333,7 +334,12 @@ describe('draftContractVersion', () => {
 
     expect(res).toMatchObject({ ok: true, data: { versionId: V2, version: 2 } });
     expect(tables.contract_versions).toHaveLength(1);
-    expect(tables.contract_versions?.[0]).toMatchObject({ rate_php: 30000, position: 'Lead VA' });
+    expect(tables.contract_versions?.[0]).toMatchObject({
+      rate_php: 30000,
+      position: 'Lead VA',
+      change_reason: 'annual_review',
+      change_note: null,
+    });
   });
 
   it('refuses while a version is out for signature', async () => {
