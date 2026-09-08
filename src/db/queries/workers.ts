@@ -39,6 +39,9 @@ export type RosterWorker = {
   /** Annual HA pay date override (month/day only); null = hire anniversary. */
   healthAllowanceDate: string | null;
   thirteenthMonthEligible: boolean;
+  /** Records only — Calculate ignores both (wizard decision 6). */
+  holidayPayEligible: boolean;
+  ptoDaysPerYear: number;
   // Personal / HR (workers table)
   workEmail: string | null;
   workNumber: string | null;
@@ -92,7 +95,7 @@ export type RosterWorker = {
  */
 export const fetchRoster = cache(async (db: Db, companyId: string): Promise<RosterWorker[]> => {
   const SEL =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, holiday_pay_eligible, pto_days_per_year, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -124,6 +127,8 @@ export const fetchRoster = cache(async (db: Db, companyId: string): Promise<Rost
         healthAllowanceEligible: w.health_allowance_eligible,
         healthAllowanceDate: w.health_allowance_date,
         thirteenthMonthEligible: w.thirteenth_month_eligible,
+        holidayPayEligible: w.holiday_pay_eligible,
+        ptoDaysPerYear: w.pto_days_per_year,
         workEmail: w.work_email,
         workNumber: w.work_number,
         workExtension: w.work_extension,
@@ -210,7 +215,7 @@ export const fetchWorkerLink = async (
   // treat it as "no such worker" so callers' existing notFound() runs.
   if (!uuid().safeParse(workerId).success) return null;
   const SEL2 =
-    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
+    'id, worker_id, company_id, contract, pay_basis, role, hubstaff_name, weekly_hours, bill_rate_usd, session_rate_usd, status, workers(id, first_name, middle_name, last_name, email, mobile, ph_address, permanent_address, address_landmark, postal_code, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible, holiday_pay_eligible, pto_days_per_year, work_email, work_number, work_extension, shift_start, shift_end, date_of_birth, emergency_name, emergency_relationship, emergency_mobile, marital_status, education_level, course, year_graduated, school, gcash, paymaya, paypal, wise_tag, wise_recipient_id, wise_recipient_uuid, profile_extras, photo_url)' as const;
 
   const { data, error } = await db
     .from('worker_companies')
@@ -238,6 +243,8 @@ export const fetchWorkerLink = async (
     healthAllowanceEligible: w.health_allowance_eligible,
     healthAllowanceDate: w.health_allowance_date,
     thirteenthMonthEligible: w.thirteenth_month_eligible,
+    holidayPayEligible: w.holiday_pay_eligible,
+    ptoDaysPerYear: w.pto_days_per_year,
     workEmail: w.work_email,
     workNumber: w.work_number,
     workExtension: w.work_extension,
@@ -375,6 +382,8 @@ export const updateWorkerProfile = async (
     health_allowance_eligible: boolean;
     health_allowance_date?: string | null;
     thirteenth_month_eligible: boolean;
+    holiday_pay_eligible?: boolean;
+    pto_days_per_year?: number;
     work_email?: string | null;
     work_number?: string | null;
     work_extension?: string | null;

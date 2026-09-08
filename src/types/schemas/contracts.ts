@@ -45,6 +45,18 @@ export const IncreaseDetailSchema = z.object({
 });
 
 /**
+ * The four benefit terms that ride on a version and write through to the
+ * worker at countersign (decision 6). Silent in the document; records only.
+ */
+export const ContractBenefitsSchema = z.object({
+  healthAllowance: z.boolean(),
+  thirteenthMonth: z.boolean(),
+  holidayPay: z.boolean(),
+  ptoDaysPerYear: z.number().int().min(0).max(365),
+});
+export type ContractBenefits = z.infer<typeof ContractBenefitsSchema>;
+
+/**
  * contract_versions.change_detail. `increase` is written by the wizard;
  * `overpayment` by void, when the version had already priced paid periods
  * (decision 5: a note on the profile, no clawback).
@@ -68,6 +80,8 @@ export const DraftContractVersionSchema = z
     changeReason: ContractChangeReasonSchema,
     changeNote: z.string().trim().max(1000).nullable().default(null),
     changeDetail: z.object({ increase: IncreaseDetailSchema }).nullable().default(null),
+    /** Null = the worker's flags stay as they are (legacy rows read the same way). */
+    benefits: ContractBenefitsSchema.nullable().default(null),
     ratePhp: z.number().min(0, 'Rate cannot be negative.').max(10_000_000),
     position: z.string().max(100).nullable().default(null),
     employmentType: ContractTypeSchema.nullable().default(null),

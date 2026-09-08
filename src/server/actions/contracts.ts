@@ -28,6 +28,7 @@ import {
 import { fetchRates } from '@/db/queries/payroll';
 import { fetchAgreementTemplate } from '@/db/queries/portal';
 import { executeRateUpsert } from '@/db/queries/rates';
+import { fetchPtoYears } from '@/db/queries/time';
 import { hasPayOutstanding } from '@/db/queries/workers';
 import { mergeAgreement, monthlyFromPeriod, safeSigImg } from '@/lib/agreements/merge';
 import { packageLabels, packageWarning, resignDueOn } from '@/lib/contracts/package';
@@ -35,6 +36,7 @@ import { humanizeError } from '@/lib/errors';
 import { centavosToPhp } from '@/lib/format';
 import { centavos, majorToMinor, mulRatioMinor } from '@/lib/money';
 import { fullName } from '@/lib/names';
+import { type PtoYearBalance, ptoAccrual } from '@/lib/pay/pto';
 import { dayBefore, resolveRate } from '@/lib/pay/rates';
 import {
   type ActionResult,
@@ -188,6 +190,35 @@ export async function listContractVersions(
   }
 }
 
+export type PtoBalance = { capDays: number; years: PtoYearBalance[] };
+
+/**
+ * PTO accrued / used / balance per year for the profile's card (wizard
+ * decision 7) — reference only, capped at the worker's days per year.
+ */
+export async function getPtoBalance(args: unknown): Promise<ActionResult<PtoBalance>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  const parsed = EngagementRefSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const { workerId, companyId } = parsed.data;
+  if (!admin.isOwner && !admin.companyIds.includes(companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const [years, worker] = await Promise.all([
+      fetchPtoYears(db, workerId, companyId),
+      db.from('workers').select('pto_days_per_year').eq('id', workerId).maybeSingle(),
+    ]);
+    if (worker.error) throw new Error(`workers: ${worker.error.message}`);
+    const capDays = worker.data?.pto_days_per_year ?? 12;
+    return { ok: true, data: { capDays, years: ptoAccrual(years, capDays) } };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not load PTO.') };
+  }
+}
+
 /**
  * Save a draft: a new version prefilled by the caller from the contract of
  * record, or the existing draft edited in place — drafts are free (decision
@@ -222,6 +253,10 @@ export async function draftContractVersion(
       change_reason: input.changeReason,
       change_note: input.changeNote || null,
       change_detail: input.changeDetail,
+      health_allowance: input.benefits?.healthAllowance ?? null,
+      thirteenth_month: input.benefits?.thirteenthMonth ?? null,
+      holiday_pay: input.benefits?.holidayPay ?? null,
+      pto_days_per_year: input.benefits?.ptoDaysPerYear ?? null,
       rate_php: input.ratePhp,
       position: input.position?.trim() || null,
       employment_type: input.employmentType,
@@ -282,6 +317,7 @@ export async function draftContractVersion(
         note: input.changeNote || null,
         rate_php: input.ratePhp,
         increase: input.changeDetail?.increase ?? null,
+        benefits: input.benefits,
         effective_from: input.effectiveFrom,
         package: input.resignKinds,
         edited: !!inFlight,
@@ -811,7 +847,9 @@ export async function countersignContractVersion(
         .maybeSingle(),
       svc
         .from('workers')
-        .select('first_name, middle_name, last_name, email, status')
+        .select(
+          'first_name, middle_name, last_name, email, status, health_allowance_eligible, thirteenth_month_eligible, holiday_pay_eligible, pto_days_per_year',
+        )
         .eq('id', v.workerId)
         .maybeSingle(),
       svc
@@ -880,14 +918,35 @@ export async function countersignContractVersion(
         .eq('worker_id', v.workerId)
         .eq('company_id', v.companyId);
     });
-    if (rehire && before.worker.status !== 'active') {
-      const { error: wErr } = await svc
-        .from('workers')
-        .update({ status: 'active' })
-        .eq('id', v.workerId);
+    //    The worker row carries the benefit terms (wizard decision 6: written
+    //    through as part of the one unit) and, on a rehire, comes back to life.
+    const b = v.benefits;
+    const workerPatch = {
+      ...(b
+        ? {
+            health_allowance_eligible: b.healthAllowance,
+            thirteenth_month_eligible: b.thirteenthMonth,
+            holiday_pay_eligible: b.holidayPay,
+            pto_days_per_year: b.ptoDaysPerYear,
+          }
+        : {}),
+      ...(rehire && before.worker.status !== 'active' ? { status: 'active' as const } : {}),
+    };
+    if (Object.keys(workerPatch).length) {
+      const { error: wErr } = await svc.from('workers').update(workerPatch).eq('id', v.workerId);
       if (wErr) throw new Error(`workers: ${wErr.message}`);
       undo.push(async () => {
-        await svc.from('workers').update({ status: before.worker.status }).eq('id', v.workerId);
+        const w = before.worker;
+        await svc
+          .from('workers')
+          .update({
+            status: w.status,
+            health_allowance_eligible: w.health_allowance_eligible,
+            thirteenth_month_eligible: w.thirteenth_month_eligible,
+            holiday_pay_eligible: w.holiday_pay_eligible,
+            pto_days_per_year: w.pto_days_per_year,
+          })
+          .eq('id', v.workerId);
       });
     }
 
@@ -961,6 +1020,7 @@ export async function countersignContractVersion(
         rate_php: { from: rate.priorAmountPhp, to: ratePhp },
         effective_from: effectiveFrom,
         rate_kind: rate.kind,
+        benefits: v.benefits,
         rehired: rehire,
         superseded: supersededIds,
         email_sent: emailSent,

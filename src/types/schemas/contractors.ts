@@ -171,6 +171,9 @@ export const SaveWorkerProfileSchema = z
     /** Annual HA pay date override (month/day only); null = hire anniversary. */
     healthAllowanceDate: IsoDateSchema.nullable().optional(),
     thirteenthMonthEligible: z.boolean(),
+    /** Records only (wizard decision 6); optional so older callers keep working. */
+    holidayPayEligible: z.boolean().optional(),
+    ptoDaysPerYear: z.number().int().min(0).max(365).optional(),
     // Personal / HR (workers table) — all optional so partial edits are accepted.
     workEmail: z
       .string()

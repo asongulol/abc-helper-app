@@ -125,6 +125,58 @@ describe('contractOfRecord', () => {
     });
   });
 
+  it('carries the benefit terms: the version’s own, else the worker’s flags (wizard decision 6)', async () => {
+    const worker = {
+      health_allowance_eligible: true,
+      thirteenth_month_eligible: false,
+      holiday_pay_eligible: true,
+      pto_days_per_year: 15,
+    };
+    const fromWorker = {
+      healthAllowance: true,
+      thirteenthMonth: false,
+      holidayPay: true,
+      ptoDaysPerYear: 15,
+    };
+    // Legacy read-through and a versioned row drafted before the wizard: the worker's.
+    expect(
+      (await contractOfRecord(stub({ worker_companies: link, workers: worker }).db, W, CO))
+        ?.benefits,
+    ).toEqual(fromWorker);
+    const legacyRow = { id: 'v2', version: 2, status: 'active', rate_php: '25000.00' };
+    expect(
+      (
+        await contractOfRecord(
+          stub({ contract_versions: legacyRow, worker_companies: link, workers: worker }).db,
+          W,
+          CO,
+        )
+      )?.benefits,
+    ).toEqual(fromWorker);
+    // A wizard version carries its own.
+    const own = {
+      ...legacyRow,
+      health_allowance: false,
+      thirteenth_month: true,
+      holiday_pay: false,
+      pto_days_per_year: 10,
+    };
+    expect(
+      (
+        await contractOfRecord(
+          stub({ contract_versions: own, worker_companies: link, workers: worker }).db,
+          W,
+          CO,
+        )
+      )?.benefits,
+    ).toEqual({
+      healthAllowance: false,
+      thirteenthMonth: true,
+      holidayPay: false,
+      ptoDaysPerYear: 10,
+    });
+  });
+
   it('is null when the worker has no link to the company', async () => {
     const { db } = stub({ rates: { amount_php: '22000' } });
     expect(await contractOfRecord(db, W, CO)).toBeNull();

@@ -21,6 +21,8 @@ export type FormState = {
   /** Annual HA pay date override (yyyy-mm-dd; month/day only, '' = hire anniversary). */
   healthAllowanceDate: string;
   thirteenthMonthEligible: boolean;
+  holidayPayEligible: boolean;
+  ptoDaysPerYear: string;
   contract: ContractType;
   payBasis: PayBasis | null;
   role: string;

@@ -58,6 +58,8 @@ export function toForm(w: RosterWorker): FormState {
     healthAllowanceEligible: w.healthAllowanceEligible,
     healthAllowanceDate: w.healthAllowanceDate ?? '',
     thirteenthMonthEligible: w.thirteenthMonthEligible,
+    holidayPayEligible: w.holidayPayEligible,
+    ptoDaysPerYear: String(w.ptoDaysPerYear),
     contract: eng.contract,
     payBasis: eng.payBasis,
     role: w.role ?? '',
@@ -303,10 +305,12 @@ export function useContractorProfile(
       errs.billRateUsd = 'Must be a number.';
     if (form.sessionRateUsd !== '' && Number.isNaN(Number(form.sessionRateUsd)))
       errs.sessionRateUsd = 'Must be a number.';
+    if (!/^\d+$/.test(form.ptoDaysPerYear)) errs.ptoDaysPerYear = 'Whole days.';
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       // Surface the first error's tab so the user sees what's wrong.
-      if (errs.firstName || errs.lastName || errs.email) setActiveTab('profile');
+      if (errs.firstName || errs.lastName || errs.email || errs.ptoDaysPerYear)
+        setActiveTab('profile');
       else if (errs.billRateUsd || errs.sessionRateUsd) setActiveTab('pay');
       else setActiveTab('personal');
       return false;
@@ -364,6 +368,8 @@ export function useContractorProfile(
         healthAllowanceEligible: form.healthAllowanceEligible,
         healthAllowanceDate: form.healthAllowanceDate || null,
         thirteenthMonthEligible: form.thirteenthMonthEligible,
+        holidayPayEligible: form.holidayPayEligible,
+        ptoDaysPerYear: Number(form.ptoDaysPerYear),
         workEmail: str(form.workEmail),
         workNumber: str(form.workNumber),
         workExtension: str(form.workExtension),
@@ -417,6 +423,8 @@ export function useContractorProfile(
         healthAllowanceEligible: form.healthAllowanceEligible,
         healthAllowanceDate: form.healthAllowanceDate || null,
         thirteenthMonthEligible: form.thirteenthMonthEligible,
+        holidayPayEligible: form.holidayPayEligible,
+        ptoDaysPerYear: Number(form.ptoDaysPerYear),
         workEmail: str(form.workEmail),
         workNumber: str(form.workNumber),
         workExtension: str(form.workExtension),

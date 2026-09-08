@@ -251,6 +251,34 @@ export function ProfileTab({
           />
           13th-month
         </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={form.holidayPayEligible}
+            onChange={(e) => set('holidayPayEligible', e.target.checked)}
+            disabled={isPending}
+          />
+          Holiday pay
+        </label>
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}
+          title="Reference only — the accrual on the Pay tab is capped here. Calculate ignores it."
+        >
+          PTO days / year
+          <input
+            type="number"
+            min="0"
+            max="365"
+            step="1"
+            style={{ width: 64 }}
+            value={form.ptoDaysPerYear}
+            onChange={(e) => set('ptoDaysPerYear', e.target.value)}
+            disabled={isPending}
+          />
+          {errors.ptoDaysPerYear && (
+            <span style={{ color: 'var(--bad)', fontSize: 12 }}>{errors.ptoDaysPerYear}</span>
+          )}
+        </label>
       </div>
       <SaveBar isPending={isPending} serverError={serverError} />
     </form>

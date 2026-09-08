@@ -6,6 +6,7 @@ import { PAY_BASIS_OPTIONS, type PayBasis } from '@/types/schemas/contractors';
 import { EndEngagementModal } from '../EndEngagementModal';
 import { RateCard } from '../RateCard';
 import { Field } from './Field';
+import { PtoCard } from './PtoCard';
 import { SaveBar } from './SaveBar';
 import { type ProfileTabProps, SECTION_H4 } from './types';
 import { WisePayoutPanel } from './WisePayoutPanel';
@@ -134,6 +135,10 @@ export function PayTab({
           isOwner={isOwner}
           onNewContract={onNewContract}
         />
+      </section>
+      <section style={{ marginTop: 24 }}>
+        <h4 style={SECTION_H4}>Paid time off</h4>
+        <PtoCard workerId={worker.workerId} companyId={companyId} />
       </section>
       <WisePayoutPanel workerId={worker.workerId} isOwner={isOwner} />
       <section style={{ marginTop: 24 }}>

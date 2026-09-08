@@ -525,6 +525,32 @@ describe('draftContractVersion', () => {
     });
   });
 
+  it('stores the benefit terms on the version, and nulls when the wizard sent none (slice 4)', async () => {
+    const tables = boot(seed({ versions: [] }));
+    const benefits = {
+      healthAllowance: true,
+      thirteenthMonth: false,
+      holidayPay: true,
+      ptoDaysPerYear: 15,
+    };
+
+    expect((await draftContractVersion({ ...terms, benefits })).ok).toBe(true);
+    expect(first(tables)).toMatchObject({
+      health_allowance: true,
+      thirteenth_month: false,
+      holiday_pay: true,
+      pto_days_per_year: 15,
+    });
+
+    expect((await draftContractVersion(terms)).ok).toBe(true);
+    expect(first(tables)).toMatchObject({
+      health_allowance: null,
+      thirteenth_month: null,
+      holiday_pay: null,
+      pto_days_per_year: null,
+    });
+  });
+
   it('starts at version 2 with nothing to point at when the record is the v1 read-through', async () => {
     const tables = boot(seed({ versions: [] }));
 
@@ -837,6 +863,46 @@ describe('countersignContractVersion', () => {
     expect(html).toContain(`http://localhost:3000/portal/contracts/${V3}/print`);
     expect(html).toContain('2026-09-16');
     expect(context).toBe('contract_countersigned');
+  });
+
+  it('writes the benefit terms through to the worker, and puts them back on failure (slice 4, decision 6)', async () => {
+    const tables = current();
+    tables.workers = [
+      {
+        ...(tables.workers?.[0] as Row),
+        health_allowance_eligible: true,
+        thirteenth_month_eligible: true,
+        holiday_pay_eligible: false,
+        pto_days_per_year: 12,
+      },
+    ];
+    Object.assign(byId(tables, V3), {
+      health_allowance: false,
+      thirteenth_month: true,
+      holiday_pay: true,
+      pto_days_per_year: 20,
+    });
+
+    expect((await countersignContractVersion({ versionId: V3 })).ok).toBe(true);
+    expect(tables.workers?.[0]).toMatchObject({
+      health_allowance_eligible: false,
+      thirteenth_month_eligible: true,
+      holiday_pay_eligible: true,
+      pto_days_per_year: 20,
+    });
+  });
+
+  it('leaves the worker’s flags alone when the version carries none', async () => {
+    const tables = current();
+    tables.workers = [
+      { ...(tables.workers?.[0] as Row), holiday_pay_eligible: true, pto_days_per_year: 18 },
+    ];
+
+    expect((await countersignContractVersion({ versionId: V3 })).ok).toBe(true);
+    expect(tables.workers?.[0]).toMatchObject({
+      holiday_pay_eligible: true,
+      pto_days_per_year: 18,
+    });
   });
 
   it('rehire: reopens the engagement from the new start date and leaves the old rate closed', async () => {
