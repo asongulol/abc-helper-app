@@ -18,7 +18,13 @@
 > stored on the version — null = unchanged — and written to the worker at countersign inside the
 > same undo stack; `holiday_pay_eligible` / `pto_days_per_year` editable on the profile; the pure
 > accrual in `src/lib/pay/pto.ts` behind `getPtoBalance` and the Pay tab's PTO card) shipped
-> 2026-09-08. Slice 5 in §6 not started.
+> 2026-09-08. Slice 5 (Access step between Package and Review built from `getPortalAccess` —
+> status, login email, last sign-in — with the email editable through `updatePortalEmail`, which
+> writes the auth user, `contractor_logins` and `workers.email` together, and one line saying what
+> Send will do, repeated on Review; a rehire prefills its terms and benefits from the version the
+> ended engagement finished on, starts with a blank start date the effective date follows, and the
+> Package step lists documents on file whose newest copy is expired or expiring within 30 days
+> with a Request button each) shipped 2026-09-08. All five slices are in.
 > **Builds on:** [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — every decision there
 > stands unless §0 below says otherwise (only decision 5's "rate is written at countersign" gains
 > the early-pricing exception in §0.5).

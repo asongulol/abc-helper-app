@@ -2,17 +2,18 @@
 
 /**
  * Contract-change wizard (docs/CONTRACT-CHANGE-WIZARD-PLAN.md §4) — every new
- * version goes through here: Reason → Terms → Increase → Review, then Save
- * draft or Send for signature from Review. The reason sets defaults and never
- * skips a step (decision 2); reopening a draft lands on Review with everything
- * editable (decision 3). The Increase step owns the rate (decision 4). The
- * Benefits step carries the four terms written to the worker at countersign
- * (decision 6). The Package step is the re-sign package (decision 8); Access
- * slots in before Review in a later slice.
+ * version goes through here: Reason → Terms → Increase → Benefits → Package →
+ * Access → Review, then Save draft or Send for signature from Review. The
+ * reason sets defaults and never skips a step (decision 2); reopening a draft
+ * lands on Review with everything editable (decision 3). The Increase step
+ * owns the rate (decision 4). The Benefits step carries the four terms written
+ * to the worker at countersign (decision 6). The Package step is the re-sign
+ * package (decision 8). The Access step confirms the login Send will use, with
+ * the email editable there (decision 12).
  */
 
-import { useState, useTransition } from 'react';
-import { Modal, Spinner, useToast } from '@/components/ui';
+import { useEffect, useState, useTransition } from 'react';
+import { Badge, Modal, Spinner, useToast } from '@/components/ui';
 import type { ContractOfRecord, ContractVersion } from '@/db/queries/contracts';
 import type { RosterWorker } from '@/db/queries/workers';
 import { monthlyFromPeriod } from '@/lib/agreements/merge';
@@ -32,9 +33,15 @@ import {
   resignDueOn,
 } from '@/lib/contracts/package';
 import { nextPeriod } from '@/lib/dates/periods';
-import { fmtDate, money } from '@/lib/format';
+import { daysUntil, EXPIRY_KIND_LABEL } from '@/lib/documents/expiry';
+import { fmtDate, fmtDateTime, money } from '@/lib/format';
 import { draftContractVersion } from '@/server/actions/contracts';
-import { requestDocument } from '@/server/actions/onboarding';
+import { getOnboardingDetail, requestDocument } from '@/server/actions/onboarding';
+import {
+  getPortalAccess,
+  type PortalAccess,
+  updatePortalEmail,
+} from '@/server/actions/portal-admin';
 import { CONTRACT_OPTIONS, type ContractType, todayManila } from '@/types/schemas/contractors';
 import {
   CONTRACT_CHANGE_REASON_LABEL,
@@ -70,7 +77,7 @@ type Form = {
   resignKinds: PackageKind[];
 };
 
-const STEPS = ['Reason', 'Terms', 'Increase', 'Benefits', 'Package', 'Review'] as const;
+const STEPS = ['Reason', 'Terms', 'Increase', 'Benefits', 'Package', 'Access', 'Review'] as const;
 const BENEFIT_LABEL: Record<keyof Omit<ContractBenefits, 'ptoDaysPerYear'>, string> = {
   healthAllowance: 'Health allowance',
   thirteenthMonth: '13th month',
@@ -94,12 +101,26 @@ const METHOD_LABEL: Record<IncreaseMethod, string> = {
 const defaultMethod = (reason: ContractChangeReason | ''): IncreaseMethod =>
   reason === 'annual_review' || reason === 'cola' ? 'percent' : 'exact';
 
+/** Null = no login yet; undefined = still loading. */
+type PortalLogin = PortalAccess['login'];
+/** Decision 12: the one line saying what Send does about their login — there is no opt-out. */
+const sendAccessLine = (login: PortalLogin | undefined, email: string): string =>
+  !email
+    ? 'Enter an email — the contractor signs in the portal to sign.'
+    : !login
+      ? `Send creates their portal login at ${email} and emails the credentials with the contract.`
+      : login.status !== 'active'
+        ? `Send restores their portal login and emails the contract to ${email}.`
+        : `Send emails the contract to ${email}; they sign in as usual.`;
+
 /**
  * Prefill: the draft being edited as it is; else the version just voided, so a
  * fix to something the contractor hasn't signed yet doesn't mean retyping it;
  * else the contract of record with the effective date moved to the next pay
- * period (CONTRACT-VERSIONS-PLAN §3). A rehire gets a fresh start date too —
- * the old engagement's is not the new one (decision 7) — and Rehire as the reason.
+ * period (CONTRACT-VERSIONS-PLAN §3). A rehire prefills from the contract the
+ * ended engagement finished on (the read-through only knows version 1's
+ * terms), picks a new start date the terms apply from (wizard decision 11),
+ * and gets Rehire as the reason.
  */
 const formFrom = (
   record: ContractOfRecord,
@@ -110,10 +131,10 @@ const formFrom = (
   const next = nextPeriod(todayManila()).start;
   const rehire = worker.linkStatus === 'ended';
   const resume = draft ?? (latest?.status === 'void' ? latest : null);
-  const t = resume ?? record;
+  const t = resume ?? (rehire && latest?.status === 'ended' ? latest : record);
   const inc = resume?.changeDetail?.increase ?? null;
-  // Prefilled from the worker's flags unless the draft already carries its own.
-  const b = resume?.benefits ?? record.benefits;
+  // Prefilled from the worker's flags unless the version carries its own.
+  const b = t.benefits ?? record.benefits;
   return {
     changeReason: resume?.changeReason ?? (rehire ? 'rehire' : ''),
     changeNote: resume?.changeNote ?? '',
@@ -124,8 +145,8 @@ const formFrom = (
     employmentType: t.employmentType ?? worker.contract,
     schedule: t.schedule ?? '',
     hoursPerWeek: t.hoursPerWeek != null ? String(t.hoursPerWeek) : '',
-    startDate: resume?.startDate ?? (rehire ? next : (record.startDate ?? worker.hireDate ?? '')),
-    effectiveFrom: resume?.effectiveFrom ?? next,
+    startDate: resume?.startDate ?? (rehire ? '' : (record.startDate ?? worker.hireDate ?? '')),
+    effectiveFrom: resume?.effectiveFrom ?? (rehire ? '' : next),
     addendumType: (t.addendumType as AddendumType | null) ?? '',
     addendumText: t.addendumText ?? '',
     noticeDays: String(t.noticeDays ?? 15),
@@ -197,7 +218,7 @@ interface Props {
   record: ContractOfRecord;
   /** The draft being edited — opens on Review. Null for a new version. */
   draft: ContractVersion | null;
-  /** The newest version of any status, for the void-prefill. */
+  /** The newest version of any status — the void-prefill, and a rehire's terms when it is the ended one. */
   latest: ContractVersion | null;
   onClose: () => void;
   onSaved: () => Promise<void>;
@@ -224,9 +245,77 @@ export function ContractWizard({
   const rehire = worker.linkStatus === 'ended';
   const liveDiffers =
     record.liveRatePhp != null && record.ratePhp != null && record.liveRatePhp !== record.ratePhp;
+  // Decision 12: the login Send will use, and the address on record right now
+  // (the login's, else the worker's) — what Save on the Access step changes.
+  const [access, setAccess] = useState<PortalLogin | undefined>(undefined);
+  const [accessErr, setAccessErr] = useState('');
+  const [email, setEmail] = useState(worker.email ?? '');
+  const [knownEmail, setKnownEmail] = useState(worker.email ?? '');
+  const [savingEmail, startSavingEmail] = useTransition();
+  // Decision 11: documents on file whose newest copy is expired or expiring
+  // within 30 days, one per title — offered to Request a document.
+  const [expiring, setExpiring] = useState<{ title: string; expiresOn: string; days: number }[]>(
+    [],
+  );
+  const [requested, setRequested] = useState<string[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    void getPortalAccess({ workerId: worker.workerId }).then((res) => {
+      if (!alive) return;
+      if (!res.ok) {
+        setAccessErr(res.error);
+        return;
+      }
+      setAccess(res.data.login);
+      if (res.data.login?.email) {
+        setEmail(res.data.login.email);
+        setKnownEmail(res.data.login.email);
+      }
+    });
+    void getOnboardingDetail(worker.workerId).then((res) => {
+      if (!alive || !res.ok) return;
+      const today = new Date(todayManila());
+      const newest = new Map<string, string>();
+      for (const d of res.data.documents) {
+        if (!d.expiresOn) continue;
+        const title = d.title || EXPIRY_KIND_LABEL[d.kind] || d.kind;
+        if (d.expiresOn > (newest.get(title) ?? '')) newest.set(title, d.expiresOn);
+      }
+      setExpiring(
+        [...newest]
+          .map(([title, expiresOn]) => ({ title, expiresOn, days: daysUntil(expiresOn, today) }))
+          .filter((d) => d.days <= 30)
+          .sort((a, b) => a.days - b.days),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+  }, [worker.workerId]);
 
   const update = <K extends keyof Form>(key: K, value: Form[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+  // Decision 11: a rehire's effective date follows the start date until it is edited on its own.
+  const setStart = (startDate: string) =>
+    setForm((f) => ({
+      ...f,
+      startDate,
+      effectiveFrom: rehire && f.effectiveFrom === f.startDate ? startDate : f.effectiveFrom,
+    }));
+  const saveEmail = () =>
+    startSavingEmail(async () => {
+      const res = await updatePortalEmail({ workerId: worker.workerId, email });
+      if (!res.ok) {
+        notify(res.error, { type: 'error' });
+        return;
+      }
+      setEmail(res.data.email);
+      setKnownEmail(res.data.email);
+      notify(access ? 'Login email changed.' : 'Email saved to their profile.', {
+        type: 'success',
+      });
+    });
   // A new reason resets the Increase step to its default; re-picking the same one keeps it.
   const pickReason = (r: ContractChangeReason) =>
     setForm((f) => {
@@ -250,8 +339,7 @@ export function ContractWizard({
     }));
   // Uploads use the existing Request a document (decision 8): it lands on their
   // owed list and emails them now, whether or not this version is ever sent.
-  const requestDoc = () => {
-    const title = docTitle.trim();
+  const requestDoc = (title: string) => {
     if (!title) return;
     startRequesting(async () => {
       const res = await requestDocument({ workerId: worker.workerId, title });
@@ -265,6 +353,7 @@ export function ContractWizard({
           : `${title} added to their owed list, but the email could not be sent.`,
         { type: res.data.emailSent ? 'success' : 'warn' },
       );
+      setRequested((r) => [...r, title]);
       setDocTitle('');
     });
   };
@@ -282,6 +371,7 @@ export function ContractWizard({
     inc !== null,
     benefits !== null,
     true,
+    knownEmail !== '',
     true,
   ];
   // A step is reachable once every step before it is valid.
@@ -510,7 +600,7 @@ export function ContractWizard({
                 id="cv-start"
                 type="date"
                 value={form.startDate}
-                onChange={(e) => update('startDate', e.target.value)}
+                onChange={(e) => setStart(e.target.value)}
                 disabled={busy}
               />
             </Field>
@@ -722,16 +812,106 @@ export function ContractWizard({
                 type="button"
                 className="btn ghost sm"
                 disabled={busy || requesting || !docTitle.trim()}
-                onClick={requestDoc}
+                onClick={() => requestDoc(docTitle.trim())}
               >
                 {requesting ? <Spinner /> : 'Request'}
               </button>
             </div>
           </Field>
+          {expiring.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <p className="sub" style={{ fontSize: 12, margin: '0 0 4px' }}>
+                On file but expired or expiring within 30 days — ask for a fresh copy:
+              </p>
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                {expiring.map((d) => (
+                  <li
+                    key={d.title}
+                    style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' }}
+                  >
+                    <span>{d.title}</span>
+                    <span className="muted" style={{ fontSize: 12 }}>
+                      {d.days < 0 ? 'expired' : 'expires'} {fmtDate(d.expiresOn)}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      disabled={busy || requesting || requested.includes(d.title)}
+                      onClick={() => requestDoc(d.title)}
+                    >
+                      {requested.includes(d.title) ? 'Requested' : 'Request'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
       {step === 5 && (
+        <div>
+          <div
+            style={{
+              display: 'flex',
+              gap: 16,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              marginBottom: 10,
+            }}
+          >
+            {accessErr ? (
+              <span className="sub">{accessErr}</span>
+            ) : access === undefined ? (
+              <Spinner />
+            ) : !access ? (
+              <Badge tone="neutral">No portal login</Badge>
+            ) : (
+              <>
+                <Badge tone={access.status === 'active' ? 'good' : 'bad'}>
+                  {access.status === 'active' ? 'Access active' : `Access ${access.status}`}
+                </Badge>
+                <span className="sub">Granted {fmtDate(access.createdAt)}</span>
+                <span className="sub">
+                  Last sign-in {access.lastSignInAt ? fmtDateTime(access.lastSignInAt) : 'never'}
+                </span>
+              </>
+            )}
+          </div>
+          <Field id="cv-email" label={access ? 'Login email' : 'Email'} required>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                id="cv-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={busy || savingEmail}
+              />
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={
+                  busy ||
+                  savingEmail ||
+                  !email.includes('@') ||
+                  email.trim().toLowerCase() === knownEmail.toLowerCase()
+                }
+                onClick={saveEmail}
+              >
+                {savingEmail ? <Spinner /> : 'Save'}
+              </button>
+            </div>
+          </Field>
+          <p className="sub" style={{ fontSize: 12, margin: '4px 0 0' }}>
+            {access
+              ? 'Saving changes the address they sign in with and the one on their profile.'
+              : 'Saved to their profile; Send creates the login at it.'}
+          </p>
+          <p style={{ margin: '10px 0 0' }}>{sendAccessLine(access, knownEmail)}</p>
+        </div>
+      )}
+
+      {step === 6 && (
         <div>
           <p style={{ margin: '0 0 10px' }}>
             <strong>
@@ -778,9 +958,8 @@ export function ContractWizard({
             </table>
           </div>
           <p className="sub" style={{ fontSize: 12, margin: '10px 0 0' }}>
-            Send freezes the document as it stands today
-            {rehire ? ' and restores their portal login so they can sign' : ''}. Pay from{' '}
-            {fmtDate(form.effectiveFrom)} is priced at the new rate as soon as it is sent; the
+            Send freezes the document as it stands today. {sendAccessLine(access, knownEmail)} Pay
+            from {fmtDate(form.effectiveFrom)} is priced at the new rate as soon as it is sent; the
             current contract of record stays in force until the new version is countersigned.
             {form.resignKinds.length > 0 &&
               (rehire

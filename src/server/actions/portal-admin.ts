@@ -11,6 +11,7 @@
  * NOT fail the action or surface an error to the caller.
  */
 
+import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/db/clients/server';
 import { createServiceClient } from '@/db/clients/service';
 import {
@@ -749,6 +750,7 @@ export async function deleteContractor(args: {
 const ACCESS_ACTIONS = [
   'portal_login.created',
   'portal_login.reset_password',
+  'portal_login.email_changed',
   'portal_login.revoked',
   'portal_login.restored',
   'portal_login.resend_hire_emails',
@@ -836,5 +838,51 @@ export async function getPortalAccess(args: {
     };
   } catch (err) {
     return { ok: false, error: humanizeError(err, 'Lookup failed.') };
+  }
+}
+
+/**
+ * The wizard's Access step (wizard decision 12): correct the address the
+ * contractor signs in with. The auth user, contractor_logins and workers.email
+ * change together; with no login yet only the worker changes and Send creates
+ * the login at it. Service client for the same reason as revoke.
+ */
+export async function updatePortalEmail(args: {
+  workerId: string;
+  email: string;
+}): Promise<ActionResult<{ email: string }>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  const email = args.email.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+    return { ok: false, error: 'Invalid email address.' };
+  try {
+    if (!(await adminInScopeForWorker(admin, args.workerId)))
+      return { ok: false, error: 'Not authorized for this contractor.' };
+    const svc = createServiceClient();
+    const login = await fetchContractorLogin(svc, args.workerId);
+    if (login?.auth_user_id) {
+      const { error } = await svc.auth.admin.updateUserById(login.auth_user_id, {
+        email,
+        email_confirm: true,
+      });
+      if (error) return { ok: false, error: `Could not change the login email: ${error.message}` };
+      const { error: linkErr } = await svc
+        .from('contractor_logins')
+        .update({ email })
+        .eq('worker_id', args.workerId);
+      if (linkErr) throw new Error(`contractor_logins: ${linkErr.message}`);
+    }
+    const { error: wErr } = await svc.from('workers').update({ email }).eq('id', args.workerId);
+    if (wErr) throw new Error(`workers: ${wErr.message}`);
+    await logEvent({
+      action: 'portal_login.email_changed',
+      entity: email,
+      detail: { worker_id: args.workerId, from: login?.email ?? null, by: admin.email },
+    });
+    revalidatePath('/contractors');
+    return { ok: true, data: { email } };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not change the email.') };
   }
 }

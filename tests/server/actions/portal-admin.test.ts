@@ -39,24 +39,27 @@ const clients = vi.hoisted(() => {
   };
 });
 const q = vi.hoisted(() => ({ endEngagement: vi.fn() }));
+const onb = vi.hoisted(() => ({
+  seedOnboardingProgress: vi.fn(),
+  seedAgreementPrefill: vi.fn(),
+  fetchContractorLogin: vi.fn(),
+}));
 
 vi.mock('@/db/queries/workers', () => q);
 vi.mock('@/db/clients/server', () => ({ createServerSupabase: async () => clients.rls }));
 vi.mock('@/db/clients/service', () => ({ createServiceClient: () => clients.service }));
 vi.mock('@/server/auth/admin', () => ({
   getCurrentAdmin: async () => ({ email: 'owner@abckidsny.com', companyIds: [], isOwner: true }),
+  adminInScopeForWorker: async () => true,
 }));
+vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
 vi.mock('@/server/audit', () => ({ logEvent: vi.fn() }));
 vi.mock('@/server/email/transport', () => ({ sendEmail: vi.fn().mockResolvedValue({ ok: true }) }));
 vi.mock('@/server/env', () => ({ env: { APP_URL: 'http://localhost:3000' } }));
-// Imported by the action module but unused on this path.
-vi.mock('@/db/queries/onboarding', () => ({
-  seedOnboardingProgress: vi.fn(),
-  seedAgreementPrefill: vi.fn(),
-}));
+vi.mock('@/db/queries/onboarding', () => onb);
 vi.mock('@/db/queries/secrets', () => ({ decryptWorkerTools: vi.fn() }));
 
-const { restorePortalLogin, revokePortalLogin, withdrawOffer } = await import(
+const { restorePortalLogin, revokePortalLogin, updatePortalEmail, withdrawOffer } = await import(
   '@/server/actions/portal-admin'
 );
 
@@ -64,6 +67,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   clients.patches.length = 0;
   q.endEngagement.mockResolvedValue({ endedCompanyIds: [] });
+  onb.fetchContractorLogin.mockResolvedValue(null);
 });
 
 describe('withdrawOffer', () => {
@@ -115,6 +119,46 @@ describe('portal login status writes go through the service client', () => {
 
   it('restore refuses when there is no login to restore', async () => {
     const res = await restorePortalLogin({ workerId: WORKER });
+
+    expect(res.ok).toBe(false);
+    expect(clients.patches).toEqual([]);
+  });
+});
+
+/**
+ * The wizard's Access step edits the login email (wizard decision 12). The
+ * auth user, the login row and the worker must move together — a login the
+ * worker row disagrees with is what every send-time "which address" guess
+ * trips over.
+ */
+describe('updatePortalEmail', () => {
+  it('writes the auth user, the login row and the worker together', async () => {
+    onb.fetchContractorLogin.mockResolvedValueOnce({
+      auth_user_id: 'auth-1',
+      email: 'old@example.com',
+      status: 'active',
+    });
+
+    const res = await updatePortalEmail({ workerId: WORKER, email: ' New@Example.com ' });
+
+    expect(res).toEqual({ ok: true, data: { email: 'new@example.com' } });
+    expect(clients.service.auth.admin.updateUserById).toHaveBeenCalledWith('auth-1', {
+      email: 'new@example.com',
+      email_confirm: true,
+    });
+    expect(clients.patches).toEqual([{ email: 'new@example.com' }, { email: 'new@example.com' }]);
+  });
+
+  it('with no login yet only the worker changes — Send creates the login at it', async () => {
+    const res = await updatePortalEmail({ workerId: WORKER, email: 'new@example.com' });
+
+    expect(res.ok).toBe(true);
+    expect(clients.service.auth.admin.updateUserById).not.toHaveBeenCalled();
+    expect(clients.patches).toEqual([{ email: 'new@example.com' }]);
+  });
+
+  it('refuses a malformed address before touching anything', async () => {
+    const res = await updatePortalEmail({ workerId: WORKER, email: 'not-an-email' });
 
     expect(res.ok).toBe(false);
     expect(clients.patches).toEqual([]);
