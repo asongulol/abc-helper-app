@@ -131,6 +131,42 @@ export const fetchUnpaidEntries = async (db: Db, companyId: string): Promise<Tim
     .map(mapEntry);
 };
 
+export type PtoYearRow = { year: number; trackedSeconds: number; ptoSeconds: number };
+
+/**
+ * Approved hours per calendar year for one worker at one company — the PTO
+ * accrual's input (docs/CONTRACT-CHANGE-WIZARD-PLAN.md decision 7). Tracked
+ * and PTO are separate columns, so "tracked" here already excludes PTO.
+ */
+export const fetchPtoYears = async (
+  db: Db,
+  workerId: string,
+  companyId: string,
+): Promise<PtoYearRow[]> => {
+  const rows = await selectAll(
+    (from, to) =>
+      db
+        .from('time_entries')
+        .select('work_date, tracked_seconds, pto_seconds')
+        .eq('worker_id', workerId)
+        .eq('company_id', companyId)
+        .eq('approval', 'approved')
+        .order('work_date', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    'time_entries pto years',
+  );
+  const byYear = new Map<number, PtoYearRow>();
+  for (const r of rows) {
+    const year = Number(r.work_date.slice(0, 4));
+    const y = byYear.get(year) ?? { year, trackedSeconds: 0, ptoSeconds: 0 };
+    y.trackedSeconds += Number(r.tracked_seconds ?? 0);
+    y.ptoSeconds += Number(r.pto_seconds ?? 0);
+    byYear.set(year, y);
+  }
+  return [...byYear.values()];
+};
+
 export interface ExistingDay {
   sourceName: string;
   workDate: string;

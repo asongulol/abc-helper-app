@@ -12,7 +12,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
 import { DEFAULT_NOTICE_DAYS } from '@/lib/agreements/merge';
 import { type AgreementKind, type PackageStatus, packageStatusOf } from '@/lib/contracts/package';
-import type { ContractChangeDetail, ContractChangeReason } from '@/types/schemas/contracts';
+import type {
+  ContractBenefits,
+  ContractChangeDetail,
+  ContractChangeReason,
+} from '@/types/schemas/contracts';
 
 type Db = SupabaseClient<Database>;
 type Row = Database['public']['Tables']['contract_versions']['Row'];
@@ -47,6 +51,8 @@ export type ContractVersion = ContractTerms & {
   changeNote: string | null;
   /** How the rate was arrived at, and an overpayment note once voided after pay. */
   changeDetail: ContractChangeDetail | null;
+  /** Benefit terms written to the worker at countersign; null = unchanged (decision 6). */
+  benefits: ContractBenefits | null;
   /** The re-sign package (decision 8) and, once sent, its due date (decision 9). */
   resignKinds: AgreementKind[];
   resignDueOn: string | null;
@@ -77,11 +83,29 @@ export type ContractOfRecord = ContractTerms & {
    * Increase step offers both as the base when they differ (decision 4).
    */
   liveRatePhp: number | null;
+  /** The version's terms, else the worker's current flags — what the wizard prefills. */
+  benefits: ContractBenefits;
   signedAt: string | null;
   countersignedAt: string | null;
   countersignedName: string | null;
   docSha256: string | null;
 };
+
+const WORKER_BENEFIT_COLS =
+  'health_allowance_eligible, thirteenth_month_eligible, holiday_pay_eligible, pto_days_per_year' as const;
+type WorkerBenefitRow = Pick<
+  Database['public']['Tables']['workers']['Row'],
+  | 'health_allowance_eligible'
+  | 'thirteenth_month_eligible'
+  | 'holiday_pay_eligible'
+  | 'pto_days_per_year'
+>;
+const workerBenefits = (w: WorkerBenefitRow | null): ContractBenefits => ({
+  healthAllowance: w?.health_allowance_eligible ?? false,
+  thirteenthMonth: w?.thirteenth_month_eligible ?? false,
+  holidayPay: w?.holiday_pay_eligible ?? false,
+  ptoDaysPerYear: w?.pto_days_per_year ?? 12,
+});
 
 const mapVersion = (r: Row): ContractVersion => ({
   id: r.id,
@@ -92,6 +116,19 @@ const mapVersion = (r: Row): ContractVersion => ({
   changeReason: r.change_reason as ContractChangeReason | null,
   changeNote: r.change_note,
   changeDetail: r.change_detail as ContractChangeDetail | null,
+  // The wizard writes all four at once; legacy rows have none (= unchanged).
+  benefits:
+    r.health_allowance != null &&
+    r.thirteenth_month != null &&
+    r.holiday_pay != null &&
+    r.pto_days_per_year != null
+      ? {
+          healthAllowance: r.health_allowance,
+          thirteenthMonth: r.thirteenth_month,
+          holidayPay: r.holiday_pay,
+          ptoDaysPerYear: r.pto_days_per_year,
+        }
+      : null,
   resignKinds: r.resign_kinds ?? [],
   resignDueOn: r.resign_due_on,
   ratePhp: Number(r.rate_php),
@@ -160,7 +197,7 @@ export const contractOfRecord = async (
   workerId: string,
   companyId: string,
 ): Promise<ContractOfRecord | null> => {
-  const [active, link, agreement, rate, signature] = await Promise.all([
+  const [active, link, agreement, rate, signature, worker] = await Promise.all([
     db
       .from('contract_versions')
       .select('*')
@@ -196,15 +233,17 @@ export const contractOfRecord = async (
       .eq('worker_id', workerId)
       .eq('agreement_kind', 'ic_agreement')
       .eq('status', 'signed'),
+    db.from('workers').select(WORKER_BENEFIT_COLS).eq('id', workerId).maybeSingle(),
   ]);
-  for (const r of [active, link, agreement, rate, signature])
+  for (const r of [active, link, agreement, rate, signature, worker])
     if (r.error) throw new Error(`contract of record: ${r.error.message}`);
   const v1 = (signature.data ?? []).find((s) => isLegacySignatureVersion(s.doc_version)) ?? null;
   const liveRatePhp = rate.data ? Number(rate.data.amount_php) : null;
+  const benefits = workerBenefits(worker.data);
 
   if (active.data) {
     const v = mapVersion(active.data);
-    return { ...v, source: 'versioned', liveRatePhp };
+    return { ...v, source: 'versioned', liveRatePhp, benefits: v.benefits ?? benefits };
   }
   if (!link.data) return null;
 
@@ -214,6 +253,7 @@ export const contractOfRecord = async (
     version: 1,
     id: null,
     liveRatePhp,
+    benefits,
     ratePhp: liveRatePhp ?? (a?.f_rate ? Number(a.f_rate) : null),
     periodBasis: rate.data?.period_basis ?? 'semi_monthly',
     position: a?.f_position ?? link.data.role,

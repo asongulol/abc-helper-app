@@ -6,8 +6,9 @@
  * draft or Send for signature from Review. The reason sets defaults and never
  * skips a step (decision 2); reopening a draft lands on Review with everything
  * editable (decision 3). The Increase step owns the rate (decision 4). The
- * Package step is the re-sign package (decision 8); Benefits and Access slot
- * in before Review in later slices.
+ * Benefits step carries the four terms written to the worker at countersign
+ * (decision 6). The Package step is the re-sign package (decision 8); Access
+ * slots in before Review in a later slice.
  */
 
 import { useState, useTransition } from 'react';
@@ -37,6 +38,7 @@ import { requestDocument } from '@/server/actions/onboarding';
 import { CONTRACT_OPTIONS, type ContractType, todayManila } from '@/types/schemas/contractors';
 import {
   CONTRACT_CHANGE_REASON_LABEL,
+  type ContractBenefits,
   type ContractChangeReason,
   ContractChangeReasonSchema,
 } from '@/types/schemas/contracts';
@@ -59,11 +61,22 @@ type Form = {
   addendumType: AddendumType;
   addendumText: string;
   noticeDays: string;
+  /** Benefits step (decision 6): silent in the document, written to the worker at countersign. */
+  healthAllowance: boolean;
+  thirteenthMonth: boolean;
+  holidayPay: boolean;
+  ptoDaysPerYear: string;
   /** Package step: agreements the contractor re-signs after the contract (decision 8). */
   resignKinds: PackageKind[];
 };
 
-const STEPS = ['Reason', 'Terms', 'Increase', 'Package', 'Review'] as const;
+const STEPS = ['Reason', 'Terms', 'Increase', 'Benefits', 'Package', 'Review'] as const;
+const BENEFIT_LABEL: Record<keyof Omit<ContractBenefits, 'ptoDaysPerYear'>, string> = {
+  healthAllowance: 'Health allowance',
+  thirteenthMonth: '13th month',
+  holidayPay: 'Holiday pay',
+};
+const yesNo = (b: boolean): string => (b ? 'Yes' : 'No');
 const isPackageKind = (k: string): k is PackageKind =>
   (PACKAGE_KINDS as readonly string[]).includes(k);
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -99,6 +112,8 @@ const formFrom = (
   const resume = draft ?? (latest?.status === 'void' ? latest : null);
   const t = resume ?? record;
   const inc = resume?.changeDetail?.increase ?? null;
+  // Prefilled from the worker's flags unless the draft already carries its own.
+  const b = resume?.benefits ?? record.benefits;
   return {
     changeReason: resume?.changeReason ?? (rehire ? 'rehire' : ''),
     changeNote: resume?.changeNote ?? '',
@@ -114,6 +129,10 @@ const formFrom = (
     addendumType: (t.addendumType as AddendumType | null) ?? '',
     addendumText: t.addendumText ?? '',
     noticeDays: String(t.noticeDays ?? 15),
+    healthAllowance: b.healthAllowance,
+    thirteenthMonth: b.thirteenthMonth,
+    holidayPay: b.holidayPay,
+    ptoDaysPerYear: String(b.ptoDaysPerYear),
     // Rehire pre-ticks the whole package; anything else starts blank (decision 8).
     resignKinds: resume
       ? resume.resignKinds.filter(isPackageKind)
@@ -135,6 +154,16 @@ const termsError = (f: Form): string | null => {
   if (!Number.isInteger(n) || n < 1) return 'Enter the termination notice in whole days.';
   return null;
 };
+
+const benefitsOf = (f: Form): ContractBenefits | null =>
+  /^\d+$/.test(f.ptoDaysPerYear)
+    ? {
+        healthAllowance: f.healthAllowance,
+        thirteenthMonth: f.thirteenthMonth,
+        holidayPay: f.holidayPay,
+        ptoDaysPerYear: Number(f.ptoDaysPerYear),
+      }
+    : null;
 
 const baseRate = (f: Form, record: ContractOfRecord): number | null =>
   f.base === 'live' ? record.liveRatePhp : record.ratePhp;
@@ -246,13 +275,24 @@ export function ContractWizard({
     });
 
   const inc = increaseOf(form, record);
-  const valid = [reasonValid(form), termsError(form) === null, inc !== null, true, true];
+  const benefits = benefitsOf(form);
+  const valid = [
+    reasonValid(form),
+    termsError(form) === null,
+    inc !== null,
+    benefits !== null,
+    true,
+    true,
+  ];
   // A step is reachable once every step before it is valid.
   const reachable = (i: number) => valid.slice(0, i).every(Boolean);
 
   const submit = (andSend: boolean) => {
-    const err = termsError(form) ?? increaseError(form, record);
-    if (!reasonValid(form) || err || !inc) {
+    const err =
+      termsError(form) ??
+      increaseError(form, record) ??
+      (benefits ? null : 'Enter the PTO days per year in whole days.');
+    if (!reasonValid(form) || err || !inc || !benefits) {
       notify(err ?? 'Pick a reason for the change.', { type: 'error' });
       return;
     }
@@ -263,6 +303,7 @@ export function ContractWizard({
         changeReason: form.changeReason,
         changeNote: form.changeNote.trim() || null,
         changeDetail: { increase: inc },
+        benefits,
         ratePhp: inc.to,
         position: form.position.trim() || null,
         employmentType: form.employmentType || null,
@@ -323,6 +364,18 @@ export function ContractWizard({
       'Addendum',
       addendumLabel(record.addendumType, record.addendumText),
       addendumLabel(form.addendumType, form.addendumText),
+    ],
+    ...(Object.keys(BENEFIT_LABEL) as (keyof typeof BENEFIT_LABEL)[]).map(
+      (k): [string, string, string] => [
+        BENEFIT_LABEL[k],
+        yesNo(record.benefits[k]),
+        yesNo(form[k]),
+      ],
+    ),
+    [
+      'PTO days per year',
+      String(record.benefits.ptoDaysPerYear),
+      form.ptoDaysPerYear.trim() || '—',
     ],
     [
       'Re-sign package',
@@ -589,6 +642,48 @@ export function ContractWizard({
         <div>
           <fieldset style={{ border: 0, padding: 0, margin: '0 0 10px' }}>
             <legend className="sub" style={{ fontSize: 12, padding: 0, marginBottom: 8 }}>
+              Benefits on this version. Not in the document — written to their profile when the
+              version is countersigned. Calculate’s treatment of holidays and PTO is unchanged.
+            </legend>
+            {(Object.keys(BENEFIT_LABEL) as (keyof typeof BENEFIT_LABEL)[]).map((k) => (
+              <label
+                key={k}
+                style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={form[k]}
+                  onChange={(e) => update(k, e.target.checked)}
+                  disabled={busy}
+                />
+                {BENEFIT_LABEL[k]}
+              </label>
+            ))}
+          </fieldset>
+          <Field id="cv-pto" label="PTO days per year" required>
+            <input
+              id="cv-pto"
+              type="number"
+              min="0"
+              max="365"
+              step="1"
+              style={{ width: 96 }}
+              value={form.ptoDaysPerYear}
+              onChange={(e) => update('ptoDaysPerYear', e.target.value)}
+              disabled={busy}
+            />
+          </Field>
+          <p className="sub" style={{ fontSize: 12, margin: '4px 0 0' }}>
+            Accrues at 12 days per 2,080 approved hours, capped here; the balance carries over up to
+            30 days. Reference only.
+          </p>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div>
+          <fieldset style={{ border: 0, padding: 0, margin: '0 0 10px' }}>
+            <legend className="sub" style={{ fontSize: 12, padding: 0, marginBottom: 8 }}>
               Agreements to re-sign after the contract, in this order. Their current signatures are
               superseded when the version is sent.
             </legend>
@@ -636,7 +731,7 @@ export function ContractWizard({
         </div>
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <div>
           <p style={{ margin: '0 0 10px' }}>
             <strong>

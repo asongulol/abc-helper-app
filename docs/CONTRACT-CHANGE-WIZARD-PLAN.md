@@ -13,8 +13,12 @@
 > draft build and on every package state change, lifts on its own or by hand with a logged note;
 > the Wise batch, Mark paid and the Process page refuse a held row; the three warnings — send
 > email, portal card, one reminder at due − 3 from the hiring-review cron slot; rehire blocks
-> countersign; void restores an un-re-signed superseded signature) shipped 2026-09-08. Slices 4–5
-> in §6 not started.
+> countersign; void restores an un-re-signed superseded signature) shipped 2026-09-08. Slice 4
+> (Benefits step with the four terms prefilled from the worker via `contractOfRecord.benefits`,
+> stored on the version — null = unchanged — and written to the worker at countersign inside the
+> same undo stack; `holiday_pay_eligible` / `pto_days_per_year` editable on the profile; the pure
+> accrual in `src/lib/pay/pto.ts` behind `getPtoBalance` and the Pay tab's PTO card) shipped
+> 2026-09-08. Slice 5 in §6 not started.
 > **Builds on:** [Contract versions plan](./CONTRACT-VERSIONS-PLAN.md) — every decision there
 > stands unless §0 below says otherwise (only decision 5's "rate is written at countersign" gains
 > the early-pricing exception in §0.5).

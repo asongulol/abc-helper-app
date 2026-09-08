@@ -44,6 +44,31 @@ describe('DraftContractVersionSchema — change reason', () => {
   });
 });
 
+describe('DraftContractVersionSchema — benefits (slice 4, decision 6)', () => {
+  const draft = (over: Record<string, unknown>) =>
+    DraftContractVersionSchema.safeParse({ ...base, changeReason: 'terms_change', ...over });
+  const benefits = {
+    healthAllowance: true,
+    thirteenthMonth: true,
+    holidayPay: false,
+    ptoDaysPerYear: 12,
+  };
+
+  it('is optional — null leaves the worker’s flags alone', () => {
+    const r = draft({});
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.benefits).toBeNull();
+  });
+
+  it('takes all four together, PTO in whole non-negative days', () => {
+    expect(draft({ benefits }).success).toBe(true);
+    expect(draft({ benefits: { ...benefits, ptoDaysPerYear: 12.5 } }).success).toBe(false);
+    expect(draft({ benefits: { ...benefits, ptoDaysPerYear: -1 } }).success).toBe(false);
+    const { holidayPay: _drop, ...three } = benefits;
+    expect(draft({ benefits: three }).success).toBe(false);
+  });
+});
+
 describe('DraftContractVersionSchema — increase detail (slice 2, decision 4)', () => {
   const increase = { method: 'percent', value: 5, from: 8000, to: 8400, base: 'record' };
   const draft = (over: Record<string, unknown>) =>
