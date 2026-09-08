@@ -31,5 +31,21 @@ export default async function PortalContractsPage() {
       }
     : null;
 
-  return <PortalContracts versions={versions} legacy={legacy} />;
+  // The NDA / non-compete / BAA live only on the Onboarding tab, which hides once
+  // onboarding completes — surface the signed ones here so the contractor can
+  // always print their own copy. Signatures are newest-first; keep one per kind.
+  const signedAgreements = signatures
+    .filter((s) => s.agreement_kind !== 'ic_agreement')
+    .filter((s, i, all) => all.findIndex((x) => x.agreement_kind === s.agreement_kind) === i)
+    .map((s) => {
+      const a = agreements.find((x) => x.agreement_kind === s.agreement_kind);
+      return {
+        kind: s.agreement_kind,
+        signedAt: s.signed_at,
+        countersignedAt: a?.countersigned_at ?? null,
+        countersignedName: a?.countersigned_name ?? null,
+      };
+    });
+
+  return <PortalContracts versions={versions} legacy={legacy} agreements={signedAgreements} />;
 }

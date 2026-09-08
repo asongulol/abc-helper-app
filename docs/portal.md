@@ -20,7 +20,7 @@ Authenticated routes live under `src/app/portal/(authed)/`:
 | `/portal/time` | Time-entry history *(requires onboarding complete)* |
 | `/portal/sessions` | Submit Early-Intervention sessions *(requires onboarding complete)* |
 | `/portal/statements` | Payslip / payment history (+ printable statement) |
-| `/portal/docs` | Upload & track required documents |
+| `/portal/docs` | Upload & track required documents; **View** / **Download** your own copy (never delete) |
 | `/portal/onboarding` | The 3-stage wizard ([Onboarding & documents](./onboarding-documents.md)) |
 | `/portal/contracts` | Contract history + the version awaiting signature (see [Contracts](#contracts)) |
 | `/portal/contracts/[versionId]/print` | Printable frozen copy of one signed/active version |
@@ -88,7 +88,9 @@ highlighted and a **Sign** card for a `sent` version. Signing reuses the onboard
 `SignModal` (`src/components/portal/SignModal.tsx`: scroll-to-end, typed name or drawn
 signature) and calls `signContractVersion()` in `src/server/actions/contracts.ts`. It lives on
 its own tab rather than the onboarding page because a rehire's onboarding is already complete
-and that page hides itself. Print shows the frozen `rendered_body`, never the live template, and
+and that page hides itself. For the same reason a second table, **Other signed agreements**,
+lists the signed NDA / non-compete / BAA with a **View** link to `/portal/onboarding/[kind]/print`
+so the contractor always keeps a copy of everything they signed. Print shows the frozen `rendered_body`, never the live template, and
 no exchange rate appears anywhere on it. Full lifecycle:
 [Onboarding & documents → Contract versions](./onboarding-documents.md#contract-versions).
 
@@ -101,7 +103,9 @@ no exchange rate appears anywhere on it. Full lifecycle:
 - **Contracts** (`contracts.ts`): `signContractVersion()` — a `sent` version only; the signature
   row carries `doc_version = N` and the frozen body's sha256; a second sign errors.
 - **Documents** (`portal-docs.ts`): `fetchOutstandingDocSlots()`, `uploadOwnDocument()` (→
-  `contractor-docs` bucket), `getDocumentSignedUrl()` (120s signed URL, ownership re-checked).
+  `contractor-docs` bucket), `getDocumentSignedUrl()` (120s signed URL, ownership re-checked; `download: true` serves it as an
+  attachment for the Docs tab's **Download** button). Contractors can never delete a document:
+  no contractor delete policy on `documents` or the `contractor-docs` bucket, and no portal action.
 - **Sessions** (`portal-sessions.ts`): `createContractorSession()` — gated on being onboarded and
   actively assigned to the client; lands `pending` for admin approval.
 - **Misc**: `saveMoodCheckin()`, `revealMyTools()` / `ackMyTools()` (provisioned tool credentials,

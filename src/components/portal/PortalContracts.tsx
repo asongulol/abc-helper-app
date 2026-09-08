@@ -2,8 +2,10 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
+import { AGREEMENT_TITLE } from '@/components/print/AgreementPrint';
 import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { ContractVersion, ContractVersionStatus } from '@/db/queries/contracts';
+import type { Database } from '@/db/types';
 import { fmtDate } from '@/lib/format';
 import { signContractVersion } from '@/server/actions/contracts';
 import { type SignInput, SignModal } from './SignModal';
@@ -15,9 +17,15 @@ export type LegacyContract = {
   countersignedName: string | null;
 };
 
+/** A signed onboarding agreement other than the IC agreement (NDA, non-compete, BAA). */
+export type SignedAgreement = LegacyContract & {
+  kind: Database['public']['Enums']['agreement_kind'];
+};
+
 interface Props {
   versions: ContractVersion[];
   legacy: LegacyContract | null;
+  agreements: SignedAgreement[];
 }
 
 const LABEL: Record<ContractVersionStatus, string> = {
@@ -44,7 +52,7 @@ const TONE: Record<ContractVersionStatus, BadgeTone> = {
  * then every version they have seen, the original agreement last. Read-only
  * apart from signing. Owner rule: nothing here ever shows an exchange rate.
  */
-export const PortalContracts = ({ versions, legacy }: Props) => {
+export const PortalContracts = ({ versions, legacy, agreements }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -172,6 +180,42 @@ export const PortalContracts = ({ versions, legacy }: Props) => {
           </div>
         )}
       </div>
+
+      {agreements.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h2 style={{ marginTop: 0 }}>Other signed agreements</h2>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Agreement</th>
+                  <th>Signed</th>
+                  <th>Countersigned</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {agreements.map((a) => (
+                  <tr key={a.kind}>
+                    <td>{AGREEMENT_TITLE[a.kind] ?? a.kind}</td>
+                    <td>{a.signedAt ? fmtDate(a.signedAt) : '—'}</td>
+                    <td>
+                      {a.countersignedAt
+                        ? `${fmtDate(a.countersignedAt)}${a.countersignedName ? ` · ${a.countersignedName}` : ''}`
+                        : '—'}
+                    </td>
+                    <td>
+                      <a href={`/portal/onboarding/${a.kind}/print`} target="_blank" rel="noopener">
+                        View
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {signing && (
         <SignModal
