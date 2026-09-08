@@ -22,6 +22,7 @@ import type { ContractorPeriodRow } from '@/lib/time/grouping';
 import { editContractorTotal, setTimeApproval, undoApproval } from '@/server/actions/time';
 import { AddHoursPanel } from './AddHoursPanel';
 import { AddUnlistedRow } from './AddUnlistedRow';
+import { DayHoursPanel } from './DayHoursPanel';
 
 interface ContractorOption {
   workerId: string;
@@ -84,6 +85,7 @@ export const TimeApprovalTable = ({
   const [, startTransition] = useTransition();
   const [editMap, setEditMap] = useState<Record<string, string>>({});
   const [addRowName, setAddRowName] = useState<string | null>(null);
+  const [daysRowName, setDaysRowName] = useState<string | null>(null);
   const [onlyPending, setOnlyPending] = useState(false);
   const onlyPendingId = useId();
   // Which row (or '*' for the bulk buttons) is mid-write — so one row's action
@@ -336,6 +338,7 @@ export const TimeApprovalTable = ({
                 // per-entry and stay available.
                 const isEditing = !coverageHidden && editMap[row.sourceName] !== undefined;
                 const isAdding = !coverageHidden && addRowName === row.sourceName;
+                const showDays = !coverageHidden && daysRowName === row.sourceName;
                 const rowBusy = bulkBusy || busyKey === row.sourceName;
                 const allIds = row.entries.map((e) => e.id);
                 const trackedH = (row.trackedSeconds / 3600).toFixed(2);
@@ -505,6 +508,15 @@ export const TimeApprovalTable = ({
                             >
                               {isAdding ? 'Close' : 'Add hours'}
                             </button>{' '}
+                            <button
+                              type="button"
+                              className="btn ghost sm"
+                              disabled={rowBusy}
+                              title="See and edit this contractor's hours day by day"
+                              onClick={() => setDaysRowName(showDays ? null : row.sourceName)}
+                            >
+                              {showDays ? 'Close days' : 'Days'}
+                            </button>{' '}
                           </>
                         )}
                         <button
@@ -538,6 +550,26 @@ export const TimeApprovalTable = ({
                               onRefresh();
                             }}
                             onCancel={() => setAddRowName(null)}
+                          />
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Expansion row: the period day by day, tracked hours editable. */}
+                    {showDays && (
+                      <tr style={{ background: '#f8fafc' }}>
+                        <td colSpan={bodyColSpan}>
+                          <DayHoursPanel
+                            companyId={companyId}
+                            sourceName={row.sourceName}
+                            entries={row.entries}
+                            periodStart={periodStart}
+                            periodEnd={periodEnd}
+                            onDone={() => {
+                              setDaysRowName(null);
+                              onRefresh();
+                            }}
+                            onCancel={() => setDaysRowName(null)}
                           />
                         </td>
                       </tr>

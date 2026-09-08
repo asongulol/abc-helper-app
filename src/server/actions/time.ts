@@ -20,6 +20,7 @@ import {
   fetchExistingDays,
   fetchLockedPeriodsInRange,
   fetchRosterLinks,
+  isEntryUnpaid,
   mergeAddedHours,
   restoreApprovals,
   updateApproval,
@@ -42,6 +43,7 @@ import {
   AddHoursTotalSchema,
   CsvImportSchema,
   DeleteBatchSchema,
+  EditDaysSchema,
   EditTotalSchema,
   SetApprovalSchema,
   UndoApprovalSchema,
@@ -400,6 +402,89 @@ export async function editContractorTotal(args: unknown): Promise<ActionResult> 
       },
     });
     return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: humanizeError(err, 'Edit failed.'),
+    };
+  }
+}
+
+/**
+ * Edit-days: set tracked hours on specific existing entries. Add hours sums
+ * into the day's row and is not undoable (see mergeAddedHours), so this is how
+ * a mistaken add gets corrected: type the right number for that day. Refuses
+ * days outside the period being viewed and days a run has already paid.
+ */
+export async function editContractorDays(
+  args: unknown,
+): Promise<ActionResult<{ calcNote?: string }>> {
+  const parsed = EditDaysSchema.safeParse(args);
+  if (!parsed.success)
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? 'Invalid input.',
+    };
+  const { companyId, sourceName, days, periodStart, periodEnd } = parsed.data;
+
+  const guard = await authGuard(companyId);
+  if (!guard.ok) return guard;
+
+  try {
+    const db = await createServerSupabase();
+    const ids = days.map((d) => d.id);
+    const found = await fetchEntryDates(db, companyId, ids);
+    if (found.length !== ids.length) {
+      return { ok: false, error: 'Some of those entries no longer exist — refresh and try again.' };
+    }
+    const outside = datesOutsidePeriod(found, periodStart, periodEnd);
+    if (outside.length > 0) {
+      return {
+        ok: false,
+        error: `Cannot edit — ${outside.join(', ')} falls outside ${periodStart} – ${periodEnd}. Open that period and edit it there.`,
+      };
+    }
+    // Same "already paid" rule as the unpaid review: an approved day inside a
+    // locked/paid period that was approved before the lock has been paid out,
+    // and changing it now would silently disagree with the money that moved.
+    const dates = found.map((f) => f.workDate).sort();
+    const closed = await fetchLockedPeriodsInRange(
+      db,
+      companyId,
+      dates[0] ?? periodStart,
+      dates[dates.length - 1] ?? periodEnd,
+    );
+    const paid = found.filter((f) => !isEntryUnpaid(f, closed)).map((f) => f.workDate);
+    if (paid.length > 0) {
+      return {
+        ok: false,
+        error: `Cannot edit — ${paid.sort().join(', ')} sits in a locked or paid run. Unlock it, or pay the difference through the catch-up card or an off-cycle run.`,
+      };
+    }
+
+    await updateTrackedSeconds(
+      db,
+      companyId,
+      days.map((d) => ({ id: d.id, trackedSeconds: Math.round(d.hours * 3600) })),
+    );
+    const dateOf = new Map(found.map((f) => [f.id, f.workDate]));
+    await logEvent({
+      companyId,
+      action: 'manual_hours',
+      entity: sourceName,
+      detail: {
+        period: `${periodStart} → ${periodEnd}`,
+        mode: 'edit-days',
+        days: days.map((d) => ({ date: dateOf.get(d.id) ?? null, hours: +d.hours.toFixed(2) })),
+      },
+    });
+    // Approved days are already on Calculate as a draft built from the old
+    // hours — rebuild it the way an approval does, so the draft follows the fix.
+    const { calcNote } = await transferToCalculate(
+      companyId,
+      found.map((f) => ({ workerId: f.workerId, workDate: f.workDate })),
+    );
+    return { ok: true, data: calcNote ? { calcNote } : {} };
   } catch (err) {
     return {
       ok: false,
