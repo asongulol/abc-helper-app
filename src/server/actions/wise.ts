@@ -29,6 +29,7 @@ import {
 } from '@/db/queries/audit';
 import {
   fetchPeriodStatesForPayments,
+  fetchProcessPayments,
   heldPaymentReason,
   unpayablePeriodReason,
 } from '@/db/queries/payroll';
@@ -36,6 +37,7 @@ import { fetchPeriodPayments } from '@/db/queries/wise';
 import { type DraftPaymentRow, foreignRecipientRows, resolveDraftRow } from '@/lib/wise/draft-row';
 import type { MatchOutcomeReport } from '@/lib/wise/match-summary';
 import { type PullRecipientRow, planRecipientMatches } from '@/lib/wise/recipient-match';
+import type { WiseRecipientEntry } from '@/lib/wise/recipients';
 import type { OrphanCandidate, UnlinkedPayment } from '@/lib/wise/types';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
@@ -46,6 +48,7 @@ import {
   type CancelTransferResult,
   explainMissingRecipient,
   type LinkTransferResult,
+  type RecipientCheck,
   serviceAttributeVariance,
   serviceBatch,
   serviceCancelTransfer,
@@ -59,6 +62,7 @@ import {
   serviceStatus,
   serviceUndoAttribution,
   serviceUnlinkTransfer,
+  serviceVerifyRecipients,
   type UnlinkTransferResult,
 } from '@/server/wise/service';
 import {
@@ -82,6 +86,9 @@ export interface DraftResult {
   paymentId: string;
   transferId?: number;
   fxRate?: number;
+  /** The recipient the draft landed on; `failover` when it wasn't the chosen one. */
+  recipientId?: number;
+  failover?: boolean;
   error?: string;
 }
 
@@ -217,13 +224,17 @@ export async function wiseBatch(
         count: results.length,
         drafted: results.filter((r) => r.status === 'drafted').length,
         // Per-row trail: what was actually drafted vs. the locked net it came from.
+        // A failover draft lands on a different recipient than the one chosen —
+        // the result's recipientId is the one that took it.
         rows: batchItems.map((i) => {
           const row = byId.get(i.paymentId);
+          const res = results.find((r) => r.paymentId === i.paymentId);
           const { recipientId, amountPhp } = resolveDraftRow(row ?? { net_php: null }, i);
           return {
             paymentId: i.paymentId,
             amountPhp,
-            recipientId,
+            recipientId: res?.recipientId ?? recipientId,
+            ...(res?.failover ? { failover: true, chosenRecipientId: recipientId } : {}),
             netPhp: row?.net_php ?? null,
           };
         }),
@@ -236,6 +247,8 @@ export async function wiseBatch(
         paymentId: r.paymentId,
         ...(r.transferId !== undefined ? { transferId: r.transferId } : {}),
         ...(r.fxRate !== undefined ? { fxRate: r.fxRate } : {}),
+        ...(r.recipientId !== undefined ? { recipientId: r.recipientId } : {}),
+        ...(r.failover ? { failover: true } : {}),
         ...(r.error !== undefined ? { error: r.error } : {}),
       })),
     });
@@ -878,6 +891,39 @@ export async function wisePullRecipientIds(
     });
     if (linked > 0) revalidatePath('/contractors');
     return ok({ total: recipients.length, alreadyLinked, matched, unmatched, linked, rows });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export interface PeriodRecipientCheck {
+  workerId: string;
+  name: string;
+  checks: RecipientCheck[];
+}
+
+/**
+ * Admin, read-only: pre-flight every Wise contractor's saved recipients in a
+ * period against Wise, so a deleted/inactive/unverifiable recipient is caught
+ * BEFORE the batch (CSV or API) instead of as a failed row after upload.
+ */
+export async function wiseVerifyPeriodRecipients(
+  periodId: string,
+): Promise<WiseActionResult<PeriodRecipientCheck[]>> {
+  try {
+    await requireAdmin();
+    const db = createServiceClient();
+    const payments = await fetchProcessPayments(db, periodId);
+    const workers = new Map<string, { name: string; recipients: WiseRecipientEntry[] }>();
+    for (const p of payments) {
+      if (p.payoutMethod !== 'wise' || workers.has(p.workerId)) continue;
+      workers.set(p.workerId, { name: p.name, recipients: p.wiseRecipients });
+    }
+    const out: PeriodRecipientCheck[] = [];
+    for (const [workerId, w] of workers) {
+      out.push({ workerId, name: w.name, checks: await serviceVerifyRecipients(w.recipients) });
+    }
+    return ok(out.sort((a, b) => a.name.localeCompare(b.name)));
   } catch (e) {
     return fail(e);
   }

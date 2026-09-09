@@ -14,12 +14,14 @@ import {
   markPaymentSent,
 } from '@/db/queries/wise';
 import type { Database } from '@/db/types';
+import { matchesQuery } from '@/lib/names';
 import { bestSentDate } from '@/lib/wise/dates';
 import { classifyDraftError } from '@/lib/wise/draft-error';
 import { type DraftOverride, resolveDraftRow } from '@/lib/wise/draft-row';
 import { type MatchTally, tallyMatch } from '@/lib/wise/match-summary';
 import { filterLive } from '@/lib/wise/matcher';
 import { missingRecipientReason } from '@/lib/wise/recipient-miss';
+import { draftCandidates, type WiseRecipientEntry } from '@/lib/wise/recipients';
 import type { MatchResult, UnlinkedPayment } from '@/lib/wise/types';
 import {
   isCancellable,
@@ -52,6 +54,10 @@ export interface DraftOneResult {
   paymentId: string;
   transferId?: number;
   fxRate?: number;
+  /** The recipient the draft actually landed on. */
+  recipientId?: number;
+  /** True when a failover recipient was used because Wise rejected the first. */
+  failover?: boolean;
   status: 'drafted' | 'skipped' | 'failed';
   error?: string;
 }
@@ -59,15 +65,23 @@ export interface DraftOneResult {
 /**
  * Create a quote + draft transfer for a single payment. NEVER calls the funding
  * endpoint — the owner funds manually in the Wise UI (ADR-0007).
+ *
+ * `recipientIds` is the worker's priority list (see lib/wise/recipients): the
+ * draft is tried at each in turn, moving on ONLY when Wise rejects the
+ * recipient itself (a Wisetag/balance contact that isn't bank-fundable). Any
+ * other failure stops — retrying a network error at a different account is how
+ * a contractor gets paid at the wrong one.
  */
 async function draftOne(
   api: WiseApi,
   profileId: number,
   paymentId: string,
-  recipientId: number,
+  recipientIds: readonly number[],
   amountPhp: number,
+  batch?: { profileId: number; batchGroupId: string },
 ): Promise<DraftOneResult> {
-  // 1. Quote (PHP → PHP, BALANCE payout).
+  // 1. Quote (PHP → PHP, BALANCE payout). One quote serves every attempt — a
+  //    rejected transfer doesn't consume it.
   let quote: WiseQuote;
   try {
     quote = await api.createQuote(profileId, amountPhp);
@@ -76,20 +90,25 @@ async function draftOne(
   }
 
   // 2. Transfer (references an EXISTING recipient by id; no bank details here).
-  let transfer: { id: number };
-  try {
-    transfer = await api.createTransfer(recipientId, quote.id);
-  } catch (e) {
-    return { paymentId, status: 'failed', error: classifyDraftError('transfer: ', e) };
+  let error = 'no Wise recipient';
+  for (const [i, recipientId] of recipientIds.entries()) {
+    try {
+      const transfer = await api.createTransfer(recipientId, quote.id, batch);
+      // IMPORTANT: we stop here. No POST .../payments. Money has NOT moved.
+      return {
+        paymentId,
+        transferId: transfer.id,
+        fxRate: quote.rate,
+        recipientId,
+        ...(i > 0 ? { failover: true } : {}),
+        status: 'drafted',
+      };
+    } catch (e) {
+      error = classifyDraftError('transfer: ', e);
+      if (error !== 'wisetag_unsupported') break;
+    }
   }
-
-  // IMPORTANT: we stop here. No POST .../payments. Money has NOT moved.
-  return {
-    paymentId,
-    transferId: transfer.id,
-    fxRate: quote.rate,
-    status: 'drafted',
-  };
+  return { paymentId, status: 'failed', error };
 }
 
 export interface ServiceDraftResult {
@@ -102,7 +121,7 @@ export interface DraftableRow {
   net_php: number | null;
   status?: string | null;
   paid_at?: string | null;
-  workers?: { wise_recipient_id?: number | null } | null;
+  workers?: { wise_recipient_id?: number | null; wise_recipients?: unknown } | null;
 }
 
 /**
@@ -122,7 +141,7 @@ export interface DraftableRow {
 export const triageDraftRow = (
   row: DraftableRow,
   override?: DraftOverride,
-): { skip: string } | { recipientId: number; amountPhp: number } => {
+): { skip: string } | { recipientId: number; fallbackIds: number[]; amountPhp: number } => {
   if (row.wise_transfer_id) return { skip: 'already drafted' };
   if (row.paid_at || row.status === 'sent' || row.status === 'reconciled') {
     return { skip: 'already paid' };
@@ -130,7 +149,9 @@ export const triageDraftRow = (
   const { recipientId, amountPhp } = resolveDraftRow(row, override);
   if (!recipientId) return { skip: 'no Wise recipient' };
   if (amountPhp <= 0) return { skip: 'no amount' };
-  return { recipientId, amountPhp };
+  // The rest of the worker's saved recipients, tried in order if Wise rejects this one.
+  const fallbackIds = draftCandidates(row.workers, recipientId).filter((id) => id !== recipientId);
+  return { recipientId, fallbackIds, amountPhp };
 };
 
 /** Draft a Wise transfer for each of the given payment IDs. OWNER-only. */
@@ -150,7 +171,13 @@ export async function serviceDraft(
       continue;
     }
 
-    const res = await draftOne(api, profileId, row.id, triage.recipientId, triage.amountPhp);
+    const res = await draftOne(
+      api,
+      profileId,
+      row.id,
+      [triage.recipientId, ...triage.fallbackIds],
+      triage.amountPhp,
+    );
     if (res.status === 'drafted' && res.transferId !== undefined) {
       await setWiseTransferIdSafe(db, row.id, String(res.transferId), res.fxRate);
     }
@@ -214,27 +241,19 @@ export async function serviceBatch(
       results.push({ paymentId: row.id, status: 'skipped', error: triage.skip });
       continue;
     }
-    const { recipientId, amountPhp } = triage;
-
-    try {
-      // Quote, then a transfer inside the batch group.
-      const quote = await api.createQuote(profileId, amountPhp);
-      const t = await api.createTransfer(recipientId, quote.id, {
-        profileId,
-        batchGroupId: group.id,
-      });
-
-      // Write back to DB.
-      await setWiseTransferIdSafe(db, row.id, String(t.id), quote.rate);
-      results.push({
-        paymentId: row.id,
-        transferId: t.id,
-        fxRate: quote.rate,
-        status: 'drafted',
-      });
-    } catch (e) {
-      results.push({ paymentId: row.id, status: 'failed', error: classifyDraftError('', e) });
+    // Quote, then a transfer inside the batch group (failovers as in serviceDraft).
+    const res = await draftOne(
+      api,
+      profileId,
+      row.id,
+      [triage.recipientId, ...triage.fallbackIds],
+      triage.amountPhp,
+      { profileId, batchGroupId: group.id },
+    );
+    if (res.status === 'drafted' && res.transferId !== undefined) {
+      await setWiseTransferIdSafe(db, row.id, String(res.transferId), res.fxRate);
     }
+    results.push(res);
   }
 
   // NOTE: we deliberately do NOT complete or fund the group. The owner reviews,
@@ -805,6 +824,128 @@ export async function serviceRecipients(
  * regardless — the caller filters by name client-side. Page-size limit unhandled
  * (the account has ~9 balance contacts); add cursor paging if that set grows.
  */
+/** One Wise recipient as the profile search shows it — bank account or Wisetag contact. */
+export interface WiseRecipientHit {
+  id: number | null;
+  uuid: string | null;
+  name: string;
+  kind: 'bank' | 'wisetag';
+  /** "PHP ••••1234" for a bank recipient; empty for a contact. */
+  detail: string;
+}
+
+/**
+ * Search the Wise account for recipients by name, @wisetag, or numeric id —
+ * bank recipients (GET /v1/accounts) and Wisetag/balance contacts (contacts
+ * API) in one list, so the owner picks an account Wise already has instead of
+ * typing an id. A contact whose balanceRecipientId is also a listed account is
+ * shown once, carrying both the id and the UUID.
+ */
+export async function serviceSearchRecipients(
+  query: string,
+  api: WiseApi = realWiseApi,
+): Promise<WiseRecipientHit[]> {
+  const term = query.trim().replace(/^@/, '');
+  if (!term) return [];
+  const pid = await api.getBusinessProfileId();
+  if (/^\d+$/.test(term)) {
+    const r = await api.getRecipient(Number(term));
+    return r ? [{ id: r.id, uuid: null, name: r.name, kind: 'bank', detail: hint(r) }] : [];
+  }
+  const [accounts, contacts] = await Promise.all([
+    api.listRecipients(pid),
+    api.listContacts(pid, term),
+  ]);
+  const hits: WiseRecipientHit[] = accounts.map((r) => ({
+    id: r.id,
+    uuid: null,
+    name: r.name,
+    kind: 'bank',
+    detail: hint(r),
+  }));
+  for (const c of contacts) {
+    if (!/-/.test(c.uuid)) continue; // real UUID contacts only (batch-CSV key)
+    const same = c.recipientId > 0 ? hits.find((h) => h.id === c.recipientId) : undefined;
+    if (same) same.uuid = c.uuid;
+    else
+      hits.push({
+        id: c.recipientId || null,
+        uuid: c.uuid,
+        name: c.name,
+        kind: 'wisetag',
+        detail: '',
+      });
+  }
+  return hits
+    .filter((h) => matchesQuery(term, [h.name]))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+const hint = (r: WiseRecipient): string => [r.currency, r.account].filter(Boolean).join(' ');
+
+export interface RecipientCheck {
+  key: string;
+  label: string;
+  id: number | null;
+  uuid: string | null;
+  /** ok = Wise resolves it; missing/inactive = the API draft WILL fail here;
+   *  unverified = a UUID-only bank recipient, which the API can't list. */
+  status: 'ok' | 'missing' | 'inactive' | 'unverified';
+  wiseName: string | null;
+  detail: string;
+}
+
+/**
+ * Check saved recipients against Wise BEFORE a batch, so a deleted, inactive
+ * or mistyped recipient surfaces here instead of as a failed row in the batch.
+ * Wisetag contacts verify via the contacts list (their numeric id 403s on
+ * GET /v1/accounts); bank recipients via GET /v1/accounts/{id}. A UUID-only
+ * bank recipient can't be checked — its UUID only exists in the batch template.
+ */
+export async function serviceVerifyRecipients(
+  entries: readonly WiseRecipientEntry[],
+  api: WiseApi = realWiseApi,
+): Promise<RecipientCheck[]> {
+  const needContacts = entries.some((e) => e.uuid != null);
+  const contacts = needContacts
+    ? await api.listContacts(await api.getBusinessProfileId()).catch(() => [])
+    : [];
+  return Promise.all(
+    entries.map(async (e): Promise<RecipientCheck> => {
+      const base = { key: e.uuid ?? String(e.id), label: e.label, id: e.id, uuid: e.uuid };
+      const contact = e.uuid ? contacts.find((c) => c.uuid === e.uuid) : undefined;
+      if (contact) {
+        return { ...base, status: 'ok', wiseName: contact.name, detail: 'Wisetag contact' };
+      }
+      if (e.id == null) {
+        return {
+          ...base,
+          status: 'unverified',
+          wiseName: null,
+          detail:
+            'UUID only — the Wise API cannot list bank-recipient UUIDs; check it against the batch template.',
+        };
+      }
+      const r = await api.getRecipient(e.id).catch(() => null);
+      if (!r)
+        return {
+          ...base,
+          status: 'missing',
+          wiseName: null,
+          detail: `#${e.id} is not on this Wise profile (deleted or re-created).`,
+        };
+      if (!r.active)
+        return {
+          ...base,
+          status: 'inactive',
+          wiseName: r.name,
+          detail: `#${e.id} is inactive in Wise.`,
+        };
+      return { ...base, status: 'ok', wiseName: r.name, detail: hint(r) };
+    }),
+  );
+}
+
 export async function serviceSearchContacts(
   term: string,
   profileId?: number,

@@ -33,7 +33,12 @@ import {
 import { buildWiseBatch } from '@/lib/payroll/wise-batch';
 import { logPayfileDownload } from '@/server/actions/audit';
 import { getProcessPayments, markAllUnpaid, markPaid } from '@/server/actions/payroll';
-import { wiseBatch, wiseStatus } from '@/server/actions/wise';
+import {
+  type PeriodRecipientCheck,
+  wiseBatch,
+  wiseStatus,
+  wiseVerifyPeriodRecipients,
+} from '@/server/actions/wise';
 import { WisePayoutsPanel } from './WisePayoutsPanel';
 
 type Channel = 'wise' | 'bpi' | 'other';
@@ -77,6 +82,9 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const [downloadLog, setDownloadLog] = useState(downloads);
   // Per-row mark-paid date entry: {paymentId, YYYY-MM-DD} while the row is open.
   const [dateFor, setDateFor] = useState<{ id: string; date: string } | null>(null);
+  // Pre-flight: every Wise contractor's saved recipients checked against Wise.
+  const [recipientChecks, setRecipientChecks] = useState<PeriodRecipientCheck[] | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
   const refresh = async () => {
     const r = await getProcessPayments({ periodId: period.id, companyId });
@@ -215,6 +223,26 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
         { type: failed ? 'error' : 'success', persistent: failed > 0 },
       );
       await refresh();
+    });
+  };
+
+  // ── Verify recipients with Wise BEFORE either batch route ──
+  const verifyRecipients = () => {
+    setVerifying(true);
+    void wiseVerifyPeriodRecipients(period.id).then((r) => {
+      setVerifying(false);
+      if (!r.ok) {
+        notify(r.error, { type: 'error' });
+        return;
+      }
+      setRecipientChecks(r.data);
+      const flagged = r.data.filter((w) => w.checks.some((c) => c.status !== 'ok'));
+      notify(
+        flagged.length
+          ? `${flagged.length} Wise contractor(s) have a recipient Wise can't confirm — see the list.`
+          : `All ${r.data.length} Wise contractor(s) verified with Wise.`,
+        { type: flagged.length ? 'warn' : 'success' },
+      );
     });
   };
 
@@ -543,6 +571,56 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
           </div>
         )}
       </div>
+
+      {/* 0 · Pre-flight: recipients verified against Wise before either route. */}
+      {wiseRows.length > 0 && (
+        <div className="card no-print">
+          <h3 style={{ margin: '0 0 4px' }}>Verify Wise recipients</h3>
+          <p className="sub">
+            Checks each Wise contractor&apos;s saved recipients against your Wise account (deleted,
+            inactive, or unconfirmable) so a bad one is caught here, not as a failed row after
+            upload.
+          </p>
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={verifying}
+            onClick={verifyRecipients}
+          >
+            {verifying ? 'Checking…' : `Verify with Wise (${wiseRows.length})`}
+          </button>
+          {recipientChecks && (
+            <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13 }}>
+              {recipientChecks.map((w) => {
+                const bad = w.checks.filter((c) => c.status !== 'ok');
+                return (
+                  <li key={w.workerId}>
+                    <Link href={`/contractors/${w.workerId}`}>{w.name}</Link>{' '}
+                    {w.checks.length === 0 ? (
+                      <span className="pill bad">no recipient</span>
+                    ) : bad.length === 0 ? (
+                      <span className="pill good">
+                        {w.checks.length === 1 ? 'verified' : `${w.checks.length} verified`}
+                      </span>
+                    ) : (
+                      bad.map((c) => (
+                        <span
+                          key={c.key}
+                          className={`pill ${c.status === 'unverified' ? 'warn' : 'bad'}`}
+                          title={c.detail}
+                          style={{ marginRight: 4 }}
+                        >
+                          {c.label}: {c.status}
+                        </span>
+                      ))
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* 1 · Manual Wise batch file — currency selects + dropped-UUID surface. */}
       <div className="card no-print">

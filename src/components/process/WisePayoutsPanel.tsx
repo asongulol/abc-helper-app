@@ -16,6 +16,7 @@ import { Badge } from '@/components/ui/Badge';
 import { useToast } from '@/components/ui/Toast';
 import type { ProcessPayment } from '@/db/queries/payroll';
 import { peso } from '@/lib/format';
+import type { WiseRecipientEntry } from '@/lib/wise/recipients';
 import { wiseBatch } from '@/server/actions/wise';
 
 interface WisePayoutsPanelProps {
@@ -31,7 +32,8 @@ type Row = {
   name: string;
   amount: string;
   recipientId: number | null;
-  recipients: { id: number; label: string }[];
+  /** Priority order ([0] = default). UUID-only entries can't take an API draft. */
+  recipients: WiseRecipientEntry[];
   recipientUuid: string | null;
   include: boolean;
   transferId: string | null;
@@ -42,7 +44,7 @@ const toRows = (payments: ProcessPayment[]): Row[] =>
     .filter((p) => p.payoutMethod === 'wise')
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((p) => {
-      const def = p.wiseRecipientId ?? p.wiseRecipients[0]?.id ?? null;
+      const def = p.wiseRecipientId ?? p.wiseRecipients.find((r) => r.id != null)?.id ?? null;
       return {
         paymentId: p.paymentId,
         workerId: p.workerId,
@@ -115,9 +117,12 @@ export function WisePayoutsPanel({
       }
       const drafted = r.data.results.filter((x) => x.transferId != null).length;
       const failed = r.data.results.filter((x) => x.error != null).length;
+      const failover = r.data.results.filter((x) => x.failover).length;
       notify(
-        `Created a Wise batch with ${drafted} draft transfer(s)${failed ? `, ${failed} failed` : ''}. No money has moved — review, complete, and FUND the batch in Wise (group ${r.data.batchGroupId}).`,
-        { type: failed ? 'error' : 'success', persistent: failed > 0 },
+        `Created a Wise batch with ${drafted} draft transfer(s)${failed ? `, ${failed} failed` : ''}${
+          failover ? `, ${failover} on a failover recipient (Wise rejected the default)` : ''
+        }. No money has moved — review, complete, and FUND the batch in Wise (group ${r.data.batchGroupId}).`,
+        { type: failed ? 'error' : 'success', persistent: failed > 0 || failover > 0 },
       );
       await onDrafted();
     } finally {
@@ -191,18 +196,21 @@ export function WisePayoutsPanel({
                 <td data-label="Wise recipient">
                   {r.transferId ? (
                     <span className="muted">#{r.recipientId}</span>
-                  ) : r.recipients.length > 0 ? (
+                  ) : r.recipients.some((rec) => rec.id != null) ? (
                     <select
                       aria-label={`Wise recipient for ${r.name}`}
                       value={r.recipientId ?? ''}
                       onChange={(e) => setRow(r.paymentId, { recipientId: Number(e.target.value) })}
                       style={{ padding: '3px 6px', fontSize: 13 }}
+                      title="Tried first; the others on the profile are failovers if Wise rejects it."
                     >
-                      {r.recipients.map((rec) => (
-                        <option key={rec.id} value={rec.id}>
-                          {rec.label} (#{rec.id})
-                        </option>
-                      ))}
+                      {r.recipients
+                        .filter((rec) => rec.id != null)
+                        .map((rec) => (
+                          <option key={rec.id} value={rec.id as number}>
+                            {rec.label} (#{rec.id})
+                          </option>
+                        ))}
                     </select>
                   ) : r.recipientId ? (
                     <span className="muted">#{r.recipientId}</span>

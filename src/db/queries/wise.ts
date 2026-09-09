@@ -67,6 +67,8 @@ export interface DraftPayment {
   workers: {
     wise_recipient_id: number | null;
     wise_recipient_uuid: string | null;
+    /** jsonb [{id, uuid, label}] — priority list, failovers for the draft. */
+    wise_recipients: unknown;
     first_name: string;
     last_name: string;
   } | null;
@@ -423,7 +425,7 @@ export const fetchDraftPayments = async (db: Db, paymentIds: string[]): Promise<
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, net_php, wise_transfer_id, status, paid_at, workers(wise_recipient_id, wise_recipient_uuid, first_name, last_name)',
+      'id, worker_id, net_php, wise_transfer_id, status, paid_at, workers(wise_recipient_id, wise_recipient_uuid, wise_recipients, first_name, last_name)',
     )
     .in('id', paymentIds);
   if (error) throw new Error(`payments (draft): ${error.message}`);
@@ -441,6 +443,7 @@ export const fetchDraftPayments = async (db: Db, paymentIds: string[]): Promise<
         ? {
             wise_recipient_id: w.wise_recipient_id ?? null,
             wise_recipient_uuid: w.wise_recipient_uuid ?? null,
+            wise_recipients: w.wise_recipients ?? null,
             first_name: w.first_name,
             last_name: w.last_name,
           }

@@ -10,7 +10,7 @@ describe('triageDraftRow (RP-09 — server-side double-draft guard)', () => {
   const row = { wise_transfer_id: null, net_php: 12000, workers: { wise_recipient_id: 555 } };
 
   it('drafts an eligible row at its saved recipient and locked net', () => {
-    expect(triageDraftRow(row)).toEqual({ recipientId: 555, amountPhp: 12000 });
+    expect(triageDraftRow(row)).toEqual({ recipientId: 555, fallbackIds: [], amountPhp: 12000 });
   });
 
   it('SKIPS a row that already carries a Wise transfer id', () => {
@@ -41,11 +41,17 @@ describe('triageDraftRow (RP-09 — server-side double-draft guard)', () => {
   });
 
   it('honors per-row overrides on an undrafted row', () => {
+    // The override goes first; the saved default stays as its failover.
     expect(triageDraftRow(row, { recipientId: 999 })).toEqual({
       recipientId: 999,
+      fallbackIds: [555],
       amountPhp: 12000,
     });
-    expect(triageDraftRow(row, { amountPhp: 8000 })).toEqual({ recipientId: 555, amountPhp: 8000 });
+    expect(triageDraftRow(row, { amountPhp: 8000 })).toEqual({
+      recipientId: 555,
+      fallbackIds: [],
+      amountPhp: 8000,
+    });
   });
 
   it('SKIPS a row that is already paid, however it lost its transfer id', () => {
@@ -59,6 +65,7 @@ describe('triageDraftRow (RP-09 — server-side double-draft guard)', () => {
     // A draft row with no paid_at is still draftable.
     expect(triageDraftRow({ ...row, status: 'draft', paid_at: null })).toEqual({
       recipientId: 555,
+      fallbackIds: [],
       amountPhp: 12000,
     });
   });
@@ -66,6 +73,7 @@ describe('triageDraftRow (RP-09 — server-side double-draft guard)', () => {
   it('treats an absent wise_transfer_id field as undrafted', () => {
     expect(triageDraftRow({ net_php: 500, workers: { wise_recipient_id: 1 } })).toEqual({
       recipientId: 1,
+      fallbackIds: [],
       amountPhp: 500,
     });
   });

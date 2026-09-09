@@ -1,14 +1,15 @@
 'use server';
 
 /**
- * Per-contractor Wise payout management (Profile → Pay & payout), legacy parity
- * for the "Wise recipients" list + "External sources — Wise drift".
+ * Per-contractor Wise payout management (Profile → Pay & payout).
  *
  * Data model (shared-prod columns on workers, written by the legacy app too):
- *   wise_recipients      jsonb  [{ id:number, label:string }]   — the recipient list
- *   wise_recipient_id    bigint  the DEFAULT recipient (last used)
- *   wise_recipient_uuid  text    the manual Batch-CSV UUID (separate; Wise API
- *                                 never returns it)
+ *   wise_recipients      jsonb  [{ id, uuid, label }]  — the PRIORITY list:
+ *                               index 0 is the default, the rest are failovers
+ *   wise_recipient_id    bigint  DERIVED: first entry with a numeric id (API draft)
+ *   wise_recipient_uuid  text    DERIVED: first entry with a UUID (manual Batch CSV)
+ * See src/lib/wise/recipients.ts for the pure model; every write here goes
+ * through recipientColumns() so the columns never drift from the list.
  *
  * Identifiers only — never bank details. No money moves here. But changing a
  * recipient changes WHERE the money lands, so the writes are OWNER-only (RP-56),
@@ -19,17 +20,31 @@
 import { createServiceClient } from '@/db/clients/service';
 import { humanizeError } from '@/lib/errors';
 import { otherHolderName } from '@/lib/wise/recipient-match';
+import {
+  moveRecipientUp,
+  promoteRecipient,
+  readRecipients,
+  recipientColumns,
+  removeRecipient,
+  setRecipientUuid,
+  upsertRecipient,
+  type WiseRecipientEntry,
+} from '@/lib/wise/recipients';
 import { logEvent } from '@/server/audit';
 import { requireAdmin, requireOwner } from '@/server/auth/admin';
 import {
   explainMissingRecipient,
+  type RecipientCheck,
   serviceGetRecipient,
-  serviceSearchContacts,
+  serviceSearchRecipients,
+  serviceVerifyRecipients,
+  type WiseRecipientHit,
 } from '@/server/wise/service';
 
-export type WiseRecipientRow = { id: number; label: string };
 export interface WisePayoutState {
-  recipients: WiseRecipientRow[];
+  /** Priority order: [0] is the default, the rest are failovers. */
+  recipients: WiseRecipientEntry[];
+  /** Derived — what the API draft and the Batch CSV will use. */
   defaultId: number | null;
   uuid: string | null;
   firstName: string;
@@ -59,13 +74,12 @@ const SEL =
   'first_name, middle_name, last_name, email, wise_recipients, wise_recipient_id, wise_recipient_uuid';
 
 const toState = (w: WorkerWiseRow): WisePayoutState => {
-  const list = Array.isArray(w.wise_recipients) ? (w.wise_recipients as WiseRecipientRow[]) : [];
+  const recipients = readRecipients(w);
+  const cols = recipientColumns(recipients);
   return {
-    recipients: list
-      .filter((r) => r && typeof r.id === 'number')
-      .map((r) => ({ id: r.id, label: String(r.label ?? `Recipient ${r.id}`) })),
-    defaultId: w.wise_recipient_id ?? null,
-    uuid: w.wise_recipient_uuid ?? null,
+    recipients,
+    defaultId: cols.wise_recipient_id,
+    uuid: cols.wise_recipient_uuid,
     firstName: w.first_name,
     middleName: w.middle_name,
     lastName: w.last_name,
@@ -73,7 +87,9 @@ const toState = (w: WorkerWiseRow): WisePayoutState => {
   };
 };
 
-async function readWorker(db: ReturnType<typeof createServiceClient>, workerId: string) {
+type Db = ReturnType<typeof createServiceClient>;
+
+async function readWorker(db: Db, workerId: string) {
   const { data, error } = await db.from('workers').select(SEL).eq('id', workerId).single();
   if (error) throw new Error(error.message);
   return data as WorkerWiseRow;
@@ -90,7 +106,7 @@ async function readWorker(db: ReturnType<typeof createServiceClient>, workerId: 
  * they try to make it their default. Index the jsonb list if that ever bites.
  */
 async function recipientTaken(
-  db: ReturnType<typeof createServiceClient>,
+  db: Db,
   workerId: string,
   col: 'wise_recipient_id' | 'wise_recipient_uuid',
   value: number | string,
@@ -106,6 +122,36 @@ async function recipientTaken(
   return `${what} is already linked to ${holder}. One recipient is one bank account — remove it there first.`;
 }
 
+/**
+ * Every write lands here: persist the priority list and the derived columns
+ * together, refusing when the NEW default id / UUID belongs to someone else.
+ */
+async function writeRecipients(
+  db: Db,
+  workerId: string,
+  list: WiseRecipientEntry[],
+  audit: { action: string; detail: Record<string, string | number | boolean | null> },
+): Promise<Result<WisePayoutState>> {
+  const cols = recipientColumns(list);
+  if (cols.wise_recipient_id != null) {
+    const taken = await recipientTaken(db, workerId, 'wise_recipient_id', cols.wise_recipient_id);
+    if (taken) return fail(taken);
+  }
+  if (cols.wise_recipient_uuid != null) {
+    const taken = await recipientTaken(
+      db,
+      workerId,
+      'wise_recipient_uuid',
+      cols.wise_recipient_uuid,
+    );
+    if (taken) return fail(taken);
+  }
+  const { error } = await db.from('workers').update(cols).eq('id', workerId);
+  if (error) return fail(error.message);
+  void logEvent({ action: audit.action, entity: workerId, detail: audit.detail });
+  return ok(toState(await readWorker(db, workerId)));
+}
+
 export async function getWorkerWisePayout(workerId: string): Promise<Result<WisePayoutState>> {
   try {
     await requireAdmin();
@@ -116,37 +162,55 @@ export async function getWorkerWisePayout(workerId: string): Promise<Result<Wise
   }
 }
 
+/**
+ * Add a recipient (or merge into the entry that already carries its id/UUID).
+ * A bare numeric id — typed, not picked from the Wise search — is checked
+ * against Wise first: a deleted or inactive recipient is refused here rather
+ * than failing a payroll batch later. Picks from the search carry the UUID
+ * and/or came straight from Wise's own list, so they are verified already.
+ * New entries go LAST — a failover until the owner promotes it.
+ */
 export async function addWorkerWiseRecipient(args: {
   workerId: string;
-  recipientId: number;
-  label?: string;
+  recipientId?: number | null;
+  uuid?: string | null;
+  label?: string | null;
 }): Promise<Result<WisePayoutState>> {
   try {
     await requireOwner();
-    const id = Number(args.recipientId);
-    if (!Number.isInteger(id) || id <= 0) return fail('Recipient ID must be a positive number.');
+    const id = args.recipientId == null ? null : Number(args.recipientId);
+    const uuid = args.uuid?.trim() || null;
+    if (id != null && (!Number.isInteger(id) || id <= 0)) {
+      return fail('Recipient ID must be a positive number.');
+    }
+    if (id == null && !uuid) return fail('Enter a Wise recipient ID or UUID.');
+
+    let label = args.label?.trim() || '';
+    if (id != null && !uuid) {
+      const rec = await serviceGetRecipient(id);
+      if (!rec) return fail(await explainMissingRecipient(id));
+      if (!rec.active) return fail(`Recipient #${id} is inactive in Wise — it can't be paid.`);
+      label ||= rec.name;
+    }
 
     const db = createServiceClient();
-    const w = await readWorker(db, args.workerId);
-    const state = toState(w);
-    if (state.recipients.some((r) => r.id === id)) return ok(state); // already added
-
-    const taken = await recipientTaken(db, args.workerId, 'wise_recipient_id', id);
-    if (taken) return fail(taken);
-
-    const next = [...state.recipients, { id, label: args.label?.trim() || `Recipient ${id}` }];
-    const nextDefault = state.defaultId ?? id; // first one becomes default
-    const { error } = await db
-      .from('workers')
-      .update({ wise_recipients: next, wise_recipient_id: nextDefault })
-      .eq('id', args.workerId);
-    if (error) return fail(error.message);
-    void logEvent({
-      action: 'wise_recipient_add',
-      entity: args.workerId,
-      detail: { recipientId: id },
+    if (id != null) {
+      const taken = await recipientTaken(db, args.workerId, 'wise_recipient_id', id);
+      if (taken) return fail(taken);
+    }
+    if (uuid) {
+      const taken = await recipientTaken(db, args.workerId, 'wise_recipient_uuid', uuid);
+      if (taken) return fail(taken);
+    }
+    const list = upsertRecipient(readRecipients(await readWorker(db, args.workerId)), {
+      id,
+      uuid,
+      label,
     });
-    return ok(toState(await readWorker(db, args.workerId)));
+    return await writeRecipients(db, args.workerId, list, {
+      action: 'wise_recipient_add',
+      detail: { recipientId: id, uuid },
+    });
   } catch (e) {
     return fail(e);
   }
@@ -154,62 +218,67 @@ export async function addWorkerWiseRecipient(args: {
 
 export async function removeWorkerWiseRecipient(args: {
   workerId: string;
-  recipientId: number;
+  key: string;
 }): Promise<Result<WisePayoutState>> {
   try {
     await requireOwner();
     const db = createServiceClient();
-    const state = toState(await readWorker(db, args.workerId));
-    const next = state.recipients.filter((r) => r.id !== args.recipientId);
-    const nextDefault =
-      state.defaultId === args.recipientId ? (next[0]?.id ?? null) : state.defaultId;
-    const { error } = await db
-      .from('workers')
-      .update({ wise_recipients: next, wise_recipient_id: nextDefault })
-      .eq('id', args.workerId);
-    if (error) return fail(error.message);
-    void logEvent({
+    const list = removeRecipient(readRecipients(await readWorker(db, args.workerId)), args.key);
+    return await writeRecipients(db, args.workerId, list, {
       action: 'wise_recipient_remove',
-      entity: args.workerId,
-      detail: { recipientId: args.recipientId },
+      detail: { key: args.key },
     });
-    return ok(toState(await readWorker(db, args.workerId)));
   } catch (e) {
     return fail(e);
   }
 }
 
+/** Make `key` the default; the previous default becomes the first failover. */
 export async function setDefaultWiseRecipient(args: {
   workerId: string;
-  recipientId: number;
+  key: string;
 }): Promise<Result<WisePayoutState>> {
   try {
     await requireOwner();
     const db = createServiceClient();
-    const state = toState(await readWorker(db, args.workerId));
-    if (!state.recipients.some((r) => r.id === args.recipientId)) {
+    const cur = readRecipients(await readWorker(db, args.workerId));
+    if (!cur.some((e) => (e.uuid ?? String(e.id)) === args.key)) {
       return fail('That recipient is not on this contractor.');
     }
-    const taken = await recipientTaken(db, args.workerId, 'wise_recipient_id', args.recipientId);
-    if (taken) return fail(taken);
-    const { error } = await db
-      .from('workers')
-      .update({ wise_recipient_id: args.recipientId })
-      .eq('id', args.workerId);
-    if (error) return fail(error.message);
-    void logEvent({
+    return await writeRecipients(db, args.workerId, promoteRecipient(cur, args.key), {
       action: 'wise_recipient_default',
-      entity: args.workerId,
-      detail: { recipientId: args.recipientId },
+      detail: { key: args.key },
     });
-    return ok(toState(await readWorker(db, args.workerId)));
   } catch (e) {
     return fail(e);
   }
 }
 
+/** Move `key` one step up the failover order. */
+export async function moveWiseRecipientUp(args: {
+  workerId: string;
+  key: string;
+}): Promise<Result<WisePayoutState>> {
+  try {
+    await requireOwner();
+    const db = createServiceClient();
+    const cur = readRecipients(await readWorker(db, args.workerId));
+    return await writeRecipients(db, args.workerId, moveRecipientUp(cur, args.key), {
+      action: 'wise_recipient_reorder',
+      detail: { key: args.key },
+    });
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Set or clear one entry's Batch-CSV UUID (pasted from Wise → Batch payments →
+ * Download all templates — the only place a bank recipient's UUID exists).
+ */
 export async function saveWorkerWiseUuid(args: {
   workerId: string;
+  key: string;
   uuid: string;
 }): Promise<Result<WisePayoutState>> {
   try {
@@ -220,102 +289,39 @@ export async function saveWorkerWiseUuid(args: {
       const taken = await recipientTaken(db, args.workerId, 'wise_recipient_uuid', uuid);
       if (taken) return fail(taken);
     }
-    const { error } = await db
-      .from('workers')
-      .update({ wise_recipient_uuid: uuid })
-      .eq('id', args.workerId);
-    if (error) return fail(error.message);
-    void logEvent({
+    const cur = readRecipients(await readWorker(db, args.workerId));
+    return await writeRecipients(db, args.workerId, setRecipientUuid(cur, args.key, uuid), {
       action: 'wise_uuid_save',
-      entity: args.workerId,
-      detail: { set: uuid != null },
+      detail: { key: args.key, set: uuid != null },
     });
-    return ok(toState(await readWorker(db, args.workerId)));
   } catch (e) {
     return fail(e);
   }
 }
 
 /**
- * "By Wisetag" lookup: search Wise CONTACTS (Wise-to-Wise / balance recipients)
- * by Wisetag or name. Each result carries the contact UUID (== wise_recipient_uuid,
- * the manual Batch-CSV recipientId) AND the numeric balanceRecipientId
- * (== wise_recipient_id). Pick one and addWorkerWiseContact stores both, so the
- * contractor lands in the downloadable Wise batch file without a manual paste.
+ * Find recipients that already exist in the Wise account — by name, @wisetag,
+ * or numeric id — across bank recipients AND Wisetag contacts. Adding a hit
+ * stores its id and, when Wise exposes it, its UUID.
  */
-export async function lookupWiseByTag(
-  query: string,
-): Promise<Result<{ recipientId: number; uuid: string; name: string }[]>> {
+export async function searchWiseRecipients(query: string): Promise<Result<WiseRecipientHit[]>> {
   try {
     await requireAdmin();
-    const term = query.trim().replace(/^@/, '');
-    if (!term) return fail('Enter a Wisetag or name.');
-    // Wise ignores ?searchTerm and returns ALL balance contacts, so filter by
-    // name client-side; fall back to the full list when nothing matches (a
-    // Wisetag often differs from the display name).
-    const all = (await serviceSearchContacts(term)).map((c) => ({
-      recipientId: c.recipientId,
-      uuid: c.uuid,
-      name: c.name || `Recipient ${c.uuid.slice(0, 8)}`,
-    }));
-    const t = term.toLowerCase();
-    const flat = (s: string) => s.toLowerCase().replace(/\s+/g, '');
-    const hits = all.filter((c) => c.name.toLowerCase().includes(t) || flat(c.name).includes(t));
-    return ok(hits.length ? hits : all);
+    if (!query.trim()) return fail('Enter a name, @wisetag, or recipient ID.');
+    return ok(await serviceSearchRecipients(query));
   } catch (e) {
     return fail(e);
   }
 }
 
-/**
- * Add a Wisetag/balance contact picked from lookupWiseByTag: store its UUID
- * (the Batch-CSV recipientId) and, when present, its numeric balanceRecipientId
- * (added to the recipients list + set as default for the API-draft attempt).
- * The UUID is what actually gets a balance recipient into the batch file.
- */
-export async function addWorkerWiseContact(args: {
-  workerId: string;
-  recipientId: number;
-  uuid: string;
-  label?: string;
-}): Promise<Result<WisePayoutState>> {
+/** Check every saved recipient against Wise (see serviceVerifyRecipients). */
+export async function verifyWorkerWiseRecipients(
+  workerId: string,
+): Promise<Result<RecipientCheck[]>> {
   try {
-    await requireOwner();
-    const uuid = args.uuid.trim();
-    if (!uuid) return fail('That Wisetag contact has no UUID.');
-    const id = Number(args.recipientId);
-    const hasId = Number.isInteger(id) && id > 0;
-
+    await requireAdmin();
     const db = createServiceClient();
-    const takenUuid = await recipientTaken(db, args.workerId, 'wise_recipient_uuid', uuid);
-    if (takenUuid) return fail(takenUuid);
-    if (hasId) {
-      const takenId = await recipientTaken(db, args.workerId, 'wise_recipient_id', id);
-      if (takenId) return fail(takenId);
-    }
-    const state = toState(await readWorker(db, args.workerId));
-    const label = args.label?.trim() || `Recipient ${hasId ? id : uuid.slice(0, 8)}`;
-    const recipients =
-      hasId && !state.recipients.some((r) => r.id === id)
-        ? [...state.recipients, { id, label }]
-        : state.recipients;
-    const nextDefault = hasId ? (state.defaultId ?? id) : state.defaultId;
-
-    const { error } = await db
-      .from('workers')
-      .update({
-        wise_recipient_uuid: uuid,
-        wise_recipients: recipients,
-        wise_recipient_id: nextDefault,
-      })
-      .eq('id', args.workerId);
-    if (error) return fail(error.message);
-    void logEvent({
-      action: 'wise_contact_add',
-      entity: args.workerId,
-      detail: { recipientId: hasId ? id : null, uuid },
-    });
-    return ok(toState(await readWorker(db, args.workerId)));
+    return ok(await serviceVerifyRecipients(readRecipients(await readWorker(db, workerId))));
   } catch (e) {
     return fail(e);
   }

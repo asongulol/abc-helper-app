@@ -100,3 +100,29 @@ Beyond the in-app `wisePoll`, the Supabase **`wise-payouts`** Deno edge function
 reconcile on a schedule. It's gated by `x-cron-secret` (`verify_jwt = false`) and, by
 construction, only `GET`s transfer detail and `PATCH`es payment status — there is no funding call
 (the guardrail scans this directory too). Its date helpers are vendored from `src/lib/wise/dates.ts`.
+
+## Recipients: default + failovers
+
+A contractor can hold several Wise recipients (a bank account, a Wisetag contact, a second
+bank). `workers.wise_recipients` is that list **in priority order** — `[{ id, uuid, label }]`,
+index 0 the default, the rest failovers — and the two scalar columns are **derived** from it
+(`recipientColumns()` in `src/lib/wise/recipients.ts`): `wise_recipient_id` is the first entry
+with a numeric id (the API-draft key), `wise_recipient_uuid` the first entry with a UUID (the
+manual Batch-CSV `recipientId`). Every write in `src/server/actions/wise-recipients.ts` goes
+through that derivation, so the CSV builder, the matcher and the legacy portal keep reading the
+columns unchanged.
+
+- **Failover** (`draftOne()` in `service.ts`): the draft is tried at the chosen recipient, then at
+  each other saved id in order — but only when Wise rejects the *recipient* (`wisetag_unsupported`:
+  a Wisetag/balance contact that isn't bank-fundable). Any other error stops. The result carries
+  `recipientId` + `failover: true`, and the `wise_batch` audit row records both the chosen and the
+  actual recipient.
+- **Find in Wise** (`serviceSearchRecipients()`): one search over bank recipients
+  (`GET /v1/accounts`) and Wisetag contacts (contacts API) by name, `@wisetag` or numeric id, so
+  recipients are picked from what Wise already has. A contact whose `balanceRecipientId` is also a
+  listed account is shown once with both ids. Bank-recipient UUIDs are **not** exposed by the API
+  — paste them per entry from Wise → Batch payments → Download all templates.
+- **Verify with Wise** (`serviceVerifyRecipients()`): per entry, `ok` / `missing` / `inactive` /
+  `unverified` (UUID-only bank recipient). Available on the profile panel and as a period
+  pre-flight on Process → Pay (`wiseVerifyPeriodRecipients`), before either batch route. A bare
+  numeric id typed into the profile is verified on add and refused when Wise doesn't resolve it.
