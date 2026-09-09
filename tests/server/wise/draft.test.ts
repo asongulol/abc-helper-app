@@ -128,3 +128,85 @@ describe('serviceCancelTransfer — refusal ladder on the seam', () => {
     expect(api.calls.cancels).toEqual([]);
   });
 });
+
+describe('failover — the next saved recipient when Wise rejects the default', () => {
+  const twoRecipients = {
+    ...worker,
+    wise_recipient_id: 77,
+    wise_recipients: [
+      { id: 77, uuid: 'tag-uuid', label: 'Wisetag' },
+      { id: 88, uuid: 'bank-uuid', label: 'Bank' },
+    ],
+  };
+  /** A fake whose transfer endpoint 422s for the given recipient ids. */
+  const rejecting = (ids: number[], status = 422) => {
+    const api = fakeWise();
+    const real = api.createTransfer;
+    // The fake only records successful drafts; `attempts` sees every try.
+    const attempts: { recipientId: number; batchGroupId?: string }[] = [];
+    api.createTransfer = async (recipientId, quoteId, batch) => {
+      attempts.push({ recipientId, ...(batch ? { batchGroupId: batch.batchGroupId } : {}) });
+      if (ids.includes(recipientId)) {
+        throw new Error(
+          `Wise API POST /v1/transfers → ${status}: {"errors":[{"code":"targetAccount.invalid","message":"recipient not supported"}]}`,
+        );
+      }
+      return real(recipientId, quoteId, batch);
+    };
+    return Object.assign(api, { attempts });
+  };
+
+  it('drafts at the failover and says so when the default is a rejected Wisetag', async () => {
+    const { client, tables } = fakeSupabase({
+      workers: [twoRecipients],
+      payments: [payment('p1')],
+    });
+    const api = rejecting([77]);
+
+    const { results } = await serviceDraft(client, ['p1'], api);
+
+    expect(results[0]).toMatchObject({ status: 'drafted', recipientId: 88, failover: true });
+    expect(api.attempts.map((t) => t.recipientId)).toEqual([77, 88]);
+    expect(api.calls.quotes).toHaveLength(1); // one quote serves both attempts
+    expect(tables.payments?.[0]?.wise_transfer_id).toBe('9001');
+  });
+
+  it('fails (and drafts nothing) when every recipient is rejected', async () => {
+    const { client, tables } = fakeSupabase({
+      workers: [twoRecipients],
+      payments: [payment('p1')],
+    });
+    const api = rejecting([77, 88]);
+
+    const { results } = await serviceDraft(client, ['p1'], api);
+
+    expect(results[0]).toMatchObject({ status: 'failed', error: 'wisetag_unsupported' });
+    expect(tables.payments?.[0]?.wise_transfer_id).toBeNull();
+  });
+
+  it('does NOT fail over on a non-recipient error — a network blip is not a wrong account', async () => {
+    const { client } = fakeSupabase({ workers: [twoRecipients], payments: [payment('p1')] });
+    const api = fakeWise();
+    api.createTransfer = async () => {
+      throw new Error('Wise API POST /v1/transfers → 500: upstream timeout');
+    };
+
+    const { results } = await serviceDraft(client, ['p1'], api);
+
+    expect(results[0]?.status).toBe('failed');
+    expect(results[0]?.error).toContain('500');
+  });
+
+  it('inside a batch group: the override is tried first, the default is its failover', async () => {
+    const { client } = fakeSupabase({ workers: [twoRecipients], payments: [payment('p1')] });
+    const api = rejecting([88]);
+
+    const res = await serviceBatch(client, [{ paymentId: 'p1', recipientId: 88 }], 'x', api);
+
+    expect(res.results[0]).toMatchObject({ status: 'drafted', recipientId: 77, failover: true });
+    expect(api.attempts.map((t) => [t.recipientId, t.batchGroupId])).toEqual([
+      [88, 'bg-1'],
+      [77, 'bg-1'],
+    ]);
+  });
+});

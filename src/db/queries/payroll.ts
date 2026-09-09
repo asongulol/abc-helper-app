@@ -22,6 +22,7 @@ import {
   type RosterRow,
   type TimeEntryRow,
 } from '@/lib/payroll/mappers';
+import { readRecipients, type WiseRecipientEntry } from '@/lib/wise/recipients';
 import { uuid } from '@/types/schemas/uuid';
 
 type Db = SupabaseClient<Database>;
@@ -1718,8 +1719,8 @@ export type ProcessPayment = {
   wiseRecipientUuid: string | null;
   /** Numeric Wise recipient id — shown in the individual-payments export. */
   wiseRecipientId: number | null;
-  /** Saved Wise recipients ({id,label}) — options for the API-draft dropdown. */
-  wiseRecipients: { id: number; label: string }[];
+  /** Saved Wise recipients in priority order ([0] = default) — options for the API-draft dropdown. */
+  wiseRecipients: WiseRecipientEntry[];
   /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
   holdReason: string | null;
 };
@@ -1754,13 +1755,12 @@ export const fetchProcessPayments = async (
     holdReason: p.hold_lifted_at ? null : p.hold_reason,
     wiseRecipientUuid: p.workers?.wise_recipient_uuid ?? null,
     wiseRecipientId: p.workers?.wise_recipient_id ?? null,
-    wiseRecipients: Array.isArray(p.workers?.wise_recipients)
-      ? (p.workers.wise_recipients as Array<{ id?: unknown; label?: unknown }>)
-          .filter((r) => r && typeof r.id === 'number')
-          .map((r) => ({
-            id: r.id as number,
-            label: String(r.label ?? `Recipient ${r.id as number}`),
-          }))
+    wiseRecipients: p.workers
+      ? readRecipients({
+          wise_recipients: p.workers.wise_recipients,
+          wise_recipient_id: p.workers.wise_recipient_id,
+          wise_recipient_uuid: p.workers.wise_recipient_uuid,
+        })
       : [],
   }));
 };
