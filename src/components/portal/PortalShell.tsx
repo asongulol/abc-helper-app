@@ -152,10 +152,15 @@ export const PortalShell = ({
             // until the contractor finishes onboarding, then it hides again —
             // unless an admin REOPENED it (onboardingOpen), which shows the tab
             // without hiding the work tabs (the contractor stays fully active).
+            // Contracts is the exception the other way: a version sent for
+            // signature MID-onboarding (the change wizard on a new hire) can only
+            // be signed there, so the tab shows whenever one is waiting.
             const hidden =
               item.href === '/portal/onboarding'
                 ? onboarded && !onboardingOpen
-                : !onboarded && item.href !== '/portal';
+                : item.href === '/portal/contracts'
+                  ? !onboarded && contractsBadge === 0
+                  : !onboarded && item.href !== '/portal';
             if (hidden) return null;
             const active = isActive(item);
             const badge =

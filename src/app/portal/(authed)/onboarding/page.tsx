@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PortalOnboarding } from '@/components/portal/PortalOnboarding';
 import { createServerSupabase } from '@/db/clients/server';
+import { fetchOutstandingPackages } from '@/db/queries/contracts';
 import { fetchAgreements } from '@/db/queries/onboarding';
 import { fetchAgreementTemplate, fetchOwnOnboarding, fetchOwnProfile } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
@@ -25,12 +26,17 @@ export default async function PortalOnboardingPage() {
   const supabase = await createServerSupabase();
   // prefill (per-kind onboarding_agreements) + profile drive the merge, so the
   // contractor signs the FILLED contract — the same vars the print route uses.
-  const [{ progress, signatures, agreements }, prefill, profile, templates] = await Promise.all([
-    fetchOwnOnboarding(supabase, worker.workerId),
-    fetchAgreements(supabase, worker.workerId),
-    fetchOwnProfile(supabase, worker.workerId),
-    Promise.all(REQUIRED_KINDS.map((kind) => fetchAgreementTemplate(supabase, kind))),
-  ]);
+  const [{ progress, signatures, agreements }, prefill, profile, templates, packages] =
+    await Promise.all([
+      fetchOwnOnboarding(supabase, worker.workerId),
+      fetchAgreements(supabase, worker.workerId),
+      fetchOwnProfile(supabase, worker.workerId),
+      Promise.all(REQUIRED_KINDS.map((kind) => fetchAgreementTemplate(supabase, kind))),
+      // A contract version sent mid-onboarding supersedes the Stage 1 signatures
+      // it re-asks for; the contract itself is signed on the Contracts tab.
+      fetchOutstandingPackages(supabase, { workerIds: [worker.workerId] }),
+    ]);
+  const pkg = packages.get(worker.workerId) ?? null;
 
   const workerName = profile
     ? [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(' ').trim()
@@ -71,6 +77,7 @@ export default async function PortalOnboardingPage() {
       agreements={agreements}
       templateMap={templateMap}
       requiredKinds={REQUIRED_KINDS}
+      resign={pkg ? { contractSigned: pkg.contractSigned, outstanding: pkg.outstanding } : null}
     />
   );
 }
