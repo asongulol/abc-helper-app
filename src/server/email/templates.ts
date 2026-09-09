@@ -164,7 +164,7 @@ export const DEFAULT_HIRE_EMAILS: HireEmailConfig = {
       '<p>Hi {{name}},</p>',
       '<p>A new version of your Independent Contractor Agreement (version {{version}}) is ready for your review and signature. Reason: <b>{{reason}}</b>. The new terms take effect on <b>{{effective_from}}</b>.</p>',
       '<p>Please sign in to the contractor portal, read the agreement through to the end, and sign it:</p>',
-      '<p><a href="{{portal_url}}" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Review and sign</a></p>',
+      '<p><a href="{{portal_url}}/contracts" style="display:inline-block;padding:11px 20px;background:#1F3A68;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600">Review and sign</a></p>',
       '{{package_block}}',
       '<p>Your current agreement stays in force until the new one is countersigned. Questions? Just reply to this email.</p>',
       '<p>— Aaron Anderson E.H.S. LLC</p>',

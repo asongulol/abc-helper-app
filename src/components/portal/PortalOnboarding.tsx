@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { Badge, type BadgeTone, Modal, useToast } from '@/components/ui';
@@ -44,6 +45,10 @@ interface Props {
   agreements: Agreement[];
   templateMap: Record<string, { title: string; body: string; version: string }>;
   requiredKinds: AgreementKind[];
+  /** Re-sign package from a contract version sent for signature (wizard decision
+   *  8): its kinds show here as unsigned again, but signAgreement refuses them
+   *  until the contract itself is signed — which happens on the Contracts tab. */
+  resign?: { contractSigned: boolean; outstanding: readonly AgreementKind[] } | null;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -81,6 +86,7 @@ export const PortalOnboarding = ({
   agreements,
   templateMap,
   requiredKinds,
+  resign = null,
 }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
@@ -237,6 +243,10 @@ export const PortalOnboarding = ({
             const prevSigned =
               idx === 0 || signedKinds.has(requiredKinds[idx - 1] as AgreementKind);
             const countersig = agreements.find((a) => a.agreement_kind === kind);
+            // Superseded by a contract change: the button would only bounce off
+            // "Sign your updated contractor agreement first" — send them there.
+            const awaitingContract =
+              !isSigned && !!resign && !resign.contractSigned && resign.outstanding.includes(kind);
             return (
               <div
                 key={kind}
@@ -260,7 +270,12 @@ export const PortalOnboarding = ({
                     </span>
                   )}
                 </div>
-                {!isSigned && prevSigned && (
+                {awaitingContract && (
+                  <Link href="/portal/contracts" className="sub" style={{ fontSize: 11 }}>
+                    Sign your updated contract first →
+                  </Link>
+                )}
+                {!isSigned && prevSigned && !awaitingContract && (
                   <button
                     type="button"
                     className="btn sm"
@@ -270,7 +285,7 @@ export const PortalOnboarding = ({
                     Review &amp; sign
                   </button>
                 )}
-                {!isSigned && !prevSigned && (
+                {!isSigned && !prevSigned && !awaitingContract && (
                   <span className="sub" style={{ fontSize: 11 }}>
                     Sign previous first
                   </span>
