@@ -104,10 +104,16 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   };
 
   const inChannel = (c: Channel) => payments.filter((p) => channelOf(p.payoutMethod) === c);
-  // What Pay via Wise API, Mark paid and both batch files act on.
+  // The rows on screen (channel tab). Bulk actions act on what you can see.
+  const shown = useMemo(
+    () => (tab === 'all' ? payments : payments.filter((p) => channelOf(p.payoutMethod) === tab)),
+    [payments, tab],
+  );
+  // What Pay via Wise API, Mark all paid and both batch files act on: the
+  // visible rows, narrowed further by any row selection.
   const scoped = useMemo(
-    () => (selected.size ? payments.filter((p) => selected.has(p.paymentId)) : payments),
-    [payments, selected],
+    () => (selected.size ? shown.filter((p) => selected.has(p.paymentId)) : shown),
+    [shown, selected],
   );
   const wiseRows = scoped.filter((p) => channelOf(p.payoutMethod) === 'wise');
   const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
@@ -146,7 +152,6 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const wiseReady = wiseFile.included.length;
   const wiseFileTotal = sumPhp(wiseFile.included);
   const wiseDroppedTotal = sumPhp(wiseFile.dropped);
-  const shown = tab === 'all' ? payments : inChannel(tab);
   // Default table order: contractor name A→Z.
   const shownSorted = [...shown].sort((a, b) => a.name.localeCompare(b.name));
   const someShownSelected = shown.some((p) => selected.has(p.paymentId));
@@ -486,7 +491,9 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
             disabled={busy || unpaidIds.length === 0}
             onClick={() => setConfirm('paid')}
           >
-            {selected.size ? `Mark selected paid (${unpaidIds.length})` : 'Mark all paid'}
+            {selected.size
+              ? `Mark selected paid (${unpaidIds.length})`
+              : `Mark all paid (${unpaidIds.length})`}
           </button>
           <button
             type="button"
@@ -778,7 +785,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
       {confirm === 'paid' && (
         <ConfirmDangerModal
           title={selected.size ? 'Mark selected paid' : 'Mark all paid'}
-          message={`Mark ${unpaidIds.length} contractor(s) paid for ${title}? Do this only after you've actually sent the money.${
+          message={`Mark ${unpaidIds.length}${tab === 'all' ? '' : ` ${tab.toUpperCase()}`} contractor(s) paid for ${title}? Do this only after you've actually sent the money.${
             unfundedDrafts > 0
               ? ` ${unfundedDrafts} of them only have a Wise DRAFT transfer — no money moves until you fund the batch in Wise, so marking them paid now records a payment that hasn't happened.`
               : ''
