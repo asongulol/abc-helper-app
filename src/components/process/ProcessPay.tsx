@@ -85,6 +85,8 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   // Pre-flight: every Wise contractor's saved recipients checked against Wise.
   const [recipientChecks, setRecipientChecks] = useState<PeriodRecipientCheck[] | null>(null);
   const [verifying, setVerifying] = useState(false);
+  // null = everyone (the default); a Set once the admin narrows it.
+  const [verifyOnly, setVerifyOnly] = useState<Set<string> | null>(null);
 
   const refresh = async () => {
     const r = await getProcessPayments({ periodId: period.id, companyId });
@@ -103,6 +105,16 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const inChannel = (c: Channel) => payments.filter((p) => channelOf(p.payoutMethod) === c);
   const wiseRows = inChannel('wise');
   const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
+  // One entry per Wise contractor (a worker can hold several payment rows).
+  const wiseWorkers = [...new Map(wiseRows.map((p) => [p.workerId, p.name])).entries()].map(
+    ([workerId, name]) => ({ workerId, name }),
+  );
+  const verifySelected = verifyOnly ?? new Set(wiseWorkers.map((w) => w.workerId));
+  const toggleVerify = (workerId: string) => {
+    const next = new Set(verifySelected);
+    if (!next.delete(workerId)) next.add(workerId);
+    setVerifyOnly(next);
+  };
   // Build the batch file up front, not just on click: its `included` rows are
   // the only ones written, so its sum — NOT the sum of all Wise rows — is what
   // Wise shows after upload and what the owner funds against (RP-65).
@@ -228,8 +240,12 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
 
   // ── Verify recipients with Wise BEFORE either batch route ──
   const verifyRecipients = () => {
+    if (verifySelected.size === 0) {
+      notify('Select at least one contractor to verify.', { type: 'warn' });
+      return;
+    }
     setVerifying(true);
-    void wiseVerifyPeriodRecipients(period.id).then((r) => {
+    void wiseVerifyPeriodRecipients(period.id, [...verifySelected]).then((r) => {
       setVerifying(false);
       if (!r.ok) {
         notify(r.error, { type: 'error' });
@@ -581,13 +597,45 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
             inactive, or unconfirmable) so a bad one is caught here, not as a failed row after
             upload.
           </p>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={verifySelected.size === wiseWorkers.length}
+              onClick={() => setVerifyOnly(null)}
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="btn ghost sm"
+              disabled={verifySelected.size === 0}
+              onClick={() => setVerifyOnly(new Set())}
+            >
+              Unselect all
+            </button>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginBottom: 8 }}>
+            {wiseWorkers.map((w) => (
+              <label key={w.workerId} style={{ fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={verifySelected.has(w.workerId)}
+                  onChange={() => toggleVerify(w.workerId)}
+                />{' '}
+                {w.name}
+              </label>
+            ))}
+          </div>
           <button
             type="button"
             className="btn ghost"
-            disabled={verifying}
+            disabled={verifying || verifySelected.size === 0}
             onClick={verifyRecipients}
           >
-            {verifying ? 'Checking…' : `Verify with Wise (${wiseRows.length})`}
+            {verifying
+              ? 'Checking…'
+              : `Verify with Wise (${verifySelected.size} of ${wiseWorkers.length})`}
           </button>
           {recipientChecks && (
             <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13 }}>

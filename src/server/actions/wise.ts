@@ -909,14 +909,18 @@ export interface PeriodRecipientCheck {
  */
 export async function wiseVerifyPeriodRecipients(
   periodId: string,
+  /** Subset of worker ids to check; omit for every Wise contractor in the period. */
+  workerIds?: string[],
 ): Promise<WiseActionResult<PeriodRecipientCheck[]>> {
   try {
     await requireAdmin();
     const db = createServiceClient();
     const payments = await fetchProcessPayments(db, periodId);
+    const only = workerIds ? new Set(workerIds) : null;
     const workers = new Map<string, { name: string; recipients: WiseRecipientEntry[] }>();
     for (const p of payments) {
       if (p.payoutMethod !== 'wise' || workers.has(p.workerId)) continue;
+      if (only && !only.has(p.workerId)) continue;
       workers.set(p.workerId, { name: p.name, recipients: p.wiseRecipients });
     }
     const out: PeriodRecipientCheck[] = [];
