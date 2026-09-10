@@ -85,8 +85,9 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   // Pre-flight: every Wise contractor's saved recipients checked against Wise.
   const [recipientChecks, setRecipientChecks] = useState<PeriodRecipientCheck[] | null>(null);
   const [verifying, setVerifying] = useState(false);
-  // null = everyone (the default); a Set once the admin narrows it.
-  const [verifyOnly, setVerifyOnly] = useState<Set<string> | null>(null);
+  // Row selection (payment ids). Empty = no narrowing: bulk actions and the
+  // batch files cover the whole batch, as before.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const refresh = async () => {
     const r = await getProcessPayments({ periodId: period.id, companyId });
@@ -103,18 +104,19 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   };
 
   const inChannel = (c: Channel) => payments.filter((p) => channelOf(p.payoutMethod) === c);
-  const wiseRows = inChannel('wise');
-  const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
-  // One entry per Wise contractor (a worker can hold several payment rows).
-  const wiseWorkers = [...new Map(wiseRows.map((p) => [p.workerId, p.name])).entries()].map(
-    ([workerId, name]) => ({ workerId, name }),
+  // What Pay via Wise API, Mark paid and both batch files act on.
+  const scoped = useMemo(
+    () => (selected.size ? payments.filter((p) => selected.has(p.paymentId)) : payments),
+    [payments, selected],
   );
-  const verifySelected = verifyOnly ?? new Set(wiseWorkers.map((w) => w.workerId));
-  const toggleVerify = (workerId: string) => {
-    const next = new Set(verifySelected);
-    if (!next.delete(workerId)) next.add(workerId);
-    setVerifyOnly(next);
-  };
+  const wiseRows = scoped.filter((p) => channelOf(p.payoutMethod) === 'wise');
+  const wiseMissingUuid = wiseRows.filter((p) => !p.wiseRecipientUuid);
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   // Build the batch file up front, not just on click: its `included` rows are
   // the only ones written, so its sum — NOT the sum of all Wise rows — is what
   // Wise shows after upload and what the owner funds against (RP-65).
@@ -122,7 +124,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
     () =>
       buildWiseBatch(
         // Wizard decision 9: a held row never goes on the Wise batch.
-        payments
+        scoped
           .filter((p) => !p.holdReason)
           .map((p) => ({
             name: p.name,
@@ -137,7 +139,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
           sourceCurrency: srcCcy,
         },
       ),
-    [payments, period.periodStart, period.periodEnd, srcCcy],
+    [scoped, period.periodStart, period.periodEnd, srcCcy],
   );
   // The button's count must be the file's own count — the builder also drops
   // zero-net rows (RP-60), so a UUID tally would promise more than it writes.
@@ -147,9 +149,20 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   const shown = tab === 'all' ? payments : inChannel(tab);
   // Default table order: contractor name A→Z.
   const shownSorted = [...shown].sort((a, b) => a.name.localeCompare(b.name));
+  const someShownSelected = shown.some((p) => selected.has(p.paymentId));
+  const allShownSelected = shown.length > 0 && shown.every((p) => selected.has(p.paymentId));
+  const toggleAllShown = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const p of shown) {
+        if (allShownSelected) next.delete(p.paymentId);
+        else next.add(p.paymentId);
+      }
+      return next;
+    });
   // Only draft/queued/failed rows are payable. `sent` and `reconciled` already
   // moved money — re-marking them overwrites their true send date (RP-08).
-  const unpaid = payments.filter((p) => isUnpaidStatus(p.status) && !p.holdReason);
+  const unpaid = scoped.filter((p) => isUnpaidStatus(p.status) && !p.holdReason);
   const unpaidIds = unpaid.map((p) => p.paymentId);
   // Of those, the ones whose Wise draft is still sitting unfunded (RP-58).
   const unfundedDrafts = unpaid.filter(isUnfundedWiseDraft).length;
@@ -240,12 +253,8 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
 
   // ── Verify recipients with Wise BEFORE either batch route ──
   const verifyRecipients = () => {
-    if (verifySelected.size === 0) {
-      notify('Select at least one contractor to verify.', { type: 'warn' });
-      return;
-    }
     setVerifying(true);
-    void wiseVerifyPeriodRecipients(period.id, [...verifySelected]).then((r) => {
+    void wiseVerifyPeriodRecipients(period.id).then((r) => {
       setVerifying(false);
       if (!r.ok) {
         notify(r.error, { type: 'error' });
@@ -334,7 +343,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
   // ── 2 · Individual payment files (per-contractor breakdown, every method) ──
   const downloadIndividual = () => {
     const { csv, filename } = buildIndividualPayments(
-      payments.map((p) => ({
+      scoped.map((p) => ({
         name: p.name,
         payoutMethod: p.payoutMethod,
         wiseRecipientId: p.wiseRecipientId,
@@ -353,7 +362,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
       return;
     }
     downloadCsv(csv, filename);
-    noteDownload('individual', payments.length, sumPhp(payments));
+    noteDownload('individual', scoped.length, sumPhp(scoped));
   };
 
   // ── Mark all paid / unpaid ──
@@ -464,7 +473,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
               onClick={payViaWise}
               title={wiseRows.length === 0 ? 'No Wise contractors in this batch.' : ''}
             >
-              Pay via Wise API
+              Pay via Wise API{selected.size ? ` (${wiseRows.length} selected)` : ''}
             </button>
           )}
           <button type="button" className="btn ghost sm" disabled={busy} onClick={checkStatus}>
@@ -477,7 +486,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
             disabled={busy || unpaidIds.length === 0}
             onClick={() => setConfirm('paid')}
           >
-            Mark all paid
+            {selected.size ? `Mark selected paid (${unpaidIds.length})` : 'Mark all paid'}
           </button>
           <button
             type="button"
@@ -505,6 +514,18 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
             <table aria-label="Pay list">
               <thead>
                 <tr>
+                  <th scope="col" className="no-print" style={{ width: 32 }}>
+                    <input
+                      type="checkbox"
+                      aria-label={allShownSelected ? 'Unselect all rows' : 'Select all rows'}
+                      title={allShownSelected ? 'Unselect all' : 'Select all'}
+                      checked={allShownSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = !allShownSelected && someShownSelected;
+                      }}
+                      onChange={toggleAllShown}
+                    />
+                  </th>
                   <th scope="col">Contractor</th>
                   <th scope="col">Net ₱</th>
                   <th scope="col">Via</th>
@@ -516,6 +537,14 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
               <tbody>
                 {shownSorted.map((p) => (
                   <tr key={p.paymentId}>
+                    <td className="no-print">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${p.name}`}
+                        checked={selected.has(p.paymentId)}
+                        onChange={() => toggleRow(p.paymentId)}
+                      />
+                    </td>
                     <td className="card-title">{p.name}</td>
                     <td data-label="Net ₱">{peso(p.netPhp)}</td>
                     <td data-label="Via">{p.payoutMethod ?? '—'}</td>
@@ -589,7 +618,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
       </div>
 
       {/* 0 · Pre-flight: recipients verified against Wise before either route. */}
-      {wiseRows.length > 0 && (
+      {inChannel('wise').length > 0 && (
         <div className="card no-print">
           <h3 style={{ margin: '0 0 4px' }}>Verify Wise recipients</h3>
           <p className="sub">
@@ -597,45 +626,13 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
             inactive, or unconfirmable) so a bad one is caught here, not as a failed row after
             upload.
           </p>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <button
-              type="button"
-              className="btn ghost sm"
-              disabled={verifySelected.size === wiseWorkers.length}
-              onClick={() => setVerifyOnly(null)}
-            >
-              Select all
-            </button>
-            <button
-              type="button"
-              className="btn ghost sm"
-              disabled={verifySelected.size === 0}
-              onClick={() => setVerifyOnly(new Set())}
-            >
-              Unselect all
-            </button>
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', marginBottom: 8 }}>
-            {wiseWorkers.map((w) => (
-              <label key={w.workerId} style={{ fontSize: 13, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={verifySelected.has(w.workerId)}
-                  onChange={() => toggleVerify(w.workerId)}
-                />{' '}
-                {w.name}
-              </label>
-            ))}
-          </div>
           <button
             type="button"
             className="btn ghost"
-            disabled={verifying || verifySelected.size === 0}
+            disabled={verifying}
             onClick={verifyRecipients}
           >
-            {verifying
-              ? 'Checking…'
-              : `Verify with Wise (${verifySelected.size} of ${wiseWorkers.length})`}
+            {verifying ? 'Checking…' : `Verify with Wise (${inChannel('wise').length})`}
           </button>
           {recipientChecks && (
             <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 13 }}>
@@ -753,11 +750,12 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
       <div className="card no-print">
         <h3 style={{ margin: '0 0 4px' }}>2 · Individual payment files</h3>
         <p className="sub">
-          A per-contractor breakdown of all {payments.length} payments (every method, incl. BPI),
-          with amounts, methods and pay date — for manual/individual payments and record-keeping.
+          A per-contractor breakdown of {selected.size ? 'the selected' : 'all'} {scoped.length}{' '}
+          payments (every method, incl. BPI), with amounts, methods and pay date — for
+          manual/individual payments and record-keeping.
         </p>
         <button type="button" className="btn ghost" disabled={busy} onClick={downloadIndividual}>
-          Download payments CSV ({payments.length})
+          Download payments CSV ({scoped.length})
         </button>
         {downloadNote('individual')}
       </div>
@@ -779,7 +777,7 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
 
       {confirm === 'paid' && (
         <ConfirmDangerModal
-          title="Mark all paid"
+          title={selected.size ? 'Mark selected paid' : 'Mark all paid'}
           message={`Mark ${unpaidIds.length} contractor(s) paid for ${title}? Do this only after you've actually sent the money.${
             unfundedDrafts > 0
               ? ` ${unfundedDrafts} of them only have a Wise DRAFT transfer — no money moves until you fund the batch in Wise, so marking them paid now records a payment that hasn't happened.`
