@@ -906,16 +906,26 @@ export async function serviceVerifyRecipients(
   entries: readonly WiseRecipientEntry[],
   api: WiseApi = realWiseApi,
 ): Promise<RecipientCheck[]> {
-  const needContacts = entries.some((e) => e.uuid != null);
-  const contacts = needContacts
-    ? await api.listContacts(await api.getBusinessProfileId()).catch(() => [])
-    : [];
+  // A Wisetag contact saved without its UUID (legacy panel stripped them) can
+  // only be recognised by its numeric id in the contacts list — GET
+  // /v1/accounts/{id} 403s for it and would read as "missing".
+  const contacts =
+    entries.length > 0
+      ? await api.listContacts(await api.getBusinessProfileId()).catch(() => [])
+      : [];
   return Promise.all(
     entries.map(async (e): Promise<RecipientCheck> => {
       const base = { key: e.uuid ?? String(e.id), label: e.label, id: e.id, uuid: e.uuid };
-      const contact = e.uuid ? contacts.find((c) => c.uuid === e.uuid) : undefined;
+      const contact = contacts.find(
+        (c) => (e.uuid != null && c.uuid === e.uuid) || (e.id != null && c.recipientId === e.id),
+      );
       if (contact) {
-        return { ...base, status: 'ok', wiseName: contact.name, detail: 'Wisetag contact' };
+        return {
+          ...base,
+          status: 'ok',
+          wiseName: contact.name,
+          detail: e.uuid ? 'Wisetag contact' : `Wisetag contact (UUID ${contact.uuid} not saved)`,
+        };
       }
       if (e.id == null) {
         return {
