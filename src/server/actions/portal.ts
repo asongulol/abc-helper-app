@@ -27,6 +27,7 @@ import {
   insertMoodCheckin,
 } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
+import { EDITABLE_FIELDS } from '@/lib/config/fields';
 import type { PackageKind } from '@/lib/contracts/package';
 import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
@@ -273,14 +274,20 @@ export async function completeOnboardingTab(args: { tab: string }): Promise<Acti
       .eq('worker_id', worker.workerId);
     if (opErr) return { ok: false, error: `Progress update failed: ${opErr.message}` };
 
-    return {
-      ok: true,
-      ...(errors.length
-        ? {
-            message: `Tab saved with ${errors.length} field(s) still required.`,
-          }
-        : {}),
-    };
+    // Name what's missing — a bare "N field(s) still required" sent contractors
+    // hunting the wrong tab (Genel Montero blamed Wise Tag; it was Mobile).
+    if (errors.length) {
+      const label = (k: string) => EDITABLE_FIELDS.find((f) => f.key === k)?.label ?? k;
+      const what =
+        args.tab === 'payout'
+          ? 'at least one payout method (GCash, PayMaya, PayPal or Wise Tag)'
+          : errors.map(label).join(', ');
+      return {
+        ok: false,
+        error: `Not complete yet — still needed: ${what}. Fill it in on your Profile page, then mark this section complete again.`,
+      };
+    }
+    return { ok: true };
   } catch (err) {
     return {
       ok: false,
