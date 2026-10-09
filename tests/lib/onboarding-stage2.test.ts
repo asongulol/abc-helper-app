@@ -24,12 +24,21 @@ const genel = {
   paymaya: '0964',
   paypal: 'N/A',
   wise_tag: null,
+  profile_extras: {
+    nickname: 'Gen',
+    favorite_color: 'blue',
+    favorite_food: 'adobo',
+    tshirt_size: 'M',
+    shoe_size: '8',
+    hobbies: 'reading',
+    motto: 'keep going',
+  },
 };
 
 describe('stage2Missing', () => {
   it('payout passes with any one method — no Wise Tag needed', () => {
     const m = stage2Missing(genel);
-    expect(m).toEqual({ contact: ['Mobile'], personal: [], payout: [] });
+    expect(m).toEqual({ contact: ['Mobile'], personal: [], payout: [], about: [] });
     expect(isStage2Complete(m)).toBe(false);
     expect(stage2Summary(m)).toBe('Contact still needs: Mobile.');
   });
@@ -38,6 +47,20 @@ describe('stage2Missing', () => {
     const m = stage2Missing({ ...genel, mobile: '0917' });
     expect(isStage2Complete(m)).toBe(true);
     expect(stage2Summary(m)).toBeNull();
+  });
+
+  it('About me is required — reads workers.profile_extras', () => {
+    const m = stage2Missing({ ...genel, mobile: '0917', profile_extras: { nickname: 'Gen' } });
+    expect(m.about).toEqual([
+      'Favorite color',
+      'Favorite food',
+      'T-shirt size',
+      'Shoe size',
+      'Hobbies',
+      'Personal motto',
+    ]);
+    expect(stage2Missing({ ...genel, profile_extras: null }).about).toHaveLength(7);
+    expect(isStage2Complete(m)).toBe(false);
   });
 
   it('names the payout rule when no method is set', () => {
