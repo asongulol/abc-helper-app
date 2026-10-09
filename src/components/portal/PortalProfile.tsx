@@ -45,6 +45,8 @@ interface Props {
   editableFields: string[];
   /** Auth/login email — display fallback when workers.email is blank (mirrors the original). */
   authEmail?: string | null;
+  /** Section to open first (`/portal/profile?tab=contact` from the onboarding card). */
+  initialTab?: string | undefined;
 }
 
 type FieldType = 'text' | 'tel' | 'date';
@@ -158,11 +160,13 @@ const SEC_KEYS = SECS.map(([k]) => k);
 const fullName = (p: NonNullable<Profile>) =>
   [p.first_name, p.middle_name, p.last_name].filter(Boolean).join(' ');
 
-export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => {
+export const PortalProfile = ({ profile, editableFields, authEmail, initialTab }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [psec, setPsec] = useState('contact');
+  const [psec, setPsec] = useState(
+    SEC_KEYS.includes(initialTab ?? '') ? (initialTab as string) : 'contact',
+  );
   const tablist = useTablist(SEC_KEYS, psec, setPsec);
   const [sameAddr, setSameAddr] = useState(false);
 
@@ -232,7 +236,9 @@ export const PortalProfile = ({ profile, editableFields, authEmail }: Props) => 
     startTransition(async () => {
       const res = await updateOwnProfile(payload);
       if (res.ok) {
-        notify('Saved — thank you!', { type: 'success' });
+        notify(res.message ? `Saved. ${res.message}` : 'Saved — thank you!', {
+          type: res.message ? 'warn' : 'success',
+        });
         router.refresh();
       } else {
         notify(res.error, { type: 'error' });

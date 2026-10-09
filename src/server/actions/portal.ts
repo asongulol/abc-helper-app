@@ -27,10 +27,10 @@ import {
   insertMoodCheckin,
 } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
-import { EDITABLE_FIELDS } from '@/lib/config/fields';
 import type { PackageKind } from '@/lib/contracts/package';
 import { humanizeError } from '@/lib/errors';
 import { isStage3Complete } from '@/lib/onboarding/documents';
+import { stage2Summary } from '@/lib/onboarding/stage2';
 import { validateProfileFields } from '@/lib/profile/validate';
 import type { ActionResult } from '@/server/actions/portal-admin';
 import { logEvent, logWorkerEvent } from '@/server/audit';
@@ -38,6 +38,7 @@ import { requireAdmin } from '@/server/auth/admin';
 import { requireWorker } from '@/server/auth/worker';
 import { getEmployerCompanyId } from '@/server/company';
 import { encryptIfConfigured } from '@/server/crypto';
+import { syncStage2 } from '@/server/onboarding/stage2';
 import { syncPackageHolds } from '@/server/payroll';
 
 /* ---------- SAFE_FIELDS mirror of portal-self edge fn ---------- */
@@ -172,126 +173,13 @@ export async function updateOwnProfile(
     const { error } = await svc.from('workers').update(update).eq('id', worker.workerId);
     if (error) return { ok: false, error: `Update failed: ${error.message}` };
 
-    return { ok: true };
+    // Stage 2 ticks itself off from the saved row — no "Mark complete" button.
+    const summary = stage2Summary(await syncStage2(svc, worker.workerId));
+    return summary ? { ok: true, message: summary } : { ok: true };
   } catch (err) {
     return {
       ok: false,
       error: humanizeError(err, 'Update failed.'),
-    };
-  }
-}
-
-/** Mark a Stage-2 onboarding tab as complete (mirrors portal-self complete_tab). */
-export async function completeOnboardingTab(args: { tab: string }): Promise<ActionResult> {
-  const worker = await requireWorker();
-  const validTabs = new Set(['contact', 'personal', 'payout', 'about']);
-  if (!validTabs.has(args.tab)) return { ok: false, error: 'Unknown tab.' };
-
-  try {
-    const db = await createServerSupabase();
-
-    // Verify stage 1 done
-    const { data: op } = await db
-      .from('onboarding_progress')
-      .select('stage1_complete, completed_at, current_stage')
-      .eq('worker_id', worker.workerId)
-      .maybeSingle();
-    if (!op?.stage1_complete) return { ok: false, error: 'Finish signing your agreements first.' };
-    if (op.completed_at) return { ok: false, error: 'Onboarding is already complete.' };
-
-    // Service client for the worker write (no contractor write RLS).
-    const svc = createServiceClient();
-    const now = new Date().toISOString();
-
-    // Re-validate tabs from current worker row
-    const { data: w } = await svc
-      .from('workers')
-      .select(
-        'first_name, last_name, mobile, ph_address, date_of_birth, postal_code, emergency_name, emergency_relationship, emergency_mobile, marital_status, gcash, paymaya, paypal, wise_tag',
-      )
-      .eq('id', worker.workerId)
-      .maybeSingle();
-
-    // Minimal validation mirrors portal-self validateTab logic
-    const nonEmpty = (v: unknown) => v != null && String(v).trim() !== '';
-    const errors: string[] = [];
-    if (args.tab === 'contact') {
-      if (!nonEmpty(w?.first_name)) errors.push('first_name');
-      if (!nonEmpty(w?.last_name)) errors.push('last_name');
-      if (!nonEmpty(w?.ph_address)) errors.push('ph_address');
-      if (!nonEmpty(w?.mobile)) errors.push('mobile');
-      if (!nonEmpty(w?.date_of_birth)) errors.push('date_of_birth');
-    } else if (args.tab === 'personal') {
-      if (!nonEmpty(w?.emergency_name)) errors.push('emergency_name');
-      if (!nonEmpty(w?.emergency_relationship)) errors.push('emergency_relationship');
-      if (!nonEmpty(w?.emergency_mobile)) errors.push('emergency_mobile');
-      if (!nonEmpty(w?.marital_status)) errors.push('marital_status');
-    } else if (args.tab === 'payout') {
-      if (
-        !['gcash', 'paymaya', 'paypal', 'wise_tag'].some((f) =>
-          nonEmpty((w as Record<string, unknown> | null)?.[f]),
-        )
-      ) {
-        errors.push('payout');
-      }
-    }
-
-    // Check overall stage2 completion
-    const contactOk =
-      nonEmpty(w?.first_name) &&
-      nonEmpty(w?.last_name) &&
-      nonEmpty(w?.ph_address) &&
-      nonEmpty(w?.mobile) &&
-      nonEmpty(w?.date_of_birth);
-    const personalOk =
-      nonEmpty(w?.emergency_name) &&
-      nonEmpty(w?.emergency_relationship) &&
-      nonEmpty(w?.emergency_mobile) &&
-      nonEmpty(w?.marital_status);
-    const payoutOk = ['gcash', 'paymaya', 'paypal', 'wise_tag'].some((f) =>
-      nonEmpty((w as Record<string, unknown> | null)?.[f]),
-    );
-    const stage2Complete = contactOk && personalOk && payoutOk;
-
-    const RANK: Record<string, number> = {
-      stage1_sign: 0,
-      stage2_profile: 1,
-      stage3_docs: 2,
-      complete: 3,
-    };
-    const curStage = op.current_stage ?? 'stage2_profile';
-    const nextStage =
-      stage2Complete && (RANK.stage3_docs ?? 0) > (RANK[curStage] ?? 0) ? 'stage3_docs' : curStage;
-
-    const { error: opErr } = await svc
-      .from('onboarding_progress')
-      .update({
-        stage2_last_tab: args.tab,
-        stage2_complete: stage2Complete,
-        current_stage: nextStage,
-        updated_at: now,
-      })
-      .eq('worker_id', worker.workerId);
-    if (opErr) return { ok: false, error: `Progress update failed: ${opErr.message}` };
-
-    // Name what's missing — a bare "N field(s) still required" sent contractors
-    // hunting the wrong tab (Genel Montero blamed Wise Tag; it was Mobile).
-    if (errors.length) {
-      const label = (k: string) => EDITABLE_FIELDS.find((f) => f.key === k)?.label ?? k;
-      const what =
-        args.tab === 'payout'
-          ? 'at least one payout method (GCash, PayMaya, PayPal or Wise Tag)'
-          : errors.map(label).join(', ');
-      return {
-        ok: false,
-        error: `Not complete yet — still needed: ${what}. Fill it in on your Profile page, then mark this section complete again.`,
-      };
-    }
-    return { ok: true };
-  } catch (err) {
-    return {
-      ok: false,
-      error: humanizeError(err, 'Tab completion failed.'),
     };
   }
 }

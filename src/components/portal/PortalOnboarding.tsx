@@ -3,14 +3,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
-import { Badge, type BadgeTone, Modal, useToast } from '@/components/ui';
+import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { Database } from '@/db/types';
-import {
-  advanceFromStage1,
-  completeOnboardingTab,
-  finishOnboarding,
-  signAgreement,
-} from '@/server/actions/portal';
+import { STAGE2_SECTIONS, type Stage2Missing } from '@/lib/onboarding/stage2';
+import { advanceFromStage1, finishOnboarding, signAgreement } from '@/server/actions/portal';
 import { type SignInput, SignModal } from './SignModal';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
@@ -41,6 +37,8 @@ type Agreement = {
 interface Props {
   workerId: string;
   progress: OboardingProgress;
+  /** Missing-field labels per Stage 2 section, derived server-side from the profile row. */
+  stage2: Stage2Missing;
   signatures: Signature[];
   agreements: Agreement[];
   templateMap: Record<string, { title: string; body: string; version: string }>;
@@ -72,16 +70,10 @@ const STAGE_LABEL: Record<string, string> = {
   complete: 'Complete',
 };
 
-const STAGE2_TABS = [
-  { key: 'contact', label: 'Contact' },
-  { key: 'personal', label: 'Personal info' },
-  { key: 'payout', label: 'Payout method' },
-  { key: 'about', label: 'About me' },
-];
-
 export const PortalOnboarding = ({
   workerId: _workerId,
   progress,
+  stage2,
   signatures,
   agreements,
   templateMap,
@@ -94,9 +86,6 @@ export const PortalOnboarding = ({
 
   // Stage 1 state — the signing UI itself lives in SignModal.
   const [selectedKind, setSelectedKind] = useState<AgreementKind | null>(null);
-
-  // Stage 2 state
-  const [activeTab, setActiveTab] = useState<string | null>(null);
 
   const signedKinds = new Set(
     signatures.filter((s) => s.status === 'signed').map((s) => s.agreement_kind),
@@ -130,21 +119,6 @@ export const PortalOnboarding = ({
       const result = await advanceFromStage1();
       if (result.ok) {
         notify('Moving to Stage 2!', { type: 'success' });
-        router.refresh();
-      } else {
-        notify(result.error, { type: 'error' });
-      }
-    });
-  };
-
-  const handleTabComplete = (tab: string) => {
-    startTransition(async () => {
-      const result = await completeOnboardingTab({ tab });
-      if (result.ok) {
-        notify(result.message ?? `Tab "${tab}" marked complete.`, {
-          type: 'success',
-        });
-        setActiveTab(null);
         router.refresh();
       } else {
         notify(result.error, { type: 'error' });
@@ -324,7 +298,13 @@ export const PortalOnboarding = ({
         {!s1done && <p className="sub">Finish Stage 1 first.</p>}
         {s1done && (
           <>
-            <p className="sub">Fill in each section then mark it complete.</p>
+            <p className="sub">
+              Fill in your{' '}
+              <Link href="/portal/profile" style={{ textDecoration: 'underline' }}>
+                Profile page
+              </Link>
+              . Each section ticks itself off as soon as it&apos;s saved — nothing to mark.
+            </p>
             <div
               style={{
                 display: 'flex',
@@ -333,37 +313,40 @@ export const PortalOnboarding = ({
                 marginTop: 12,
               }}
             >
-              {STAGE2_TABS.map(({ key, label }) => (
-                <div
-                  key={key}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '10px 12px',
-                    background: 'var(--surface2)',
-                    borderRadius: 6,
-                  }}
-                >
-                  <span>{label}</span>
-                  <button
-                    type="button"
-                    className="btn sm ghost"
-                    disabled={isPending}
-                    onClick={() => setActiveTab(key)}
+              {STAGE2_SECTIONS.map(({ key, label }) => {
+                const missing = stage2[key];
+                return (
+                  <div
+                    key={key}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '10px 12px',
+                      background: 'var(--surface2)',
+                      borderRadius: 6,
+                    }}
                   >
-                    Mark complete
-                  </button>
-                </div>
-              ))}
+                    <div>
+                      <div>{label}</div>
+                      {missing.length > 0 && (
+                        <div className="sub" style={{ fontSize: 12 }}>
+                          Still needed: {missing.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    {missing.length === 0 ? (
+                      <Badge tone="good">Done</Badge>
+                    ) : (
+                      <Link href={`/portal/profile?tab=${key}`} className="btn sm">
+                        Fill in →
+                      </Link>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            <p className="sub" style={{ marginTop: 8, fontSize: 11 }}>
-              Note: Go to your{' '}
-              <a href="/portal/profile" style={{ textDecoration: 'underline' }}>
-                Profile page
-              </a>{' '}
-              to fill in fields, then come back to mark each section complete.
-            </p>
           </>
         )}
       </div>
@@ -414,39 +397,6 @@ export const PortalOnboarding = ({
           onClose={() => setSelectedKind(null)}
           onSign={(sig) => handleSign(selectedKind, sig)}
         />
-      )}
-
-      {/* Tab-complete confirmation modal */}
-      {activeTab !== null && (
-        <Modal
-          title={`Mark complete — ${STAGE2_TABS.find((t) => t.key === activeTab)?.label ?? activeTab}`}
-          onClose={() => setActiveTab(null)}
-          maxWidth={380}
-        >
-          <p>
-            Make sure you have filled in all required fields on your{' '}
-            <a href="/portal/profile" style={{ textDecoration: 'underline' }}>
-              Profile page
-            </a>{' '}
-            for this section. Once marked, the system will validate the fields.
-          </p>
-          <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-            <button
-              type="button"
-              className="btn"
-              disabled={isPending}
-              onClick={() => {
-                const tab = activeTab;
-                handleTabComplete(tab);
-              }}
-            >
-              {isPending ? 'Saving…' : 'Mark complete'}
-            </button>
-            <button type="button" className="btn ghost" onClick={() => setActiveTab(null)}>
-              Cancel
-            </button>
-          </div>
-        </Modal>
       )}
     </div>
   );
