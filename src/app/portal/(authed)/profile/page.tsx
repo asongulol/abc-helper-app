@@ -7,14 +7,19 @@ import { getCachedPortalSettings } from '@/server/config-cache';
 
 export const metadata = { title: 'Profile — Contractor Portal' };
 
-export default async function PortalProfilePage() {
+export default async function PortalProfilePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const worker = await getCurrentWorker();
   if (!worker) redirect('/portal/login');
 
   const supabase = await createServerSupabase();
-  const [profile, settings] = await Promise.all([
+  const [profile, settings, { tab }] = await Promise.all([
     fetchOwnProfile(supabase, worker.workerId),
     getCachedPortalSettings(),
+    searchParams,
   ]);
 
   const editableFields = settings.editableFields;
@@ -22,6 +27,11 @@ export default async function PortalProfilePage() {
   // Auth login email comes from the already-verified session (getCurrentWorker),
   // not a separate auth.getUser() round-trip.
   return (
-    <PortalProfile profile={profile} editableFields={editableFields} authEmail={worker.authEmail} />
+    <PortalProfile
+      profile={profile}
+      editableFields={editableFields}
+      authEmail={worker.authEmail}
+      initialTab={tab}
+    />
   );
 }

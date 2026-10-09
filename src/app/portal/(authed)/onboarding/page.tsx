@@ -1,12 +1,14 @@
 import { redirect } from 'next/navigation';
 import { PortalOnboarding } from '@/components/portal/PortalOnboarding';
 import { createServerSupabase } from '@/db/clients/server';
+import { createServiceClient } from '@/db/clients/service';
 import { fetchOutstandingPackages } from '@/db/queries/contracts';
 import { fetchAgreements } from '@/db/queries/onboarding';
 import { fetchAgreementTemplate, fetchOwnOnboarding, fetchOwnProfile } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
 import { type AgreementVars, mergeAgreement, monthlyFromPeriod } from '@/lib/agreements/merge';
 import { getCurrentWorker } from '@/server/auth/worker';
+import { syncStage2 } from '@/server/onboarding/stage2';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
 
@@ -26,6 +28,9 @@ export default async function PortalOnboardingPage() {
   const supabase = await createServerSupabase();
   // prefill (per-kind onboarding_agreements) + profile drive the merge, so the
   // contractor signs the FILLED contract — the same vars the print route uses.
+  // Stage 2 is derived from the profile row (an admin may have filled a field
+  // for them) — sync FIRST so `progress` below reflects it.
+  const stage2 = await syncStage2(createServiceClient(), worker.workerId);
   const [{ progress, signatures, agreements }, prefill, profile, templates, packages] =
     await Promise.all([
       fetchOwnOnboarding(supabase, worker.workerId),
@@ -73,6 +78,7 @@ export default async function PortalOnboardingPage() {
     <PortalOnboarding
       workerId={worker.workerId}
       progress={progress}
+      stage2={stage2}
       signatures={signatures}
       agreements={agreements}
       templateMap={templateMap}
