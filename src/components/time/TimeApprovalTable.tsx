@@ -543,6 +543,7 @@ export const TimeApprovalTable = ({
                             companyId={companyId}
                             workerId={row.workerId}
                             sourceName={row.sourceName}
+                            entries={row.entries}
                             periodStart={periodStart}
                             periodEnd={periodEnd}
                             onDone={() => {

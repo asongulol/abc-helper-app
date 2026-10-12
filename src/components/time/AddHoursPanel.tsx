@@ -9,12 +9,15 @@
 import { useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import { periodDates } from '@/lib/dates/periods';
+import type { TimeEntryRaw } from '@/lib/time/grouping';
 import { addHoursDaily, addHoursTotal } from '@/server/actions/time';
 
 interface AddHoursPanelProps {
   companyId: string;
   workerId: string | null;
   sourceName: string;
+  /** Already-logged entries for this contractor in the period; Add sums onto them. */
+  entries: TimeEntryRaw[];
   periodStart: string;
   periodEnd: string;
   onDone: () => void;
@@ -25,6 +28,7 @@ export const AddHoursPanel = ({
   companyId,
   workerId,
   sourceName,
+  entries,
   periodStart,
   periodEnd,
   onDone,
@@ -37,6 +41,13 @@ export const AddHoursPanel = ({
   const [pending, startTransition] = useTransition();
 
   const dates = periodDates(periodStart, periodEnd);
+  // Hours already on each day — shown beside the input so the admin knows
+  // what the typed number is being added to (Add sums, it doesn't replace).
+  const loggedByDate: Record<string, number> = {};
+  for (const e of entries) {
+    loggedByDate[e.workDate] = (loggedByDate[e.workDate] ?? 0) + e.trackedSeconds / 3600;
+  }
+  const loggedTotal = Object.values(loggedByDate).reduce((s, h) => s + h, 0);
 
   const handleSubmit = () => {
     startTransition(async () => {
@@ -127,7 +138,7 @@ export const AddHoursPanel = ({
       {mode === 'total' ? (
         <div>
           <label style={{ fontSize: 11, color: 'var(--muted)', display: 'block' }}>
-            Total hours for period
+            Hours to add (logged so far: {loggedTotal.toFixed(2)}h)
             <input
               type="number"
               step="0.01"
@@ -148,13 +159,15 @@ export const AddHoursPanel = ({
             <thead>
               <tr>
                 <th scope="col">Date</th>
-                <th scope="col">Hours</th>
+                <th scope="col">Logged (h)</th>
+                <th scope="col">Add (h)</th>
               </tr>
             </thead>
             <tbody>
               {dates.map((dt) => (
                 <tr key={dt}>
                   <td>{dt}</td>
+                  <td style={{ color: 'var(--muted)' }}>{(loggedByDate[dt] ?? 0).toFixed(2)}</td>
                   <td>
                     <input
                       type="number"
