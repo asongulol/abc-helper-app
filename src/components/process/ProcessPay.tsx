@@ -29,10 +29,16 @@ import {
   isUnpaidStatus,
   paymentStatusLabel,
   paymentStatusTone,
+  payoutMethodLabel,
 } from '@/lib/payroll/status-pills';
 import { buildWiseBatch } from '@/lib/payroll/wise-batch';
 import { logPayfileDownload } from '@/server/actions/audit';
-import { getProcessPayments, markAllUnpaid, markPaid } from '@/server/actions/payroll';
+import {
+  getProcessPayments,
+  markAllUnpaid,
+  markPaid,
+  setPaymentVia,
+} from '@/server/actions/payroll';
 import {
   type PeriodRecipientCheck,
   wiseBatch,
@@ -232,6 +238,30 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
     period.kind === 'off_cycle'
       ? '⏱ Off-period batch'
       : `${period.periodStart} → ${period.periodEnd}`;
+
+  // ── Via: change the channel on a row, before or after it's sent ──
+  // ponytail: window.prompt for the "other" text; an inline input if it grates.
+  const changeVia = (p: ProcessPayment, via: 'wise' | 'bpi' | 'other') => {
+    let other: string | undefined;
+    if (via === 'other') {
+      const t = window.prompt('How was this paid? (e.g. cash, GCash)', p.payoutMethodOther ?? '');
+      if (t == null || !t.trim()) return;
+      other = t.trim();
+    }
+    startBusy(async () => {
+      const r = await setPaymentVia({
+        companyId,
+        paymentId: p.paymentId,
+        payoutMethod: via,
+        other,
+      });
+      if (!r.ok) {
+        notify(r.error, { type: 'error', persistent: true });
+        return;
+      }
+      await refresh();
+    });
+  };
 
   // ── Pay via Wise API (OWNER): create draft transfers for Wise rows w/o one ──
   const payViaWise = () => {
@@ -554,7 +584,47 @@ export function ProcessPay({ period, companyId, initialPayments, isOwner, downlo
                     </td>
                     <td className="card-title">{p.name}</td>
                     <td data-label="Net ₱">{peso(p.netPhp)}</td>
-                    <td data-label="Via">{p.payoutMethod ?? '—'}</td>
+                    <td data-label="Via">
+                      <select
+                        className="no-print"
+                        aria-label={`How ${p.name} is paid`}
+                        value={p.payoutMethod ?? ''}
+                        disabled={busy || !!p.wiseLockedAt}
+                        title={
+                          p.wiseLockedAt ? 'Row is Wise-locked — unlock it to change' : undefined
+                        }
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === 'wise' || v === 'bpi' || v === 'other') changeVia(p, v);
+                        }}
+                      >
+                        {/* Keep a legacy value (GCash/PayPal…/unset) selectable so the control shows it. */}
+                        {!['wise', 'bpi', 'other'].includes(p.payoutMethod ?? '') && (
+                          <option value={p.payoutMethod ?? ''}>
+                            {payoutMethodLabel(p.payoutMethod)}
+                          </option>
+                        )}
+                        <option value="wise">Wise</option>
+                        <option value="bpi">BPI</option>
+                        <option value="other">Other…</option>
+                      </select>
+                      {p.payoutMethod === 'other' && (
+                        <button
+                          type="button"
+                          className="btn ghost sm no-print"
+                          style={{ marginLeft: 4 }}
+                          disabled={busy || !!p.wiseLockedAt}
+                          title="Edit"
+                          onClick={() => changeVia(p, 'other')}
+                        >
+                          {p.payoutMethodOther}
+                        </button>
+                      )}
+                      <span className="print-only">
+                        {payoutMethodLabel(p.payoutMethod)}
+                        {p.payoutMethodOther ? ` · ${p.payoutMethodOther}` : ''}
+                      </span>
+                    </td>
                     <td data-label="Status">
                       {/* All five enum states, not just sent/not-sent: a reconciled
                           row must not read "pending", nor a failed one (RP-57). */}

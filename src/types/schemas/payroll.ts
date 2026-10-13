@@ -19,7 +19,20 @@ export const PeriodKeySchema = z.object({
 });
 export type PeriodKey = z.infer<typeof PeriodKeySchema>;
 
-export const PayoutMethodSchema = z.enum(['wise', 'bpi', 'gcash', 'paymaya', 'paypal']);
+export const PayoutMethodSchema = z.enum(['wise', 'bpi', 'gcash', 'paymaya', 'paypal', 'other']);
+
+/** Pay list "Via" change — any period state; 'other' carries the specified text. */
+export const SetPaymentViaSchema = z
+  .object({
+    companyId: uuid(),
+    paymentId: uuid(),
+    payoutMethod: z.enum(['wise', 'bpi', 'other']),
+    other: z.string().trim().min(1).max(80).optional(),
+  })
+  .refine((v) => v.payoutMethod !== 'other' || !!v.other, {
+    message: 'Say how it was paid.',
+    path: ['other'],
+  });
 
 /**
  * RP-28: a misc amount carries MAGNITUDE only — `kind` carries the sign
