@@ -91,6 +91,10 @@ export default async function ProcessPage({
 
   // Legacy "Process payroll": a LIST of locked-but-not-yet-paid batches.
   const ready = allPeriods.filter((p) => p.state === 'locked');
+  // Paid batches stay reachable: a row's Via can change after the money moved.
+  const paid = allPeriods
+    .filter((p) => p.state === 'paid')
+    .sort((a, b) => b.periodStart.localeCompare(a.periodStart));
 
   // Waiting-upstream prep (legacy `prep`): OPEN periods that actually have
   // payment rows (real calculated drafts), plus the count of pending time
@@ -100,5 +104,5 @@ export default async function ProcessPage({
     .map((p) => ({ start: p.periodStart, end: p.periodEnd }))
     .sort((a, b) => (b.start || '').localeCompare(a.start || ''));
 
-  return <ProcessShell ready={ready} drafts={drafts} pending={pending} />;
+  return <ProcessShell ready={ready} paid={paid} drafts={drafts} pending={pending} />;
 }
