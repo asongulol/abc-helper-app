@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CalculateDraftSchema,
   RestoreSnapshotSchema,
+  SetPaymentViaSchema,
   UpdatePaymentRowSchema,
 } from '@/types/schemas/payroll';
 
@@ -120,5 +121,26 @@ describe('RestoreSnapshotSchema — the undo no longer needs client rows (RP-23)
         snapshot: [{ id: 'x', net_php: 999999, status: 'sent', paid_at: '2020-01-01' }],
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('SetPaymentViaSchema', () => {
+  const ids = {
+    companyId: '11111111-1111-4111-8111-111111111111',
+    paymentId: '22222222-2222-4222-8222-222222222222',
+  };
+  it('accepts Wise / BPI without a note', () => {
+    expect(SetPaymentViaSchema.safeParse({ ...ids, payoutMethod: 'bpi' }).success).toBe(true);
+  });
+  it('requires the specified text for other', () => {
+    expect(SetPaymentViaSchema.safeParse({ ...ids, payoutMethod: 'other' }).success).toBe(false);
+    expect(
+      SetPaymentViaSchema.safeParse({ ...ids, payoutMethod: 'other', other: '  ' }).success,
+    ).toBe(false);
+    const ok = SetPaymentViaSchema.safeParse({ ...ids, payoutMethod: 'other', other: ' cash ' });
+    expect(ok.success && ok.data.other).toBe('cash');
+  });
+  it('rejects the legacy channels as a new choice', () => {
+    expect(SetPaymentViaSchema.safeParse({ ...ids, payoutMethod: 'gcash' }).success).toBe(false);
   });
 });

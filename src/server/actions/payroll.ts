@@ -102,6 +102,7 @@ import {
   RecordOutsidePaymentSchema,
   RemoveOffCyclePaySchema,
   RestoreSnapshotSchema,
+  SetPaymentViaSchema,
   ToggleWiseRowLockSchema,
   UnlockPeriodSchema,
   UpdatePaymentRowSchema,
@@ -811,6 +812,44 @@ export async function markPaid(args: unknown): Promise<ActionResult<{ markedCoun
       ok: false,
       error: humanizeError(err, 'Mark paid failed.'),
     };
+  }
+}
+
+/**
+ * Change how a row is paid (Wise / BPI / Other) — before OR after it was sent,
+ * so the record matches what actually happened. Any period state: the DB
+ * trigger leaves payout_method editable; only a Wise row-lock freezes it.
+ */
+export async function setPaymentVia(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+
+  const parsed = SetPaymentViaSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId)) {
+    return { ok: false, error: 'No access to this company.' };
+  }
+
+  try {
+    const db = await createServerSupabase();
+    const other = input.payoutMethod === 'other' ? (input.other ?? null) : null;
+    await updatePaymentRow(db, input.paymentId, {
+      payoutMethod: input.payoutMethod,
+      payoutMethodOther: other,
+    });
+    await logEvent({
+      companyId: input.companyId,
+      action: 'payment_via_changed',
+      entity: input.paymentId,
+      detail: { payout_method: input.payoutMethod, other },
+    });
+    revalidatePeriodViews();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not change the payment channel.') };
   }
 }
 

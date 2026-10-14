@@ -60,5 +60,6 @@ export const payoutMethodLabel = (method: string | null): string => {
   if (method === 'gcash') return 'GCash';
   if (method === 'paymaya') return 'PayMaya';
   if (method === 'paypal') return 'PayPal';
+  if (method === 'other') return 'Other';
   return method ?? '— unset —';
 };

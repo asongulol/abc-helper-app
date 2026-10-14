@@ -2016,7 +2016,13 @@ dialog.modal::backdrop {
 }
 
 /* ===== Print ============================================================== */
+.print-only {
+  display: none;
+}
 @media print {
+  .print-only {
+    display: inline;
+  }
   body {
     background: #fff;
   }

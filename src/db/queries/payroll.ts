@@ -1603,6 +1603,7 @@ export type PaymentRowFields = {
   miscItems?: unknown;
   netPhp?: number;
   payoutMethod?: string | null;
+  payoutMethodOther?: string | null;
   fxRate?: number;
   note?: string | null;
 };
@@ -1627,6 +1628,7 @@ export const updatePaymentRow = async (
       | Database['public']['Enums']['payout_method']
       | null;
   }
+  if ('payoutMethodOther' in fields) update.payout_method_other = fields.payoutMethodOther;
   if ('fxRate' in fields) update.fx_rate = fields.fxRate;
   if ('note' in fields) update.note = fields.note;
   const { error } = await db.from('payments').update(update).eq('id', paymentId);
@@ -1709,6 +1711,8 @@ export type ProcessPayment = {
   name: string;
   netPhp: number | null;
   payoutMethod: string | null;
+  /** Specified channel when payoutMethod = 'other'. */
+  payoutMethodOther: string | null;
   status: Database['public']['Enums']['payment_status'];
   paidAt: string | null;
   wiseTransferId: string | null;
@@ -1732,7 +1736,7 @@ export const fetchProcessPayments = async (
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, net_php, payout_method, status, paid_at, wise_transfer_id, wise_locked_at, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, email, wise_recipient_uuid, wise_recipient_id, wise_recipients)',
+      'id, worker_id, net_php, payout_method, payout_method_other, status, paid_at, wise_transfer_id, wise_locked_at, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, email, wise_recipient_uuid, wise_recipient_id, wise_recipients)',
     )
     .eq('pay_period_id', payPeriodId)
     .order('worker_id');
@@ -1746,6 +1750,7 @@ export const fetchProcessPayments = async (
       .trim(),
     netPhp: p.net_php,
     payoutMethod: p.payout_method,
+    payoutMethodOther: p.payout_method_other,
     status: p.status,
     paidAt: p.paid_at,
     wiseTransferId: p.wise_transfer_id,

@@ -1203,6 +1203,7 @@ export type Database = {
           payout_amount: number | null
           payout_currency: string
           payout_method: Database["public"]["Enums"]["payout_method"] | null
+          payout_method_other: string | null
           pdd_lunch_php: number
           performance_ratio: number | null
           rate_php: number | null
@@ -1246,6 +1247,7 @@ export type Database = {
           payout_amount?: number | null
           payout_currency?: string
           payout_method?: Database["public"]["Enums"]["payout_method"] | null
+          payout_method_other?: string | null
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
@@ -1289,6 +1291,7 @@ export type Database = {
           payout_amount?: number | null
           payout_currency?: string
           payout_method?: Database["public"]["Enums"]["payout_method"] | null
+          payout_method_other?: string | null
           pdd_lunch_php?: number
           performance_ratio?: number | null
           rate_php?: number | null
@@ -2025,7 +2028,7 @@ export type Database = {
         | "complete"
       pay_period_state: "open" | "locked" | "paid"
       payment_status: "draft" | "queued" | "sent" | "failed" | "reconciled"
-      payout_method: "wise" | "bpi" | "gcash" | "paymaya" | "paypal"
+      payout_method: "wise" | "bpi" | "gcash" | "paymaya" | "paypal" | "other"
       portal_notification_kind:
         | "stage_complete"
         | "upload_received"
@@ -2207,7 +2210,7 @@ export const Constants = {
       ],
       pay_period_state: ["open", "locked", "paid"],
       payment_status: ["draft", "queued", "sent", "failed", "reconciled"],
-      payout_method: ["wise", "bpi", "gcash", "paymaya", "paypal"],
+      payout_method: ["wise", "bpi", "gcash", "paymaya", "paypal", "other"],
       portal_notification_kind: [
         "stage_complete",
         "upload_received",
