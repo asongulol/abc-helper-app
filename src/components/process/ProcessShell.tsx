@@ -27,13 +27,15 @@ export interface DraftRef {
 interface ProcessShellProps {
   /** Locked, not-yet-paid batches (legacy `ready`). */
   ready: ReadyPeriod[];
+  /** Already-paid batches, newest first — their pay list stays reachable (change Via, re-check Wise). */
+  paid: ReadyPeriod[];
   /** Open periods with calculated drafts, not yet locked (legacy `prep.drafts`). */
   drafts: DraftRef[];
   /** Pending time entries in Time & Approval (legacy `prep.pending`). */
   pending: number;
 }
 
-export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
+export const ProcessShell = ({ ready, paid, drafts, pending }: ProcessShellProps) => (
   <div>
     <div className="card">
       <h2>Process payroll</h2>
@@ -143,5 +145,47 @@ export const ProcessShell = ({ ready, drafts, pending }: ProcessShellProps) => (
         </div>
       )}
     </div>
+
+    {paid.length > 0 && (
+      <div className="card">
+        {/* ponytail: native <details>; a filter/search if the list grows unwieldy. */}
+        <details>
+          <summary style={{ cursor: 'pointer' }}>
+            <b>Paid batches</b> <span className="muted">({paid.length})</span> — open one to change
+            how a row was paid or re-check Wise
+          </summary>
+          <div className="table-scroll" style={{ marginTop: 8 }}>
+            <table aria-label="Paid batches">
+              <thead>
+                <tr>
+                  <th scope="col">Pay period</th>
+                  <th scope="col">Pay date</th>
+                  <th scope="col" />
+                </tr>
+              </thead>
+              <tbody>
+                {paid.map((p) => (
+                  <tr key={p.id}>
+                    <td className="card-title">
+                      <b>
+                        {p.kind === 'off_cycle'
+                          ? '⏱ Off-period batch'
+                          : `${p.periodStart} → ${p.periodEnd}`}
+                      </b>
+                    </td>
+                    <td data-label="Pay date">{p.payDate || '—'}</td>
+                    <td className="card-action" style={{ textAlign: 'right' }}>
+                      <Link className="btn ghost sm" href={`/process?period=${p.id}`}>
+                        Open pay list
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    )}
   </div>
 );
