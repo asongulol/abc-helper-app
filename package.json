@@ -34,7 +34,7 @@
     "e2e:contract-wizard": "node e2e/contract-wizard.e2e.mjs"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
+    "@biomejs/biome": "^2.6.2",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^26.6.5",
     "@types/nodemailer": "^8.0.1",
