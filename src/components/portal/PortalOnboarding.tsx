@@ -7,6 +7,8 @@ import { Badge, type BadgeTone, useToast } from '@/components/ui';
 import type { Database } from '@/db/types';
 import { STAGE2_SECTIONS, type Stage2Missing } from '@/lib/onboarding/stage2';
 import { advanceFromStage1, finishOnboarding, signAgreement } from '@/server/actions/portal';
+import type { OutstandingDocSlot } from '@/server/actions/portal-docs';
+import { UploadSlot } from './PortalDocs';
 import { type SignInput, SignModal } from './SignModal';
 
 type AgreementKind = Database['public']['Enums']['agreement_kind'];
@@ -47,6 +49,9 @@ interface Props {
    *  8): its kinds show here as unsigned again, but signAgreement refuses them
    *  until the contract itself is signed — which happens on the Contracts tab. */
   resign?: { contractSigned: boolean; outstanding: readonly AgreementKind[] } | null;
+  /** Required docs still owed (per side) — uploaded right in the Stage 3 card,
+   *  since the Docs tab stays hidden until onboarding is finished. */
+  docSlots?: OutstandingDocSlot[];
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -79,6 +84,7 @@ export const PortalOnboarding = ({
   templateMap,
   requiredKinds,
   resign = null,
+  docSlots = [],
 }: Props) => {
   const { notify } = useToast();
   const router = useRouter();
@@ -370,6 +376,13 @@ export const PortalOnboarding = ({
               Upload your required documents (resume, diploma, NBI clearance, government ID — front
               &amp; back) and wait for admin review. Once all are approved, click below.
             </p>
+            {docSlots.map((s) => (
+              <UploadSlot
+                key={`${s.kind}|${s.side ?? ''}`}
+                slot={s}
+                onUploaded={() => router.refresh()}
+              />
+            ))}
             <button
               type="button"
               className="btn"
