@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { PortalDashboard } from '@/components/portal/PortalDashboard';
 import { createServerSupabase } from '@/db/clients/server';
+import { parseOnboardingConfig } from '@/db/queries/config';
 import {
   fetchAnnouncements,
   fetchOwnDocuments,
@@ -11,6 +12,7 @@ import {
   fetchRecentMoodKinds,
 } from '@/db/queries/portal';
 import { periodFor, previousPeriod } from '@/lib/dates/periods';
+import { deriveDocChecklist, outstandingSlots } from '@/lib/onboarding/documents';
 import { moodPromptFor, parseShiftHM } from '@/lib/portal/mood';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { getCachedPortalSettings } from '@/server/config-cache';
@@ -60,16 +62,13 @@ export default async function PortalHomePage() {
   // as the greeting subtitle in place of the generic time-of-day line.
   const motto = String(extras.motto ?? '').trim();
 
-  // Required onboarding docs the contractor still owes (reminder overlay).
-  const onbConfig = (settings.onboardingConfigRaw ?? {}) as {
-    documents?: { kind: string; title: string; required?: boolean }[];
-  };
-  const haveKinds = new Set(ownDocs.map((d) => d.kind as string));
+  // Required onboarding docs the contractor still owes (reminder overlay) —
+  // per side, so an ID with only its front uploaded still owes the back.
   const pendingDocs = worker.onboarded
     ? []
-    : (onbConfig.documents ?? [])
-        .filter((d) => d.required !== false && !haveKinds.has(d.kind))
-        .map((d) => d.title);
+    : outstandingSlots(
+        deriveDocChecklist(parseOnboardingConfig(settings.onboardingConfigRaw).documents, ownDocs),
+      ).map((s) => s.label);
 
   // Activity %: tracked-weighted per worked day (has activity), full history —
   // the portal chart scrolls left/right through every available day (no cap).
