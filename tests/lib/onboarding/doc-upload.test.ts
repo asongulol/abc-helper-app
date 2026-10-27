@@ -40,10 +40,10 @@ describe('parseDocUploadForm', () => {
     ).toEqual({ ok: false, error: 'File must be a PDF, JPG or PNG.' });
   });
 
-  it('rejects a file over 10 MB', () => {
+  it('rejects a file over 3.5 MB', () => {
     expect(
-      parseDocUploadForm(form({ kind: 'resume', file: file({ size: 10 * 1024 * 1024 + 1 }) })),
-    ).toEqual({ ok: false, error: 'File is too large (max 10 MB).' });
+      parseDocUploadForm(form({ kind: 'resume', file: file({ size: 3.5 * 1024 * 1024 + 1 }) })),
+    ).toEqual({ ok: false, error: 'File is too large (max 3.5 MB).' });
   });
 
   it('requires an issued date for NBI clearance', () => {
