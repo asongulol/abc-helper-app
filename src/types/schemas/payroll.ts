@@ -333,3 +333,10 @@ export const LiftPaymentHoldSchema = z.object({
   note: z.string().trim().min(1, 'Say why the hold is lifted.').max(500),
 });
 export type LiftPaymentHoldInput = z.infer<typeof LiftPaymentHoldSchema>;
+
+/** Record that a contractor's health allowance was already paid this year. */
+export const MarkHaPaidEarlySchema = z.object({
+  companyId: uuid(),
+  workerId: uuid(),
+  paidOn: IsoDateSchema,
+});

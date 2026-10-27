@@ -48,6 +48,14 @@ describe('healthAllowance (legacy ~5864)', () => {
     expect(healthAllowance('2026-01-05', '2026-06-16', '2026-06-30', '2026-06-20')).toBe(0);
     expect(healthAllowance('2024-03-10', '2026-03-01', '2026-03-15', null)).toBe(HA_ANNUAL);
   });
+
+  it('an HA already paid early this calendar year blocks the anniversary payment', () => {
+    expect(healthAllowance('2024-03-10', '2026-03-01', '2026-03-15', null, '2026-01-20')).toBe(0);
+    // A payment recorded for another year leaves this year's alone.
+    expect(healthAllowance('2024-03-10', '2026-03-01', '2026-03-15', null, '2025-12-20')).toBe(
+      HA_ANNUAL,
+    );
+  });
 });
 
 /** Legacy float reference: +((mw/12)*rate).toFixed(2), rate in PHP major units. */

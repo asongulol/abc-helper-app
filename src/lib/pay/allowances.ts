@@ -26,14 +26,21 @@ const DAY_MS = 86_400_000;
  *
  * `haDate` (workers.health_allowance_date) overrides WHICH month/day the
  * payment lands on — its year is ignored. Eligibility stays keyed to hire.
+ *
+ * `paidOn` (workers.health_allowance_paid_on) records that this year's HA was
+ * already paid outside the run: no period in that calendar year pays it again.
+ * ponytail: calendar year, so an early payment made in December for a January
+ * anniversary doesn't block January's — set the date in the anniversary's year.
  */
 export const healthAllowance = (
   hireDate: string | null | undefined,
   periodStart: string,
   periodEnd: string,
   haDate?: string | null,
+  paidOn?: string | null,
 ): Centavos => {
   if (!hireDate) return zeroCentavos();
+  if (paidOn && paidOn.slice(0, 4) === periodStart.slice(0, 4)) return zeroCentavos();
   const anniv = haDate ? parseIso(haDate) : parseIso(hireDate);
   const eligMs = isoToUtcMs(hireDate) + HA_ELIG_DAYS * DAY_MS;
   if (isoToUtcMs(periodEnd) < eligMs) return zeroCentavos();

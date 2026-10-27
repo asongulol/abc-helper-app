@@ -97,6 +97,7 @@ import {
   LiftPaymentHoldSchema,
   LockPeriodSchema,
   MarkAllUnpaidSchema,
+  MarkHaPaidEarlySchema,
   MarkPaidSchema,
   RateSaveSchema,
   RecordOutsidePaymentSchema,
@@ -467,6 +468,51 @@ export async function unlockPeriod(
       ok: false,
       error: humanizeError(err, 'Unlock failed.'),
     };
+  }
+}
+
+/**
+ * The health allowance was paid early, outside the run: record WHEN on the
+ * contractor so no period that calendar year pays it again (the engine reads
+ * workers.health_allowance_paid_on). The caller zeroes the open row's HA through
+ * the normal row save, so net and the autosave stay on one path.
+ */
+export async function markHealthAllowancePaidEarly(args: unknown): Promise<ActionResult> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  const parsed = MarkHaPaidEarlySchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  if (input.paidOn > officeToday())
+    return { ok: false, error: 'That date is in the future — enter when it was actually paid.' };
+
+  try {
+    const db = await createServerSupabase();
+    const { data: link } = await db
+      .from('worker_companies')
+      .select('worker_id')
+      .eq('company_id', input.companyId)
+      .eq('worker_id', input.workerId)
+      .maybeSingle();
+    if (!link) return { ok: false, error: "Contractor is not on this company's roster." };
+    const { error } = await db
+      .from('workers')
+      .update({ health_allowance_paid_on: input.paidOn })
+      .eq('id', input.workerId);
+    if (error) return { ok: false, error: error.message };
+    await logEvent({
+      companyId: input.companyId,
+      action: 'health_allowance.paid_early',
+      entity: input.workerId,
+      detail: { paid_on: input.paidOn, by: admin.email },
+    });
+    revalidatePeriodViews();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Could not record the payment date.') };
   }
 }
 

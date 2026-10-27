@@ -1786,6 +1786,8 @@ export type Database = {
           first_name: string
           gcash: string | null
           health_allowance_date: string | null
+          health_allowance_paid_on: string | null
+          thirteenth_month_paid_on: string | null
           health_allowance_eligible: boolean
           hire_date: string | null
           holiday_pay_eligible: boolean
@@ -1833,6 +1835,8 @@ export type Database = {
           first_name: string
           gcash?: string | null
           health_allowance_date?: string | null
+          health_allowance_paid_on?: string | null
+          thirteenth_month_paid_on?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
           holiday_pay_eligible?: boolean
@@ -1880,6 +1884,8 @@ export type Database = {
           first_name?: string
           gcash?: string | null
           health_allowance_date?: string | null
+          health_allowance_paid_on?: string | null
+          thirteenth_month_paid_on?: string | null
           health_allowance_eligible?: boolean
           hire_date?: string | null
           holiday_pay_eligible?: boolean

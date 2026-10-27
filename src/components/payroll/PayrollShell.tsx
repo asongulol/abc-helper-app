@@ -36,6 +36,7 @@ import {
   getSavedPayments,
   liftPaymentHold,
   lockPeriod,
+  markHealthAllowancePaidEarly,
   openOffCycleBatch,
   reconcilePeriodApprovedTime,
   restorePaymentsSnapshot,
@@ -82,6 +83,8 @@ type EditableRow = {
   inactive: boolean;
   /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
   holdReason: string | null;
+  /** When this year's HA was paid outside the run (workers.health_allowance_paid_on). */
+  haPaidOn: string | null;
 };
 
 interface PayrollShellProps {
@@ -131,6 +134,7 @@ const toEditableRow = (p: SavedPayment): EditableRow => ({
   payoutMethod: p.payoutMethod,
   inactive: p.inactive,
   holdReason: p.holdReason,
+  haPaidOn: p.haPaidOn,
 });
 
 const recomputeRow = (r: EditableRow): EditableRow => {
@@ -553,6 +557,30 @@ export const PayrollShell = ({
           (prev ?? []).map((x) => (x.paymentId === r.paymentId ? { ...x, holdReason: null } : x)),
         );
         notify('Hold lifted — the row can be paid.', { type: 'success' });
+      })
+      .finally(() => setBusy(false));
+  };
+
+  // HA paid early, outside the run: record the date on the contractor (so no
+  // recalc this year pays it again), then zero this row's HA via the autosave.
+  const markHaPaidEarly = (r: EditableRow) => {
+    const paidOn = window
+      .prompt(
+        `${r.displayName || r.name}'s health allowance was already paid. When was it actually paid? (YYYY-MM-DD)`,
+      )
+      ?.trim();
+    if (!paidOn) return;
+    setBusy(true);
+    void markHealthAllowancePaidEarly({ companyId, workerId: r.workerId, paidOn })
+      .then((res) => {
+        if (!res.ok) {
+          notify(res.error, { type: 'error' });
+          return;
+        }
+        patchRow(r.workerId, { haPhp: 0, haPaidOn: paidOn });
+        notify(`Health allowance removed from this batch — recorded as paid ${fmtDate(paidOn)}.`, {
+          type: 'success',
+        });
       })
       .finally(() => setBusy(false));
   };
@@ -1458,8 +1486,27 @@ export const PayrollShell = ({
                                 (r.grossPhp?.toLocaleString('en-US') ?? '—')
                               )}
                             </td>
-                            <td data-label="HA ₱">
-                              {r.haPhp ? r.haPhp.toLocaleString('en-US') : '—'}
+                            <td data-label="HA ₱" style={{ whiteSpace: 'nowrap' }}>
+                              {r.haPhp ? (
+                                r.haPhp.toLocaleString('en-US')
+                              ) : r.haPaidOn?.slice(0, 4) === periodStart.slice(0, 4) ? (
+                                <span className="muted" style={{ fontSize: 11 }}>
+                                  paid {fmtDate(r.haPaidOn)}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                              {isOpen && r.haPhp > 0 && (
+                                <button
+                                  type="button"
+                                  className="btn ghost sm"
+                                  style={{ marginLeft: 4, padding: '2px 6px' }}
+                                  title="Already paid early: remove it from this batch and record when it was paid"
+                                  onClick={() => markHaPaidEarly(r)}
+                                >
+                                  Paid early
+                                </button>
+                              )}
                             </td>
                             <td data-label="13th ₱">
                               {r.t13Php ? r.t13Php.toLocaleString('en-US') : '—'}

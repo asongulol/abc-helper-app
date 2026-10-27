@@ -111,6 +111,29 @@ describe('calcContractorRow (legacy calculate() ~6076)', () => {
     expect(r.net).toBe(1_500_000 + 2_000_000 + r.thirteenth + 50_000 + 100_000 + 30_000);
   });
 
+  it('HA and 13th already paid early this year are not paid again', () => {
+    const base = {
+      workedSeconds: 88 * 3600,
+      contract: 'FT',
+      rate: centavos(1_500_000),
+      hireDate: '2024-06-10',
+      healthAllowanceEligible: true,
+      thirteenthMonthEligible: true,
+      ...PERIOD,
+    } as const;
+    const paid = calcContractorRow({
+      ...base,
+      healthAllowancePaidOn: `${PERIOD.periodStart.slice(0, 4)}-03-19`,
+      thirteenthMonthPaidOn: `${PERIOD.periodStart.slice(0, 4)}-03-19`,
+    });
+    expect(paid.healthAllowance).toBe(0);
+    expect(paid.thirteenth).toBe(0);
+    expect(paid.net).toBe(1_500_000);
+    // A date from another year leaves this year's alone.
+    const lastYear = calcContractorRow({ ...base, thirteenthMonthPaidOn: '2000-03-19' });
+    expect(lastYear.thirteenth).toBeGreaterThan(0);
+  });
+
   it('degenerate zero-expected period: positive work caps the ratio', () => {
     const r = calcContractorRow({
       workedSeconds: 3600,
