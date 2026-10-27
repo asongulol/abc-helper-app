@@ -28,6 +28,12 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_BUILD: buildStamp,
   },
+  experimental: {
+    // Document uploads travel in the action body; the 1 MB default rejected
+    // every phone photo of an ID before the action ran. Vercel caps requests at
+    // 4.5 MB, so this can't usefully go higher — see src/lib/documents/fit-upload.ts.
+    serverActions: { bodySizeLimit: '4mb' },
+  },
 };
 
 export default nextConfig;

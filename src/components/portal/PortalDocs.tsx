@@ -5,6 +5,7 @@ import { useRef, useState, useTransition } from 'react';
 import { useToast } from '@/components/ui';
 import type { PortalDocumentRow } from '@/db/queries/portal';
 import { EXPIRY_KIND_LABEL } from '@/lib/documents/expiry';
+import { fitForUpload } from '@/lib/documents/fit-upload';
 import { getDocumentSignedUrl } from '@/server/actions/portal';
 import { type OutstandingDocSlot, uploadOwnDocument } from '@/server/actions/portal-docs';
 
@@ -43,8 +44,13 @@ export const UploadSlot = ({
       return;
     }
     startTransition(async () => {
+      const fit = await fitForUpload(file);
+      if (!fit.ok) {
+        notify(fit.error, { type: 'error' });
+        return;
+      }
       const form = new FormData();
-      form.set('file', file);
+      form.set('file', fit.file);
       form.set('kind', slot.kind);
       if (slot.side) form.set('side', slot.side);
       if (isNbi) form.set('issuedOn', issued);
@@ -178,8 +184,13 @@ export const PortalDocs = ({
       return;
     }
     startTransition(async () => {
+      const fit = await fitForUpload(file);
+      if (!fit.ok) {
+        notify(fit.error, { type: 'error' });
+        return;
+      }
       const form = new FormData();
-      form.set('file', file);
+      form.set('file', fit.file);
       form.set('kind', kind);
       const res = await uploadOwnDocument(form);
       if (res.ok) {

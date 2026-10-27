@@ -3,7 +3,13 @@ import type { Database } from '@/db/types';
 type DocumentKind = Database['public']['Enums']['document_kind'];
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/png']);
-const MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * Largest file a document upload accepts. Uploads travel in a Server Action
+ * body: next.config's bodySizeLimit (4 MB) and Vercel's 4.5 MB request cap
+ * sit above this, with headroom for the multipart envelope. The browser shrinks
+ * bigger photos to fit first (`fitForUpload`).
+ */
+export const UPLOAD_MAX_BYTES = 3.5 * 1024 * 1024;
 const VALID_KINDS = new Set<string>([
   'ic_agreement',
   'w8ben',
@@ -40,7 +46,7 @@ export const parseDocUploadForm = (
   if (file.size === 0) return { ok: false, error: 'File is empty.' };
   if (!VALID_KINDS.has(kind)) return { ok: false, error: 'Unknown document type.' };
   if (!ALLOWED_MIME.has(file.type)) return { ok: false, error: 'File must be a PDF, JPG or PNG.' };
-  if (file.size > MAX_BYTES) return { ok: false, error: 'File is too large (max 10 MB).' };
+  if (file.size > UPLOAD_MAX_BYTES) return { ok: false, error: 'File is too large (max 3.5 MB).' };
   if (kind === 'nbi_clearance' && !issuedOn)
     return { ok: false, error: 'Enter the date the NBI clearance was issued.' };
   return { ok: true, value: { file, kind: kind as DocumentKind, side, issuedOn } };

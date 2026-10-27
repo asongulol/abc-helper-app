@@ -6,6 +6,7 @@ import { useEffect, useState, useTransition } from 'react';
 import { DocReviewModal } from '@/components/documents/DocReviewModal';
 import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/components/ui';
 import type { OnboardingProgressRow } from '@/db/queries/onboarding';
+import { fitForUpload } from '@/lib/documents/fit-upload';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import type { DocSlotState, DocSlotStatus } from '@/lib/onboarding/documents';
 import { deriveStageInfo } from '@/lib/onboarding/progress';
@@ -216,13 +217,19 @@ export const OnboardingDetailBody = ({ row, canCountersign, isOwner, onClose }: 
   // Admin uploads a file into a checklist slot on the contractor's behalf.
   const handleUploadFor = (slot: DocSlotStatus) => {
     if (!uploadSlot?.file) return;
-    const form = new FormData();
-    form.set('workerId', row.workerId);
-    form.set('file', uploadSlot.file);
-    form.set('kind', slot.kind);
-    if (slot.side) form.set('side', slot.side);
-    if (slot.kind === 'nbi_clearance') form.set('issuedOn', uploadSlot.issuedOn);
+    const { file, issuedOn } = uploadSlot;
     startTransition(async () => {
+      const fit = await fitForUpload(file);
+      if (!fit.ok) {
+        notify(fit.error, { type: 'error' });
+        return;
+      }
+      const form = new FormData();
+      form.set('workerId', row.workerId);
+      form.set('file', fit.file);
+      form.set('kind', slot.kind);
+      if (slot.side) form.set('side', slot.side);
+      if (slot.kind === 'nbi_clearance') form.set('issuedOn', issuedOn);
       const res = await uploadDocumentForContractor(form);
       if (res.ok) {
         notify('Uploaded — pending review.', { type: 'success' });

@@ -6,6 +6,7 @@ import { Badge, type BadgeTone, ConfirmDangerModal, Modal, useToast } from '@/co
 import type { WorkerDocumentRow } from '@/db/queries/documents';
 import type { RosterWorker } from '@/db/queries/workers';
 import type { Database } from '@/db/types';
+import { fitForUpload } from '@/lib/documents/fit-upload';
 import { fmtDate } from '@/lib/format';
 import { deleteContractorDocument, reviewDocument } from '@/server/actions/portal';
 import { listContractorDocuments, uploadDocumentForContractor } from '@/server/actions/portal-docs';
@@ -72,13 +73,18 @@ export function DocumentsTab({ worker, panelProps }: Props) {
 
   const handleUpload = () => {
     if (!upFile) return;
-    const form = new FormData();
-    form.set('workerId', worker.workerId);
-    form.set('file', upFile);
-    form.set('kind', upKind);
-    if (upKind === 'gov_id') form.set('side', upSide);
-    if (upKind === 'nbi_clearance') form.set('issuedOn', upIssuedOn);
     startTransition(async () => {
+      const fit = await fitForUpload(upFile);
+      if (!fit.ok) {
+        notify(fit.error, { type: 'error' });
+        return;
+      }
+      const form = new FormData();
+      form.set('workerId', worker.workerId);
+      form.set('file', fit.file);
+      form.set('kind', upKind);
+      if (upKind === 'gov_id') form.set('side', upSide);
+      if (upKind === 'nbi_clearance') form.set('issuedOn', upIssuedOn);
       const res = await uploadDocumentForContractor(form);
       if (res.ok) {
         notify('Uploaded — pending review.', { type: 'success' });
@@ -195,7 +201,9 @@ export function DocumentsTab({ worker, panelProps }: Props) {
           </div>
         )}
         <div className="field" style={{ flex: 1, minWidth: 200 }}>
-          <label htmlFor="doc-up-file">File (PDF, JPG or PNG · max 10 MB)</label>
+          <label htmlFor="doc-up-file">
+            File (PDF, JPG or PNG · max 3.5 MB; bigger photos are shrunk)
+          </label>
           <input
             key={fileInputKey}
             id="doc-up-file"
