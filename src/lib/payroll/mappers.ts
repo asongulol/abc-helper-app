@@ -49,6 +49,8 @@ export type RosterRow = {
     healthAllowanceEligible: boolean;
     /** Annual HA pay date override (month/day only); null = hire anniversary. */
     healthAllowanceDate?: string | null;
+    /** workers.health_allowance_paid_on — this year's HA was paid outside the run. */
+    healthAllowancePaidOn?: string | null;
     thirteenthMonthEligible: boolean;
   };
 };
@@ -292,6 +294,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
       hireDate: w.hireDate,
       healthAllowanceEligible: w.healthAllowanceEligible,
       healthAllowanceDate: w.healthAllowanceDate ?? null,
+      healthAllowancePaidOn: w.healthAllowancePaidOn ?? null,
       thirteenthMonthEligible: w.thirteenthMonthEligible,
       includeHealthAllowance: (args.includeHealthAllowance ?? true) && !inactive,
       includeThirteenth: (args.includeThirteenth ?? true) && !inactive,
@@ -362,6 +365,7 @@ export const buildStatements = (args: BuildStatementsArgs): StatementRow[] => {
           args.periodStart,
           args.periodEnd,
           r.worker.healthAllowanceDate,
+          r.worker.healthAllowancePaidOn,
         ) <= 0
       )
         continue;

@@ -129,6 +129,8 @@ export type ContractorRowInput = {
   healthAllowanceEligible?: boolean;
   /** Annual HA pay date override (month/day only); null/absent = hire anniversary. */
   healthAllowanceDate?: string | null;
+  /** When this year's HA was already paid outside the run; that year pays none. */
+  healthAllowancePaidOn?: string | null;
   thirteenthMonthEligible?: boolean;
   /**
    * Batch-level toggles (legacy `includeHA` / `include13`).
@@ -253,6 +255,7 @@ export const calcContractorRow = (input: ContractorRowInput): ContractorRowResul
           input.periodStart,
           input.periodEnd,
           input.healthAllowanceDate,
+          input.healthAllowancePaidOn,
         )
       : zeroCentavos();
   // 13th-month accrues on a salaried period rate only — never for a per-unit

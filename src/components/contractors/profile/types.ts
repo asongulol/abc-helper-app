@@ -20,6 +20,8 @@ export type FormState = {
   healthAllowanceEligible: boolean;
   /** Annual HA pay date override (yyyy-mm-dd; month/day only, '' = hire anniversary). */
   healthAllowanceDate: string;
+  /** When this year's HA was paid outside the run (yyyy-mm-dd; '' = not paid early). */
+  healthAllowancePaidOn: string;
   thirteenthMonthEligible: boolean;
   holidayPayEligible: boolean;
   ptoDaysPerYear: string;

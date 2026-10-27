@@ -89,7 +89,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
   const { data, error } = await db
     .from('worker_companies')
     .select(
-      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, thirteenth_month_eligible)',
+      'worker_id, contract, pay_basis, hubstaff_name, status, workers(first_name, middle_name, last_name, hire_date, status, payout_method, health_allowance_eligible, health_allowance_date, health_allowance_paid_on, thirteenth_month_eligible)',
     )
     .eq('company_id', companyId);
   if (error) throw new Error(`worker_companies: ${error.message}`);
@@ -110,6 +110,7 @@ export const fetchRoster = async (db: Db, companyId: string): Promise<RosterRow[
         payoutMethod: w?.payout_method ?? null,
         healthAllowanceEligible: w?.health_allowance_eligible ?? false,
         healthAllowanceDate: w?.health_allowance_date ?? null,
+        healthAllowancePaidOn: w?.health_allowance_paid_on ?? null,
         thirteenthMonthEligible: w?.thirteenth_month_eligible ?? false,
       },
     };
@@ -1254,6 +1255,8 @@ export type SavedPayment = {
   inactive: boolean;
   /** Withheld until the re-sign package is signed (wizard decision 9); null once lifted. */
   holdReason: string | null;
+  /** workers.health_allowance_paid_on — when this year's HA was paid outside the run. */
+  haPaidOn: string | null;
 };
 
 /* ---------- NEW: list periods with summary totals ---------- */
@@ -2164,7 +2167,7 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
   const { data, error } = await db
     .from('payments')
     .select(
-      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, worker_companies(company_id, status))',
+      'id, worker_id, company_id, units, expected_hours, worked_hours, performance_ratio, rate_php, gross_php, computed_gross_php, health_allowance_php, thirteenth_month_php, pdd_lunch_php, bonus_php, deduction_php, off_cycle_php, net_php, misc_items, payout_method, note, hold_reason, hold_lifted_at, workers(first_name, middle_name, last_name, status, health_allowance_paid_on, worker_companies(company_id, status))',
     )
     .eq('pay_period_id', payPeriodId);
   if (error) throw new Error(`payments: ${error.message}`);
@@ -2205,5 +2208,6 @@ export const fetchSavedPayments = async (db: Db, payPeriodId: string): Promise<S
         null,
     ),
     holdReason: p.hold_lifted_at ? null : p.hold_reason,
+    haPaidOn: p.workers?.health_allowance_paid_on ?? null,
   }));
 };

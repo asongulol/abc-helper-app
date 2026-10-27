@@ -447,6 +447,22 @@ describe('F7: HA-eligible worker with zero approved time in their anniversary pe
     expect(rows[0]?.result.thirteenth).toBe(683_333);
   });
 
+  it("does NOT pay or build when this year's HA was already paid early", () => {
+    const paidEarly = {
+      ...haWorker,
+      worker: { ...haWorker.worker, healthAllowancePaidOn: '2026-02-10' },
+    };
+    const attribution = attributeTimeEntries([], [paidEarly]);
+    const rows = buildStatements({
+      periodStart: '2026-06-01',
+      periodEnd: '2026-06-15',
+      attribution,
+      roster: [paidEarly],
+      rates: haRates,
+    });
+    expect(rows).toHaveLength(0);
+  });
+
   it('does NOT build a zero-time row outside the anniversary period', () => {
     const attribution = attributeTimeEntries([], [haWorker]);
     const rows = buildStatements({

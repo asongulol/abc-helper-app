@@ -235,6 +235,25 @@ export function ProfileTab({
             />
           </label>
         )}
+        {form.healthAllowanceEligible && (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+            }}
+            title="Set when this year's HA was already paid early, outside the run. No pay period in that calendar year pays it again. Clear it to undo."
+          >
+            paid early on
+            <input
+              type="date"
+              value={form.healthAllowancePaidOn}
+              onChange={(e) => set('healthAllowancePaidOn', e.target.value)}
+              disabled={isPending}
+            />
+          </label>
+        )}
         <label
           style={{
             display: 'flex',
