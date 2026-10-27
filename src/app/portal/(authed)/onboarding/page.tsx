@@ -7,6 +7,7 @@ import { fetchAgreements } from '@/db/queries/onboarding';
 import { fetchAgreementTemplate, fetchOwnOnboarding, fetchOwnProfile } from '@/db/queries/portal';
 import type { Database } from '@/db/types';
 import { type AgreementVars, mergeAgreement, monthlyFromPeriod } from '@/lib/agreements/merge';
+import { fetchOutstandingDocSlots } from '@/server/actions/portal-docs';
 import { getCurrentWorker } from '@/server/auth/worker';
 import { syncStage2 } from '@/server/onboarding/stage2';
 
@@ -31,7 +32,7 @@ export default async function PortalOnboardingPage() {
   // Stage 2 is derived from the profile row (an admin may have filled a field
   // for them) — sync FIRST so `progress` below reflects it.
   const stage2 = await syncStage2(createServiceClient(), worker.workerId);
-  const [{ progress, signatures, agreements }, prefill, profile, templates, packages] =
+  const [{ progress, signatures, agreements }, prefill, profile, templates, packages, docSlots] =
     await Promise.all([
       fetchOwnOnboarding(supabase, worker.workerId),
       fetchAgreements(supabase, worker.workerId),
@@ -40,6 +41,7 @@ export default async function PortalOnboardingPage() {
       // A contract version sent mid-onboarding supersedes the Stage 1 signatures
       // it re-asks for; the contract itself is signed on the Contracts tab.
       fetchOutstandingPackages(supabase, { workerIds: [worker.workerId] }),
+      fetchOutstandingDocSlots(),
     ]);
   const pkg = packages.get(worker.workerId) ?? null;
 
@@ -84,6 +86,7 @@ export default async function PortalOnboardingPage() {
       templateMap={templateMap}
       requiredKinds={REQUIRED_KINDS}
       resign={pkg ? { contractSigned: pkg.contractSigned, outstanding: pkg.outstanding } : null}
+      docSlots={docSlots}
     />
   );
 }
