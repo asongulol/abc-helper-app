@@ -270,6 +270,25 @@ export function ProfileTab({
           />
           13th-month
         </label>
+        {form.thirteenthMonthEligible && (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: 13,
+            }}
+            title="Set when this year's 13th month was already paid early, outside the run. No pay period in that calendar year accrues it again. Clear it to undo."
+          >
+            paid early on
+            <input
+              type="date"
+              value={form.thirteenthMonthPaidOn}
+              onChange={(e) => set('thirteenthMonthPaidOn', e.target.value)}
+              disabled={isPending}
+            />
+          </label>
+        )}
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
           <input
             type="checkbox"

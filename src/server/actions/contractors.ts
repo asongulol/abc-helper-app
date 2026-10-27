@@ -155,6 +155,9 @@ export async function saveWorkerProfile(args: unknown): Promise<ActionResult> {
       ...(input.healthAllowancePaidOn !== undefined
         ? { health_allowance_paid_on: input.healthAllowancePaidOn }
         : {}),
+      ...(input.thirteenthMonthPaidOn !== undefined
+        ? { thirteenth_month_paid_on: input.thirteenthMonthPaidOn }
+        : {}),
       thirteenth_month_eligible: input.thirteenthMonthEligible,
       ...(input.holidayPayEligible != null
         ? { holiday_pay_eligible: input.holidayPayEligible }

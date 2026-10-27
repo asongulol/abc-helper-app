@@ -172,6 +172,8 @@ export const SaveWorkerProfileSchema = z
     healthAllowanceDate: IsoDateSchema.nullable().optional(),
     /** This year's HA already paid outside the run; null clears, absent leaves as-is. */
     healthAllowancePaidOn: IsoDateSchema.nullable().optional(),
+    /** This year's 13th month already paid outside the run; null clears, absent leaves as-is. */
+    thirteenthMonthPaidOn: IsoDateSchema.nullable().optional(),
     thirteenthMonthEligible: z.boolean(),
     /** Records only (wizard decision 6); optional so older callers keep working. */
     holidayPayEligible: z.boolean().optional(),

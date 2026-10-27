@@ -72,6 +72,7 @@ export function AddContractorModal({ companyId, onClose, onCreated }: Props) {
         healthAllowanceEligible: true,
         healthAllowanceDate: null,
         healthAllowancePaidOn: null,
+        thirteenthMonthPaidOn: null,
         thirteenthMonthEligible: true,
         holidayPayEligible: false,
         ptoDaysPerYear: 12,
