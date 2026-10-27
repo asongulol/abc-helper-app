@@ -41,7 +41,7 @@ export const fitForUpload = async (file: File): Promise<FitResult> => {
       if (blob && blob.size <= UPLOAD_MAX_BYTES)
         return {
           ok: true,
-          file: new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }),
+          file: new File([blob], `${file.name.replace(/\.\w+$/, '')}.jpg`, { type: 'image/jpeg' }),
         };
     }
   } catch {
