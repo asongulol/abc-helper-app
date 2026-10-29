@@ -51,7 +51,7 @@ import {
   updatePaymentRow,
 } from '@/db/queries/payroll';
 import type { RateHistoryRow } from '@/db/queries/rates';
-import { executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
+import { executeRateMove, executeRateUpsert, fetchRateHistory } from '@/db/queries/rates';
 import {
   fetchRecentSessionsForWorkers,
   fetchUnpaidApprovedSessions,
@@ -99,6 +99,7 @@ import {
   MarkAllUnpaidSchema,
   MarkHaPaidEarlySchema,
   MarkPaidSchema,
+  RateMoveSchema,
   RateSaveSchema,
   RecordOutsidePaymentSchema,
   RemoveOffCyclePaySchema,
@@ -182,6 +183,47 @@ export async function saveRate(args: unknown): Promise<ActionResult<{ kind: stri
       ok: false,
       error: humanizeError(err, 'Rate save failed.'),
     };
+  }
+}
+
+/**
+ * Move an existing rate row's effective date (the prior row's end follows).
+ * Same gate as a correction save: owner-only once a versioned contract is of
+ * record. The signed contract version keeps its own effective_from — it is
+ * what was signed; the rate row is what payroll prices with.
+ */
+export async function moveRateStart(args: unknown): Promise<ActionResult<null>> {
+  const admin = await getCurrentAdmin();
+  if (!admin) return { ok: false, error: 'Not signed in as an admin.' };
+  const parsed = RateMoveSchema.safeParse(args);
+  if (!parsed.success)
+    return { ok: false, error: parsed.error.issues[0]?.message ?? 'Invalid input.' };
+  const input = parsed.data;
+  if (!admin.isOwner && !admin.companyIds.includes(input.companyId))
+    return { ok: false, error: 'No access to this company.' };
+  try {
+    const db = await createServerSupabase();
+    const contract = await fetchActiveContractVersion(db, input.workerId, input.companyId);
+    if (contract && !admin.isOwner)
+      return {
+        ok: false,
+        error: `Version ${contract.version} is the contract of record — only the owner can move its rate date.`,
+      };
+    const { priorStart } = await executeRateMove(db, input);
+    await logEvent({
+      companyId: input.companyId,
+      action: 'set_rate',
+      entity: input.workerId,
+      detail: {
+        rate_id: input.rateId,
+        effective_start: { from: priorStart, to: input.effectiveStart },
+        kind: 'move-start',
+        correction_of_version: contract?.version ?? null,
+      },
+    });
+    return { ok: true, data: null };
+  } catch (err) {
+    return { ok: false, error: humanizeError(err, 'Rate date change failed.') };
   }
 }
 

@@ -4,7 +4,7 @@ import { useEffect, useState, useTransition } from 'react';
 import { Spinner } from '@/components/ui';
 import type { RateHistoryRow } from '@/db/queries/rates';
 import { fmtDate, money } from '@/lib/format';
-import { getRateHistory, saveRate } from '@/server/actions/payroll';
+import { getRateHistory, moveRateStart, saveRate } from '@/server/actions/payroll';
 
 type Props = {
   workerId: string;
@@ -25,6 +25,7 @@ export function RateCard({ workerId, companyId, isOwner = false, onNewContract }
   const [saveSuccess, setSaveSuccess] = useState('');
   const [isLoadPending, startLoad] = useTransition();
   const [isSavePending, startSave] = useTransition();
+  const [editing, setEditing] = useState<{ id: string; start: string } | null>(null);
 
   useEffect(() => {
     startLoad(async () => {
@@ -81,6 +82,24 @@ export function RateCard({ workerId, companyId, isOwner = false, onNewContract }
     });
   }
 
+  function handleMove(rateId: string, effectiveStart: string) {
+    setFormError('');
+    setSaveSuccess('');
+    startSave(async () => {
+      const result = await moveRateStart({ rateId, workerId, companyId, effectiveStart });
+      if (!result.ok) {
+        setFormError(result.error);
+        return;
+      }
+      setEditing(null);
+      setSaveSuccess('Effective date moved — recalculate any open period it touches.');
+      startLoad(async () => {
+        const r2 = await getRateHistory({ workerId, companyId });
+        if (r2.ok) setHistory(r2.data?.history ?? []);
+      });
+    });
+  }
+
   const today = new Date().toISOString().slice(0, 10);
   // Decision 8: with a versioned contract the rate is written by countersign.
   // The free editor stays only for legacy engagements; the owner keeps it as a
@@ -123,13 +142,26 @@ export function RateCard({ workerId, companyId, isOwner = false, onNewContract }
                 <th scope="col">Amount (PHP/period)</th>
                 <th scope="col">Effective start</th>
                 <th scope="col">Effective end</th>
+                {showEditor && <th scope="col" />}
               </tr>
             </thead>
             <tbody>
               {history.map((r) => (
                 <tr key={r.id}>
                   <td>{money(r.amountPhp)}</td>
-                  <td>{fmtDate(r.effectiveStart)}</td>
+                  <td>
+                    {editing?.id === r.id ? (
+                      <input
+                        type="date"
+                        aria-label="New effective start"
+                        value={editing.start}
+                        onChange={(e) => setEditing({ id: r.id, start: e.target.value })}
+                        disabled={isSavePending}
+                      />
+                    ) : (
+                      fmtDate(r.effectiveStart)
+                    )}
+                  </td>
                   <td>
                     {r.effectiveEnd ? (
                       fmtDate(r.effectiveEnd)
@@ -137,6 +169,39 @@ export function RateCard({ workerId, companyId, isOwner = false, onNewContract }
                       <span className="pill good">open</span>
                     )}
                   </td>
+                  {showEditor && (
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {editing?.id === r.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="btn sm"
+                            disabled={isSavePending || !/^\d{4}-\d{2}-\d{2}$/.test(editing.start)}
+                            onClick={() => handleMove(r.id, editing.start)}
+                          >
+                            Save
+                          </button>{' '}
+                          <button
+                            type="button"
+                            className="btn sm ghost"
+                            disabled={isSavePending}
+                            onClick={() => setEditing(null)}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn sm ghost"
+                          disabled={isSavePending}
+                          onClick={() => setEditing({ id: r.id, start: r.effectiveStart })}
+                        >
+                          Edit date
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

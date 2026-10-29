@@ -10,7 +10,7 @@
 import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/db/types';
-import { planRateUpsert } from '@/lib/pay/rates';
+import { planRateMove, planRateUpsert } from '@/lib/pay/rates';
 
 type Db = SupabaseClient<Database>;
 
@@ -90,4 +90,28 @@ export const executeRateUpsert = async (
   });
   if (insertError) throw new Error(`rates insert: ${insertError.message}`);
   return { kind: plan.kind, priorAmountPhp };
+};
+
+/** Move a rate row's effective_start (planRateMove); the prior row follows. Returns the old start. */
+export const executeRateMove = async (
+  db: Db,
+  args: { rateId: string; workerId: string; companyId: string; effectiveStart: string },
+): Promise<{ priorStart: string }> => {
+  const history = await fetchRateHistory(db, args.workerId, args.companyId);
+  const plan = planRateMove(history, args.rateId, args.effectiveStart);
+  if (typeof plan === 'string') throw new Error(plan);
+  const priorStart = history.find((r) => r.id === args.rateId)?.effectiveStart ?? '';
+  if (plan.prev) {
+    const { error } = await db
+      .from('rates')
+      .update({ effective_end: plan.prev.effectiveEnd })
+      .eq('id', plan.prev.rateId);
+    if (error) throw new Error(`rates close: ${error.message}`);
+  }
+  const { error } = await db
+    .from('rates')
+    .update({ effective_start: plan.effectiveStart })
+    .eq('id', plan.rateId);
+  if (error) throw new Error(`rates move: ${error.message}`);
+  return { priorStart };
 };
