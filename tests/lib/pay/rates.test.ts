@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { overlayPendingRates, planRateUpsert, resolveRate } from '@/lib/pay/rates';
+import { overlayPendingRates, planRateMove, planRateUpsert, resolveRate } from '@/lib/pay/rates';
 
 describe('planRateUpsert', () => {
   it('same effective_start → in-place update (no duplicate-day rows)', () => {
@@ -83,5 +83,31 @@ describe('overlayPendingRates (early pricing, wizard decision 5)', () => {
     expect(out.find((r) => r.effectiveStart === '2026-12-01')?.effectiveEnd).toBeNull();
     expect(resolveRate(out, 'w2', '2026-09-16', '2026-09-30')).toBe(500000);
     expect(live.effectiveEnd).toBeNull();
+  });
+});
+
+describe('planRateMove', () => {
+  const history = [
+    { id: 'new', effectiveStart: '2026-10-22', effectiveEnd: null },
+    { id: 'old', effectiveStart: '2024-12-16', effectiveEnd: '2026-10-21' },
+  ];
+  it('moves the start and re-closes the prior row the day before', () => {
+    expect(planRateMove(history, 'new', '2026-10-01')).toEqual({
+      rateId: 'new',
+      effectiveStart: '2026-10-01',
+      prev: { rateId: 'old', effectiveEnd: '2026-09-30' },
+    });
+  });
+  it('refuses to reorder history', () => {
+    expect(typeof planRateMove(history, 'new', '2024-12-16')).toBe('string');
+    expect(typeof planRateMove(history, 'old', '2026-10-22')).toBe('string');
+    expect(typeof planRateMove(history, 'old', '2026-10-25')).toBe('string');
+  });
+  it('first row has no prior to close', () => {
+    expect(planRateMove(history, 'old', '2024-12-01')).toEqual({
+      rateId: 'old',
+      effectiveStart: '2024-12-01',
+      prev: null,
+    });
   });
 });

@@ -149,3 +149,40 @@ export const planRateUpsert = (
     effectiveStart,
   };
 };
+
+export type RateMovePlan = {
+  rateId: string;
+  effectiveStart: string;
+  /** The row immediately before, re-closed the day before the new start. */
+  prev: { rateId: string; effectiveEnd: string } | null;
+};
+
+/**
+ * Move an existing rate row's effective_start without reordering history: the
+ * new date must stay strictly between its neighbours' starts and not pass its
+ * own effective_end. The previous row is re-closed the day before (F9) so the
+ * two never share a day. Returns a message when the move is not allowed.
+ */
+export const planRateMove = (
+  history: readonly { id: string; effectiveStart: string; effectiveEnd: string | null }[],
+  rateId: string,
+  effectiveStart: string,
+): RateMovePlan | string => {
+  const rows = [...history].sort((a, b) => a.effectiveStart.localeCompare(b.effectiveStart));
+  const i = rows.findIndex((r) => r.id === rateId);
+  const row = rows[i];
+  if (!row) return 'That rate row no longer exists.';
+  const prev = rows[i - 1] ?? null;
+  const next = rows[i + 1] ?? null;
+  if (row.effectiveEnd !== null && effectiveStart > row.effectiveEnd)
+    return `Start cannot be after this rate's end (${row.effectiveEnd}).`;
+  if (prev && effectiveStart <= prev.effectiveStart)
+    return `Start must be after the previous rate's start (${prev.effectiveStart}).`;
+  if (next && effectiveStart >= next.effectiveStart)
+    return `Start must be before the next rate's start (${next.effectiveStart}).`;
+  return {
+    rateId,
+    effectiveStart,
+    prev: prev ? { rateId: prev.id, effectiveEnd: dayBefore(effectiveStart) } : null,
+  };
+};

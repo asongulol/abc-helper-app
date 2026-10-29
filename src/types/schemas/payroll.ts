@@ -65,6 +65,14 @@ export const RateSaveSchema = z.object({
 });
 export type RateSaveInput = z.infer<typeof RateSaveSchema>;
 
+/** Move an existing rate row's effective_start (the prior row's end follows). */
+export const RateMoveSchema = z.object({
+  rateId: uuid(),
+  workerId: uuid(),
+  companyId: uuid(),
+  effectiveStart: IsoDateSchema,
+});
+
 /**
  * Batch calculate request (legacy `calculate`/`calcBatch`).
  *
