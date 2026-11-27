@@ -195,9 +195,17 @@ export async function fetchHubstaffProjects(
  *   1. Bulk GET /v2/users?id[]=… (chunks of 50).
  *   2. Per-user GET /v2/users/{id} fallback for any still unnamed.
  *
+ * `extraUserIds` are resolved alongside the members: a user who tracked time
+ * but is no longer in the member list (removed from the org) would otherwise
+ * surface as `user <id>` and miss every name match.
+ *
  * Returns a Map<userId, displayName>.
  */
-export async function fetchMemberNames(orgId: number, token: string): Promise<Map<number, string>> {
+export async function fetchMemberNames(
+  orgId: number,
+  token: string,
+  extraUserIds: Iterable<number> = [],
+): Promise<Map<number, string>> {
   // 1. Fetch org members to get user ids.
   const members = await pageAll<{ user_id?: number; id?: number }>(
     `${HUBSTAFF_API_BASE}/organizations/${orgId}/members`,
@@ -205,7 +213,10 @@ export async function fetchMemberNames(orgId: number, token: string): Promise<Ma
     'members',
   );
   const userIds = [
-    ...new Set(members.map((m) => m.user_id ?? m.id).filter((id): id is number => id != null)),
+    ...new Set([
+      ...members.map((m) => m.user_id ?? m.id).filter((id): id is number => id != null),
+      ...extraUserIds,
+    ]),
   ];
 
   const nameById = new Map<number, string>();

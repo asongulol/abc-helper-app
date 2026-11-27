@@ -126,10 +126,6 @@ export async function syncHubstaffForCompany(
   // 3. Get a valid access token (refresh if needed).
   const token = await getAccessToken();
 
-  // 4. Fetch member names.
-  const nameById = await fetchMemberNames(orgId, token);
-  const membersSeen = nameById.size;
-
   // 5. Pull daily activities (Hubstaff rejects ranges >31 days — service
   //    stays ≤31 d per resolveWindow; activity_backfill uses chunks).
   const acts = await pageAll<HubstaffDailyActivity>(
@@ -153,6 +149,11 @@ export async function syncHubstaffForCompany(
   // 7. Accumulate per-user per-day totals.
   const accum = accumulateActivities(acts);
   accumulatePto(accum, ptoRequests, startMs, stopMs);
+
+  // 4. Fetch names — members plus anyone with hours who is no longer a member
+  //    (after the pulls above, so those user ids are known).
+  const nameById = await fetchMemberNames(orgId, token, accum.keys());
+  const membersSeen = nameById.size;
 
   if (accum.size === 0) {
     const importBatchId = crypto.randomUUID();
