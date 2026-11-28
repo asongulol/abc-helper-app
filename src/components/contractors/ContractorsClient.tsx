@@ -63,6 +63,42 @@ type RowShape = RosterWorker & {
   _statusLabel: 'active' | 'inactive' | 'ended';
 };
 
+/** The contract benefits a contractor is entitled to — the roster column + filter. */
+const BENEFITS: ReadonlyArray<{
+  key: string;
+  label: string;
+  short: (w: RosterWorker) => string;
+  has: (w: RosterWorker) => boolean;
+  paidOn?: (w: RosterWorker) => string | null;
+}> = [
+  {
+    key: '13th',
+    label: '13th month',
+    short: () => '13th',
+    has: (w) => w.thirteenthMonthEligible,
+    paidOn: (w) => w.thirteenthMonthPaidOn,
+  },
+  {
+    key: 'ha',
+    label: 'Health allowance',
+    short: () => 'HA',
+    has: (w) => w.healthAllowanceEligible,
+    paidOn: (w) => w.healthAllowancePaidOn,
+  },
+  {
+    key: 'holiday',
+    label: 'Holiday pay',
+    short: () => 'Holiday',
+    has: (w) => w.holidayPayEligible,
+  },
+  {
+    key: 'pto',
+    label: 'PTO',
+    short: (w) => `PTO ${w.ptoDaysPerYear}d`,
+    has: (w) => w.ptoDaysPerYear > 0,
+  },
+];
+
 /** Avatar fallback when no photo: initials of the first two words of the name. */
 function initials(name: string): string {
   return (
@@ -95,6 +131,7 @@ export function ContractorsClient({
 
   const [rows, setRows] = useState<RowShape[]>(() => buildRows(roster));
   const [showInactive, setShowInactive] = useState(false);
+  const [benefit, setBenefit] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [showPullWise, setShowPullWise] = useState(false);
@@ -117,9 +154,12 @@ export function ContractorsClient({
 
   // A departed contractor with a rehire contract out for signature stays visible:
   // the badge below is the only place the wait shows.
-  const visibleRows = showInactive
-    ? rows
-    : rows.filter((r) => r._statusLabel === 'active' || r.workerId in awaitingSignature);
+  const benefitFilter = BENEFITS.find((b) => b.key === benefit);
+  const visibleRows = (
+    showInactive
+      ? rows
+      : rows.filter((r) => r._statusLabel === 'active' || r.workerId in awaitingSignature)
+  ).filter((r) => !benefitFilter || benefitFilter.has(r));
   const inactiveCount = rows.filter((r) => r._statusLabel !== 'active').length;
 
   function refreshRow(updated: RosterWorker) {
@@ -274,6 +314,38 @@ export function ContractorsClient({
       render: (r) => <Badge tone={r.contract === 'PT' ? 'bad' : 'neutral'}>{r.contract}</Badge>,
     },
     {
+      key: '_benefits',
+      label: 'Benefits',
+      sortable: true,
+      accessor: (r) =>
+        BENEFITS.filter((b) => b.has(r))
+          .map((b) => b.label)
+          .join(', '),
+      render: (r) => {
+        const held = BENEFITS.filter((b) => b.has(r));
+        if (held.length === 0) return <span className="muted">—</span>;
+        return (
+          <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+            {held.map((b) => {
+              // Paid early this calendar year → the run pays/accrues none (allowances.ts).
+              const paid = b.paidOn?.(r);
+              const settled = paid?.slice(0, 4) === today.slice(0, 4);
+              return (
+                <Badge
+                  key={b.key}
+                  tone={settled ? 'neutral' : 'good'}
+                  title={settled ? `${b.label} — paid early on ${paid}` : b.label}
+                >
+                  {b.short(r)}
+                  {settled ? ' ✓' : ''}
+                </Badge>
+              );
+            })}
+          </span>
+        );
+      },
+    },
+    {
       key: 'payoutMethod',
       label: 'Payout',
       sortable: true,
@@ -399,6 +471,19 @@ export function ContractorsClient({
               />
               Show inactive
             </label>
+            <select
+              aria-label="Filter by benefit"
+              value={benefit}
+              onChange={(e) => setBenefit(e.target.value)}
+              style={{ width: 'auto' }}
+            >
+              <option value="">All benefits</option>
+              {BENEFITS.map((b) => (
+                <option key={b.key} value={b.key}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
             <button type="button" className="btn ghost" onClick={() => setShowPullWise(true)}>
               ⤓ Pull IDs from Wise
             </button>
